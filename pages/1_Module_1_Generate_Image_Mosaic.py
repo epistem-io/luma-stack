@@ -85,6 +85,13 @@ if 'gdf' not in st.session_state:
     st.session_state.gdf = None
 if 'export_tasks' not in st.session_state:
     st.session_state.export_tasks = []
+# Store search results to prevent re-searching on visualization changes
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = None
+if 'thermal_collection' not in st.session_state:
+    st.session_state.thermal_collection = None
+if 'detailed_stats' not in st.session_state:
+    st.session_state.detailed_stats = None
 
 #Task status caching to reduce API calls
 #Lesson learn from multiple exports, since it conflict between user session state
@@ -352,18 +359,22 @@ if st.button("Cari citra satelit", type="primary") and st.session_state.aoi is n
 
         if coll_size == 0:
             st.warning("Tidak ada citra yang ditemukan. Coba: a) Naikkan batas tutupan awan, atau b) Ubah periode waktu/tanggal.")
+        else:
+            # Store search results in session state to prevent re-searching
+            st.session_state.search_results = collection
+            st.session_state.thermal_collection = thermal_collection
+            st.session_state.detailed_stats = detailed_stats
 
-    #get valid pixels (number of cloudless pixel in date range)
-    #valid_px = collection.reduce(ee.Reducer.count()).clip(aoi)
-    #stats = valid_px.reduceRegion(
-    #reducer=ee.Reducer.minMax().combine(
-    #    reducer2=ee.Reducer.mean(), sharedInputs=True),
-    #geometry=aoi,
-    #scale=30,
-    #maxPixels=1e13
-    #).getInfo()
 
 #=========4. Displaying the result of the search===========
+# Display results if they exist in session state (either from new search or previous search)
+if st.session_state.search_results is not None and st.session_state.detailed_stats is not None:
+    collection = st.session_state.search_results
+    thermal_collection = st.session_state.thermal_collection
+    detailed_stats = st.session_state.detailed_stats
+    aoi = st.session_state.aoi
+    gdf = st.session_state.gdf
+    
     #Display the search information as report
     summary_md = f"""
     ### Ringkasan Pencarian Citra Landsat
@@ -438,30 +449,20 @@ if st.button("Cari citra satelit", type="primary") and st.session_state.aoi is n
             st.info("Tidak ada data citra untuk ditampilkan")
     #st.subheader("Detailed Statistics") {'bands': ['RED', 'GREEN', 'BLUE'], 'min': 0, 'max': 0.3}
     #st.write(detailed_stats)
+    
+    # Safely get total images count with fallback
+    total_images = detailed_stats.get('total_images', 0)
+    if total_images == 0:
+        # Try alternative keys that might contain the count
+        total_images = detailed_stats.get('num_images', 0)
+        if total_images == 0:
+            # Fallback to collection size
+            try:
+                total_images = int(collection.size().getInfo())
+            except:
+                total_images = 0
+    
     if total_images > 0:
-        #visualization parameters
-        thermal_vis = {
-            'min': 286,
-            'max': 300,
-            'gamma': 0.4
-        }
-        # Set visualization parameters based on sensor type
-        if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
-            # Landsat 1-3 MSS bands: GREEN, RED, NIR1, NIR2
-            vis_params = {
-                'min': 0,
-                'max': 255,  # MSS data is in DN values
-                'gamma': [0.8, 0.9, 1],
-                'bands': ['NIR1', 'RED', 'GREEN']
-            }
-        else:
-            # Landsat 4-9 Surface Reflectance
-            vis_params = {
-                'min': 0,
-                'max': 0.4,
-                'gamma': [0.5, 0.9, 1],
-                'bands': ['NIR', 'RED', 'GREEN']
-            }
         #Create and image composite/mosaic for thermal bands (if available)
         if thermal_collection is not None:
             thermal_median = thermal_collection.median().clip(aoi)
@@ -470,25 +471,217 @@ if st.button("Cari citra satelit", type="primary") and st.session_state.aoi is n
         else:
             #For Landsat 1-3 MSS: no thermal bands available
             composite = collection.median().clip(aoi).toFloat()
-        # Store in session state for use in other modules
+        
+        #Add section for visualization control
+        st.subheader("Kombinasi Kanal Majemuk")
+        #Add commonly used band combination for Landsat
+        band_combinations = {
+            "True Color (RGB)": {
+                'bands': ['RED', 'GREEN', 'BLUE'],
+                'min': 0.0,
+                'max': 0.3,
+                'gamma': 1.4
+            },
+            "False Color Infrared (NIR/Red/Green)": {
+                'bands': ['NIR', 'RED', 'GREEN'],
+                'min': 0,
+                'max': 0.4,
+                'gamma': 1.1
+            },
+            "Short-wave Infrared (SWIR2/NIR/RED)": {
+                'bands': ['SWIR2', 'NIR', 'RED'],
+                'min': 0,
+                'max': 0.4,
+                'gamma': 1.2
+            },
+            "Land/Water (NIR/SWIR1/RED)": {
+                'bands': ['NIR','SWIR1','RED'],
+                'min': 0,
+                'max': 0.4,
+                'gamma': [0.95, 1.1, 1]
+            },
+            "Kombinasi saluran bebas": {
+                'bands': ['NIR', 'RED', 'GREEN'],  # Default for custom
+                'min': 0.0,
+                'max': 0.4,
+                'gamma': 1.0
+            }
+        }
+        
+        # Get available bands from the composite
+        available_bands = composite.bandNames().getInfo()
+        
+        #create a select box for the user to select the band combination
+        selected_combination = st.selectbox(
+            "Pilih Kombinasi Kanal:",
+            list(band_combinations.keys()),
+            index=0  #True color as default value
+        )
+        
+        # Get the selected visualization parameters
+        vis_params = band_combinations[selected_combination].copy()
+        
+        # If custom is selected, show band selection interface
+        if selected_combination == "Kombinasi saluran bebas":
+            st.info("💡 Pilih satu kanal untuk kombinasi hitam putih dan 3 kanal untuk visualisasi berwarna")
+            
+            col_band1, col_band2, col_band3 = st.columns(3)
+            
+            with col_band1:
+                band1 = st.selectbox(
+                    "Red Channel (or Single Band):",
+                    available_bands,
+                    index=available_bands.index('RED') if 'RED' in available_bands else 0,
+                    key="custom_band1"
+                )
+            
+            with col_band2:
+                band2 = st.selectbox(
+                    "Green Channel (optional):",
+                    ['None'] + available_bands,
+                    index=available_bands.index('GREEN') + 1 if 'GREEN' in available_bands else 0,
+                    key="custom_band2"
+                )
+            
+            with col_band3:
+                band3 = st.selectbox(
+                    "Blue Channel (optional):",
+                    ['None'] + available_bands,
+                    index=available_bands.index('BLUE') + 1 if 'BLUE' in available_bands else 0,
+                    key="custom_band3"
+                )
+            
+            # Build custom band list
+            custom_bands = [band1]
+            if band2 != 'None':
+                custom_bands.append(band2)
+            if band3 != 'None':
+                custom_bands.append(band3)
+            
+            # Update vis_params with custom bands
+            vis_params['bands'] = custom_bands
+            
+            # Show band combination info
+            if len(custom_bands) == 1:
+                st.caption(f"Grayscale visualization using: **{custom_bands[0]}**")
+            elif len(custom_bands) == 3:
+                st.caption(f"RGB visualization: R={custom_bands[0]}, G={custom_bands[1]}, B={custom_bands[2]}")
+            else:
+                st.warning("⚠️ Please select either 1 band (grayscale) or 3 bands (RGB)")
+                vis_params['bands'] = [band1, band1, band1]  # Fallback to grayscale
+        
+        # Advanced visualization controls in expander
+        with st.expander("Advanced Visualization Controls", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Min/Max value controls
+                min_val = st.slider(
+                    "Minimum Value:",
+                    0.0,
+                    0.5,
+                    float(vis_params['min']),
+                    0.01,
+                    help="Adjust the minimum display value",
+                    key="vis_min_slider"
+                )
+                max_val = st.slider(
+                    "Maximum Value:",
+                    0.1,
+                    1.0,
+                    float(vis_params['max']),
+                    0.01,
+                    help="Adjust the maximum display value",
+                    key="vis_max_slider"
+                )
+                
+                # Update vis_params with user adjustments
+                vis_params['min'] = min_val
+                vis_params['max'] = max_val
+            
+            with col2:
+                # Gamma controls - adapt based on number of bands
+                num_bands = len(vis_params['bands'])
+                
+                if num_bands == 3 and isinstance(vis_params['gamma'], list):
+                    st.write("**Gamma per band (R, G, B):**")
+                    gamma_r = st.slider("Red Gamma:", 0.1, 2.0, float(vis_params['gamma'][0]), 0.1, key="gamma_r")
+                    gamma_g = st.slider("Green Gamma:", 0.1, 2.0, float(vis_params['gamma'][1]), 0.1, key="gamma_g")
+                    gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, float(vis_params['gamma'][2]), 0.1, key="gamma_b")
+                    vis_params['gamma'] = [gamma_r, gamma_g, gamma_b]
+                elif num_bands == 3:
+                    # RGB but single gamma value
+                    use_per_band = st.checkbox("Use per-band gamma", value=False, key="use_per_band_gamma")
+                    if use_per_band:
+                        st.write("**Gamma per band (R, G, B):**")
+                        gamma_r = st.slider("Red Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_r2")
+                        gamma_g = st.slider("Green Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_g2")
+                        gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_b2")
+                        vis_params['gamma'] = [gamma_r, gamma_g, gamma_b]
+                    else:
+                        gamma = st.slider(
+                            "Gamma:",
+                            0.1,
+                            2.0,
+                            float(vis_params['gamma']) if not isinstance(vis_params['gamma'], list) else 1.0,
+                            0.1,
+                            help="Adjust image brightness/contrast",
+                            key="gamma_single"
+                        )
+                        vis_params['gamma'] = gamma
+                else:
+                    # Single band (grayscale)
+                    gamma = st.slider(
+                        "Gamma:",
+                        0.1,
+                        2.0,
+                        float(vis_params['gamma']) if not isinstance(vis_params['gamma'], list) else 1.0,
+                        0.1,
+                        help="Adjust image brightness/contrast",
+                        key="gamma_grayscale"
+                    )
+                    vis_params['gamma'] = gamma
+            
+        # Thermal band visualization parameters
+        thermal_vis = {
+            'min': 286,
+            'max': 300,
+            'gamma': 0.4
+        }
+        
+        #Store in session state for use in other modules
         st.session_state['composite'] = composite
         st.session_state['Image_metadata'] = detailed_stats
         st.session_state['AOI'] = aoi
         st.session_state['visualization'] = vis_params
-        # Display the image using geemap
+        
+        #Display the image using geemap, center around the AOI
+        st.subheader("Image Preview")
         centroid = gdf.geometry.centroid.iloc[0]
-        m = geemap.Map(center=[centroid.y, centroid.x], zoom=6)
+        m = geemap.Map(center=[centroid.y, centroid.x], zoom=9)
         
-        # Add thermal layer only if available (not for Landsat 1-3 MSS)
+        #Add layers with visibility controls
         if thermal_collection is not None:
-            m.addLayer(thermal_median, thermal_vis, "Landsat Thermal Band")
+            m.addLayer(thermal_median, thermal_vis, "Landsat Thermal Band", shown=False) #not shown
+        m.addLayer(collection, vis_params, 'Landsat Collection', shown=False) #not shown
+        m.addLayer(composite, vis_params, f'Composite - {selected_combination}', shown=True) #shown
+        m.add_geojson(gdf.__geo_interface__, layer_name="AOI", shown=False) #not shown
+        #cast the map to streamlit
+        m.to_streamlit(height=600)
         
-        m.addLayer(collection, vis_params, 'Landsat Collection', shown=True)
-        m.addLayer(composite, vis_params, 'Landsat Composite', shown=True)
-        m.add_geojson(gdf.__geo_interface__, layer_name="AOI", shown=False)
-        m.to_streamlit(height=600)   
+        #Add a button to clear search results and start over
+        if st.button("🔄 Clear Results", type="secondary"):
+            st.session_state.search_results = None
+            st.session_state.thermal_collection = None
+            st.session_state.detailed_stats = None
+            st.session_state.composite = None
+            st.session_state.Image_metadata = None
+            st.rerun()
+            
+elif st.session_state.aoi is not None:
+    st.info("Click 'Search Landsat Imagery' button above to begin searching.")
 else:
-    st.info("Unggah Wilayah kajian dan tentukan kriteria pencarian untuk memulai.")
+    st.info("Upload an AOI and specify search criteria to begin.")
 
 #=========5. Exporting the image collection===========
 #current version only support direct download for data no larger in 32mb 
