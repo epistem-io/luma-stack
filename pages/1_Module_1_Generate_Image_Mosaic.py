@@ -11,7 +11,7 @@ Architecture:
 import streamlit as st
 import geemap.foliumap as geemap
 import geopandas as gpd
-from epistemx.module_1 import Reflectance_Data, Reflectance_Stats
+from epistemx.module_1 import Reflectance_Data, Reflectance_Stats, final_Image
 from epistemx.shapefile_utils import shapefile_validator, EE_converter
 from modules.nav import Navbar
 import tempfile
@@ -379,10 +379,14 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
     summary_md = f"""
     ### Ringkasan Pencarian Citra Landsat
 
-    - **Total Citra Ditemukan:** {detailed_stats.get('total_images', 'N/A')}
+    - **Total Citra Ditemukan:** {detailed_stats.get('total_images', 'N/A')} lembar
     - **Rentang Tanggal Tersedia:** {detailed_stats.get('date_range', 'N/A')}
     """
     st.markdown(summary_md)
+    st.markdown(""" 
+    Seluruh lembar citra yang ditemukan berdasarkan kriteria pencarian digunakan untuk menyusun gabungan citra akhir 
+    yang dipotong sesuai dengan lingkup wilayah.  
+    """)
     #Path/Row information in expandable section
     path_row_tiles = detailed_stats.get('path_row_tiles', [])
     if path_row_tiles:
@@ -447,8 +451,6 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
             )
         else:
             st.info("Tidak ada data citra untuk ditampilkan")
-    #st.subheader("Detailed Statistics") {'bands': ['RED', 'GREEN', 'BLUE'], 'min': 0, 'max': 0.3}
-    #st.write(detailed_stats)
     
     # Safely get total images count with fallback
     total_images = detailed_stats.get('total_images', 0)
@@ -463,14 +465,18 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 total_images = 0
     
     if total_images > 0:
-        #Create and image composite/mosaic for thermal bands (if available)
+        #Create and image composite/mosaic for thermal bands (if available).
+        #Replace the streamlit based composite creation, with backend based process
+        image_processor = final_Image()
         if thermal_collection is not None:
             thermal_median = thermal_collection.median().clip(aoi)
-            #composite for multispectral data and stacked them with thermal bands. Also convert to float()
-            composite = collection.median().clip(aoi).addBands(thermal_median).toFloat()
+            #Create multispectral composite using median via final_Image
+            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', add_band_stats=False, verbose=False)
+            #Stack thermal band and ensure float type
+            composite = composite.addBands(thermal_median).toFloat()
         else:
-            #For Landsat 1-3 MSS: no thermal bands available
-            composite = collection.median().clip(aoi).toFloat()
+            #For Landsat 1-3 MSS: no thermal bands available — use temporal composite
+            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', add_band_stats=False, verbose=False).toFloat()
         
         #Add section for visualization control
         st.subheader("Kombinasi Kanal Majemuk")
@@ -508,7 +514,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
             }
         }
         
-        # Get available bands from the composite
+        #Get available bands from the composite
         available_bands = composite.bandNames().getInfo()
         
         #create a select box for the user to select the band combination
@@ -518,7 +524,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
             index=0  #True color as default value
         )
         
-        # Get the selected visualization parameters
+        #Get the selected visualization parameters
         vis_params = band_combinations[selected_combination].copy()
         
         # If custom is selected, show band selection interface
