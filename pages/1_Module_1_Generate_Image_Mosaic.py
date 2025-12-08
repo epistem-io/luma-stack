@@ -4,7 +4,7 @@ Module 1: Acquisition of Near cloud free satellite imagery
 This module provides a user interface for fetching satellite imagery from google earth engine python API
 
 Architecture:
-- Backend (module_2.py): Pure earth engine process without UI dependencies
+- Backend (module_1.py): Pure earth engine process without UI dependencies
 - Frontend (this file): Streamlit UI with session state management
 - State synchronization ensures data persistence across page interactions
 """
@@ -20,7 +20,7 @@ import os
 import ee
 import datetime
 import pandas as pd
-from ui_helper import show_footer, show_header
+from ui_helper import show_header
 
 # Page configuration
 st.set_page_config(
@@ -571,13 +571,13 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 vis_params['bands'] = [band1, band1, band1]  # Fallback to grayscale
         
         # Advanced visualization controls in expander
-        with st.expander("Advanced Visualization Controls", expanded=False):
+        with st.expander("Pengaturan visualisasi citra", expanded=False):
             col1, col2 = st.columns(2)
             
             with col1:
                 # Min/Max value controls
                 min_val = st.slider(
-                    "Minimum Value:",
+                    "Nilai Minimal:",
                     0.0,
                     0.5,
                     float(vis_params['min']),
@@ -586,7 +586,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                     key="vis_min_slider"
                 )
                 max_val = st.slider(
-                    "Maximum Value:",
+                    "Nilai Maksimal:",
                     0.1,
                     1.0,
                     float(vis_params['max']),
@@ -604,16 +604,16 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 num_bands = len(vis_params['bands'])
                 
                 if num_bands == 3 and isinstance(vis_params['gamma'], list):
-                    st.write("**Gamma per band (R, G, B):**")
+                    st.write("**Nillai Gamma setiap kanal (R, G, B):**")
                     gamma_r = st.slider("Red Gamma:", 0.1, 2.0, float(vis_params['gamma'][0]), 0.1, key="gamma_r")
                     gamma_g = st.slider("Green Gamma:", 0.1, 2.0, float(vis_params['gamma'][1]), 0.1, key="gamma_g")
                     gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, float(vis_params['gamma'][2]), 0.1, key="gamma_b")
                     vis_params['gamma'] = [gamma_r, gamma_g, gamma_b]
                 elif num_bands == 3:
                     # RGB but single gamma value
-                    use_per_band = st.checkbox("Use per-band gamma", value=False, key="use_per_band_gamma")
+                    use_per_band = st.checkbox("Gunakan nilai gamma setiap kanal", value=False, key="use_per_band_gamma")
                     if use_per_band:
-                        st.write("**Gamma per band (R, G, B):**")
+                        st.write("**Gamma setiap kanal (R, G, B):**")
                         gamma_r = st.slider("Red Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_r2")
                         gamma_g = st.slider("Green Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_g2")
                         gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_b2")
@@ -656,9 +656,9 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
         st.session_state['visualization'] = vis_params
         
         #Display the image using geemap, center around the AOI
-        st.subheader("Image Preview")
+        st.subheader("Pratayang Gabungan Citra")
         centroid = gdf.geometry.centroid.iloc[0]
-        m = geemap.Map(center=[centroid.y, centroid.x], zoom=9)
+        m = geemap.Map(center=[centroid.y, centroid.x], zoom=10)
         
         #Add layers with visibility controls
         if thermal_collection is not None:
@@ -815,6 +815,7 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
                                 "crs": export_crs,
                                 "scale": scale,
                                 "region": export_region,
+                                "filePerBand": False,
                                 "fileFormat": "GEO_TIFF",
                                 "formatOptions": {"cloudOptimized": True}
                             }
