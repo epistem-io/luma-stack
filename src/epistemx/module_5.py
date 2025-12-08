@@ -5,18 +5,6 @@ from dataclasses import dataclass
 from enum import Enum
 from .ee_config import ensure_ee_initialized
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
-
-"""
-
-THIS CODE IS USED FOR PHASE 2!!!!!!!!!
-
-"""
-
-
-
-
-
-
 #=================================== THIS CODE IS USED FOR PHASE 2!!!!!!!!!
 #Configure logging globally
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -340,11 +328,11 @@ class spectral_transformation_calcultator:
                 'SWIR1': image.select('SWIR1'), 'SWIR2': image.select('SWIR2')}                   
                 ).rename('AWEI')
             elif index_name == 'Tascap':
-                #Tasseled Cap Transformation (The coefficient only works for Landsat 8 and 9, modification required for other data)
+                #Tasseled Cap Transformation coefficient (works for Landsat 8 and 9 Surface Reflectance Data)
                 tc_coeffs = ee.Array([
-                    [0.3443, 0.4057, 0.4667, 0.5347, 0.3936, 0.2412],    # Brightness
-                    [-0.2365, -0.2836, -0.4257, 0.8097, 0.0043, -0.1638], # Greenness  
-                    [0.1301, 0.2280, 0.3492, 0.1795, -0.6270, -0.6195]    # Wetness
+                    [0.3690, 0.4271, 0.4689, 0.5073, 0.3824, 0.2406],    # Brightness
+                    [-0.2870, -0.2685, -0.4087, 0.8145, 0.0637, -0.1052], # Greenness  
+                    [0.0382, 0.2137, 0.3536, 0.2270, -0.6108, -0.6351]    # Wetness
                 ])
                 bands_array = image.select(['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']).toArray()
                 result = ee.Image(tc_coeffs).matrixMultiply(bands_array.toArray(1)).arrayProject([0]).arrayFlatten([['brightness', 'greenness', 'wetness']])
@@ -404,3 +392,160 @@ class spectral_transformation_calcultator:
             'Avaliable Indices': len(self.avaliable_indices),
             'Categories': [cat.value for cat in indexcategory]
         }
+#=================================== Terrain Metrics ===================================
+class terrain_calculator:
+    """
+    Calculate terrain metrics for creating input covariates in land cover mapping.
+    Provides elevation, slope, and aspect data.
+    """
+    def __init__(self):
+        """
+        Initialize the terrain calculator.
+        Ensure Earth Engine is initialized lazily.
+        """
+        ensure_ee_initialized()
+        logger.info("Terrain calculator initialized")
+    
+    def calculate_terrain(self, aoi: ee.Geometry) -> ee.Image:
+        """
+        Return stacked terrain metric consisting of elevation, slope, and aspect data.
+        
+        Parameters:
+        -----------
+        aoi : ee.Geometry
+            Area of interest geometry
+            
+        Returns:
+        --------
+        ee.Image : Stacked terrain metrics (elevation, slope, aspect)
+        
+        Notes:
+        ------
+        - Further development should use Indonesian National DEM (DEMNAS) for higher spatial resolution
+        - Future additions: Global ALOS Landforms 
+          (https://developers.google.com/earth-engine/datasets/catalog/CSP_ERGo_1_0_Global_ALOS_landforms#bands)
+        """
+        try:
+            logger.info("Calculating terrain metrics...")
+            
+            #Get elevation data
+            #Use NASADEM since it provide better height accuracy compared to other DEM data
+            dem = ee.Image("NASA/NASADEM_HGT/001").select('elevation').clip(aoi)
+            #Calculate slope (units are degrees, range is [0,90))
+            slope = ee.Terrain.slope(dem).rename('slope')
+            #Calculate aspect (units are degrees where 0=N, 90=E, 180=S, 270=W)
+            aspect = ee.Terrain.aspect(dem).rename('aspect')
+            #Stack the terrain metrics
+            terrain_metric = ee.Image.cat(dem, slope, aspect)
+            logger.info("Successfully calculated terrain metrics: elevation, slope, aspect")
+            return terrain_metric
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate terrain metrics: {str(e)}")
+            return None
+#=================================== Distance Metrics ===================================
+class distance_calculator:
+    """
+    Calculate distance metrics based on predefined datasets (roads, coastline, settlements, etc.)
+    for creating input covariates in land cover mapping.
+    """
+    def __init__(self):
+        """
+        Initialize the distance calculator.
+        Ensure Earth Engine is initialized lazily.
+        """
+        ensure_ee_initialized()
+        logger.info("Distance calculator initialized")
+    
+    def calculate_distance_metrics(self, 
+                                   aoi: ee.Geometry, 
+                                   max_dist: float = 500000, 
+                                   in_meters: bool = False) -> ee.Image:
+        """
+        Create distance images based on predefined datasets (roads, coastline, settlements).
+        
+        Parameters:
+        -----------
+        aoi : ee.Geometry
+            Area of interest geometry
+        max_dist : float
+            Maximum cumulative cost distance (in meters or pixels). Default: 500000
+        in_meters : bool
+            If True, output distance in meters instead of pixels. Default: False
+            Note: Using meters requires more computation time
+            
+        Returns:
+        --------
+        ee.Image : Stacked distance metrics (dist_roads, dist_coast, dist_settlement)
+        
+        Notes:
+        ------
+        - The datasets used for distance metrics may be outdated and require updates
+        - Datasets include: Natural Earth Coastline, OSM roads, RBI roads, HRSL settlements
+        """
+        try:
+            logger.info(f"Calculating distance metrics (max_dist={max_dist}, in_meters={in_meters})...")
+            
+            # Set up cost image based on distance unit preference
+            if in_meters:
+                # Distance in meters (requires more computation time)
+                cost_image = ee.Image.pixelArea().sqrt()
+                logger.info("Using meter-based distance calculation")
+            else:
+                # Distance in pixel units (more efficient storage)
+                cost_image = ee.Image(1)
+                logger.info("Using pixel-based distance calculation")
+            
+            # Helper function to calculate distance from source mask
+            def distance_image(source_mask):
+                """Source mask is binary mask where value 1 is unmasked data (starting location)"""
+                return cost_image.cumulativeCost(source_mask, max_dist)
+            
+            # Natural Earth Coastline data
+            # (https://www.naturalearthdata.com/downloads/10m-physical-vectors/10m-coastline/)
+            logger.info("Processing coastline data...")
+            ne_coastline = ee.FeatureCollection(
+                "users/hadicu06/IIASA/RESTORE/vector_datasets/coastline_ne_10m"
+            ).filterBounds(aoi)
+            coast_dist = ne_coastline.map(lambda ft: ft.set('constant', 1)) \
+                                    .reduceToImage(['constant'], ee.Reducer.first()) \
+                                    .mask()
+            
+            # Roads data (OSM and RBI)
+            # Note: May require updates
+            logger.info("Processing roads data...")
+            road_osm = ee.FeatureCollection(
+                "users/hadicu06/IIASA/RESTORE/vector_datasets/road_osm"
+            ).filterBounds(aoi)
+            road_rbi = ee.FeatureCollection(
+                "users/hadicu06/IIASA/RESTORE/vector_datasets/road_rbi"
+            ).filterBounds(aoi)
+            roads_dist = road_osm.merge(road_rbi) \
+                                .map(lambda ft: ft.set('constant', 1)) \
+                                .reduceToImage(['constant'], ee.Reducer.max()) \
+                                .mask()
+            
+            # Settlement data from High Resolution Settlement Layer (HRSL)
+            # (https://dataforgood.facebook.com/dfg/tools/high-resolution-population-density-maps)
+            logger.info("Processing settlement data...")
+            hrsl = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop") \
+                    .mosaic() \
+                    .clip(aoi)
+            hrsl_connected = hrsl.int().connectedPixelCount(maxSize=100, eightConnected=True)
+            hrsl_masked = hrsl_connected.unmask().gt(3)
+            
+            # Calculate distance metrics
+            logger.info("Computing distance transformations...")
+            dist_roads = distance_image(roads_dist).rename('dist_roads')
+            dist_coast = distance_image(coast_dist).rename('dist_coast')
+            dist_settlement = distance_image(hrsl_masked).rename('dist_settlement')
+            
+            # Stack into one image
+            distance_metrics = ee.Image.cat(dist_roads, dist_coast, dist_settlement)
+            
+            logger.info("Successfully calculated distance metrics: dist_roads, dist_coast, dist_settlement")
+            return distance_metrics
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate distance metrics: {str(e)}")
+            return None
