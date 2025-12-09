@@ -150,55 +150,53 @@ class Reflectance_Data:
         return thermal_data in self.THERMAL_DATASETS
     #Function to mask clouds, shadow, and cirrus. Using QA Bands
     def mask_landsat_sr(self, image,cloud_conf_thresh=2, shadow_conf_thresh=2, cirrus_conf_thresh=2):
-            """
-            Mask clouds, shadows and cirrus for Landsat Collection 2 SR using QA_PIXEL band.
+        """
+        Mask clouds, shadows and cirrus for Landsat Collection 2 SR using QA_PIXEL band.
                 
-            Parameters:
-            -----------
-            image : ee.Image: Landsat SR image
-            cloud_conf_thresh : int. Cloud confidence threshold (0=None, 1=Low, 2=Med, 3=High)
-            shadow_conf_thresh : int. Shadow confidence threshold (0=None, 1=Low, 2=Med, 3=High)
-            cirrus_conf_thresh : int. Cirrus confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        Parameters:
+        -----------
+        image : ee.Image: Landsat SR image
+        cloud_conf_thresh : int. Cloud confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        shadow_conf_thresh : int. Shadow confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        cirrus_conf_thresh : int. Cirrus confidence threshold (0=None, 1=Low, 2=Med, 3=High)
 
-            Returns:
-            --------
-            ee.Image : Masked image (ee.)
+        Returns:
+        --------
+        ee.Image : Masked image (ee.)
 
-            References
-            --------
-            https://www.usgs.gov/landsat-missions/landsat-collection-2-quality-assessment-bands 
+        References
+        --------
+        https://www.usgs.gov/landsat-missions/landsat-collection-2-quality-assessment-bands 
 
-            Example
-            --------
-            >>> get_landsat = Reflectance_Data()
-            #Implementation on image collection
-            >>> collection = (collection.map(lambda img: get_landsat.mask_landsat_sr(img))
-            #Implementatio on Image
-            >>> masked_image = get_landsat.mask_landsat_sr(image)
-            """
-            qa = image.select('QA_PIXEL')
-            #Deterministic bits ---
-            cloud_bit = 1 << 3
-            shadow_bit = 1 << 4
-            cirrus_bit = 1 << 2
-
-            cloud_mask = qa.bitwiseAnd(cloud_bit).eq(0)
-            shadow_mask = qa.bitwiseAnd(shadow_bit).eq(0)
-            cirrus_mask = qa.bitwiseAnd(cirrus_bit).eq(0)
-
-            #Confidence bits ---
-            cloud_conf = qa.rightShift(8).bitwiseAnd(3)     # Bits 8–9
-            shadow_conf = qa.rightShift(10).bitwiseAnd(3)   # Bits 10–11
-            #snow_conf = qa.rightShift(12).bitwiseAnd(3)     # Bits 12–13
-            cirrus_conf = qa.rightShift(14).bitwiseAnd(3)   # Bits 14–15
-            #Keep pixels below thresholds
-            conf_mask = (cloud_conf.lt(cloud_conf_thresh)
+        Example
+        --------
+        >>> get_landsat = Reflectance_Data()
+        #Implementation on image collection
+        >>> collection = (collection.map(lambda img: get_landsat.mask_landsat_sr(img))
+        #Implementatio on Image
+        >>> masked_image = get_landsat.mask_landsat_sr(image)
+        """
+        qa = image.select('QA_PIXEL')
+        #Deterministic bits
+        #fyi, (bit 3 is set to 1) and so on
+        cloud_bit = 1 << 3
+        shadow_bit = 1 << 4
+        cirrus_bit = 1 << 2
+        #bitwise operations to get the masks
+        cloud_mask = qa.bitwiseAnd(cloud_bit).eq(0)
+        shadow_mask = qa.bitwiseAnd(shadow_bit).eq(0)
+        cirrus_mask = qa.bitwiseAnd(cirrus_bit).eq(0)
+        #Confidence bits ---
+        cloud_conf = qa.rightShift(8).bitwiseAnd(3)     # Bits 8–9
+        shadow_conf = qa.rightShift(10).bitwiseAnd(3)   # Bits 10–11
+        cirrus_conf = qa.rightShift(14).bitwiseAnd(3)   # Bits 14–15
+        #Keep pixels below thresholds
+        conf_mask = (cloud_conf.lt(cloud_conf_thresh)
                         .And(shadow_conf.lt(shadow_conf_thresh))
-                        #.And(snow_conf.lt(snow_conf_thresh))
                         .And(cirrus_conf.lt(cirrus_conf_thresh)))
-            #Final mask
-            final_mask = cloud_mask.And(shadow_mask).And(cirrus_mask).And(conf_mask)
-            return image.updateMask(final_mask).copyProperties(image, image.propertyNames())
+        #Final mask
+        final_mask = cloud_mask.And(shadow_mask).And(cirrus_mask).And(conf_mask)
+        return image.updateMask(final_mask).copyProperties(image, image.propertyNames())
     #Functions to rename Landsat bands 
     def rename_landsat_bands(self, image, sensor_type):
         """
@@ -254,6 +252,107 @@ class Reflectance_Data:
         optical_bands = image.select('SR_B.').multiply(0.0000275).add(-0.2)
         #thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
         return image.addBands(optical_bands, None, True)
+    
+        #Add new code for calculating cloud cover within AOI
+    def add_aoi_cloud_cover(self, img, aoi, scale=90, max_pixels=1e9,
+                            cloud_conf_thresh=2, shadow_conf_thresh=2, cirrus_conf_thresh=2,
+                            debug=False):
+        """
+        Calculate cloud/shadow/cirrus coverage percentage within AOI.
+        Uses the same QA_PIXEL logic as mask_landsat_sr() for consistency.
+        
+        Parameters
+        ----------
+        img : ee.Image
+            Landsat image with QA_PIXEL band
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest for cloud calculation
+        scale : int
+            Pixel scale for computation in meters (default: 90m for efficiency)
+            Use 30m for accurate results on small areas, 90m+ for large regions
+        max_pixels : float
+            Maximum number of pixels to process (default: 1e9)
+        cloud_conf_thresh : int
+            Cloud confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        shadow_conf_thresh : int
+            Shadow confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        cirrus_conf_thresh : int
+            Cirrus confidence threshold (0=None, 1=Low, 2=Med, 3=High)
+        debug : bool
+            If True, print debug information about cloud calculation (default: False)
+        
+        Returns
+        -------
+        ee.Image
+            Input image with added 'CLOUDY_PERC_AOI' property
+        
+        Example
+        -------
+        >>> collection = collection.map(lambda img: optical_reflectance.add_aoi_cloud_cover(img, aoi, scale=90))
+        >>> collection = collection.filter(ee.Filter.lt('CLOUDY_PERC_AOI', 30))
+        """
+        #Get QA band and clip to AOI
+        qa = img.select('QA_PIXEL').clip(aoi)
+        #=== SAME LOGIC AS mask_landsat_sr() ===
+        #Deterministic bits
+        cloud_bit = 1 << 3
+        shadow_bit = 1 << 4
+        cirrus_bit = 1 << 2
+        #Bitwise operations to get the masks
+        cloud_mask = qa.bitwiseAnd(cloud_bit).eq(0)
+        shadow_mask = qa.bitwiseAnd(shadow_bit).eq(0)
+        cirrus_mask = qa.bitwiseAnd(cirrus_bit).eq(0)
+        #Confidence bits
+        cloud_conf = qa.rightShift(8).bitwiseAnd(3)
+        shadow_conf = qa.rightShift(10).bitwiseAnd(3)
+        cirrus_conf = qa.rightShift(14).bitwiseAnd(3)
+        #Keep pixels below thresholds
+        conf_mask = (cloud_conf.lt(cloud_conf_thresh)
+                    .And(shadow_conf.lt(shadow_conf_thresh))
+                    .And(cirrus_conf.lt(cirrus_conf_thresh)))
+        
+        #Final clear mask (1 = clear, 0 = cloudy/masked)
+        clear_mask_aoi = cloud_mask.And(shadow_mask).And(cirrus_mask).And(conf_mask)
+        #Calculate areas
+        pixel_area = ee.Image.pixelArea()
+        #Total area in AOI
+        total_area = pixel_area.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=aoi,
+            scale=scale,
+            maxPixels=max_pixels,
+            bestEffort=True,
+            tileScale=4
+        )
+        #Clear (unmasked) area and renamed
+        clear_area_img = clear_mask_aoi.multiply(pixel_area).rename('clear_area')
+        clear_area = clear_area_img.reduceRegion(
+            reducer=ee.Reducer.sum(),
+            geometry=aoi,
+            scale=scale,
+            maxPixels=max_pixels,
+            bestEffort=True,
+            tileScale=4
+        )
+        #Calculate cloud percentage with null handling
+        total = ee.Number(total_area.get('area')).max(1)  # Avoid division by zero
+        clear = ee.Number(clear_area.get('clear_area')).max(0)  # Default to 0 if null
+        
+        clear_percent = clear.multiply(100).divide(total)
+        cloud_percent = ee.Number(100).subtract(clear_percent).round()
+        #Clamp between 0 and 100
+        cloud_percent = cloud_percent.max(0).min(100)
+        
+        # Debug logging if requested
+        if debug:
+            scene_id = img.get('system:index')
+            cloud_val = cloud_percent.getInfo()
+            total_val = total.getInfo()
+            clear_val = clear.getInfo()
+            self.logger.info(f"Scene {scene_id.getInfo()}: AOI Cloud={cloud_val}%, Total={total_val/1e6:.2f}km², Clear={clear_val/1e6:.2f}km²")
+        
+        return img.set('CLOUDY_PERC_AOI', cloud_percent)
+
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
                         cloud_cover=30,

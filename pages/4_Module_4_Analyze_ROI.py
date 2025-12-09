@@ -416,8 +416,8 @@ if st.session_state.get("analysis_complete", False):
             
             **Contoh Kasus:**
             - **TD = 1.95** antara "Hutan" dan "Lahan Terbangun" → Sangat baik, mudah dibedakan
-            - **TD = 1.45** antara "Sawah" dan "Lahan Terbuka" → Lemah, perlu perhatian khusus
-            - **TD = 0.75** antara "Semak Belukar" dan "Padang Rumput" → Buruk, sulit dibedakan
+            - **TD = 1.45** antara "Sawah" dan "Lahan Pertanian Kering" → Lemah, perlu perhatian khusus
+            - **TD = 0.75** antara "Tanaman Sawit" dan "Tanaman Karet" → Buruk, sulit dibedakan
             """)
             
         else:
