@@ -73,9 +73,9 @@ class Reflectance_Data:
             'description': 'Landsat 9 Operational Land Imager-2 Surface Reflectance'
         }
     }
-#Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
-#The TOA data provide consistent result and contain minimum missing pixel data
-#Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are not included
+    #Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
+    #The TOA data provide consistent result and contain minimum missing pixel data
+    #Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are not included
     THERMAL_DATASETS = {
         'L4_TOA': {
             'collection': 'LANDSAT/LT04/C02/T1_TOA',
@@ -126,7 +126,7 @@ class Reflectance_Data:
         self.logger.setLevel(log_level)
 
         self.logger.info("ReflectanceData initialized.")
-    
+    #Function to check if thermal bands are available for a given dataset
     def has_thermal_capability(self, optical_data):
         """
         Check if a given optical dataset has corresponding thermal bands.
@@ -141,11 +141,11 @@ class Reflectance_Data:
         bool
             True if thermal bands are available, False otherwise
         """
-        # Landsat 1-3 MSS sensors did not have thermal bands
+        #Landsat 1-3 MSS sensors did not have thermal bands
         if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
             return False
         
-        # Check if corresponding thermal dataset exists
+        #Check if corresponding thermal dataset exists
         thermal_data = optical_data.replace('_SR', '_TOA')
         return thermal_data in self.THERMAL_DATASETS
     #Function to mask clouds, shadow, and cirrus. Using QA Bands
@@ -197,7 +197,7 @@ class Reflectance_Data:
         #Final mask
         final_mask = cloud_mask.And(shadow_mask).And(cirrus_mask).And(conf_mask)
         return image.updateMask(final_mask).copyProperties(image, image.propertyNames())
-    #Functions to rename Landsat bands 
+    #Functions standarize Landsat bands 
     def rename_landsat_bands(self, image, sensor_type):
         """
         Standardize Landsat Surface Reflectance (SR) band names based on sensor type. From 'SR_B*' or 'B*' to 'NIR', 'GREEN', etc.
@@ -355,8 +355,7 @@ class Reflectance_Data:
 
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
-                        cloud_cover=30,
-                        verbose=True, compute_detailed_stats=True):
+                        cloud_cover=30, apply_cloud_mask=True, verbose=True, compute_detailed_stats=True):
         """
         Get optical image collection for Landsat 1-9 SR data with detailed information logging.
 
@@ -367,6 +366,8 @@ class Reflectance_Data:
         end_date : str. End date in format 'YYYY-MM-DD' or year.
         optical_data : str. Dataset type: i.e 'L5_SR', 'L7_SR', 'L8_SR', 'L9_SR'.
         cloud_cover : int. Maximum cloud cover percentage on land (default: 30).
+        apply_cloud_mask : bool. If True, apply QA-based cloud masking (default: True).
+            Set to False to skip cloud masking and preserve all pixels.
         verbose : bool. Print detailed information about the collection (default: True).
         compute_detailed_stats : bool
             If True, compute detailed statistics 
@@ -376,6 +377,18 @@ class Reflectance_Data:
         -------
         tuple : (ee.ImageCollection, dict)
             Filtered and preprocessed image collection with statistics.
+        
+        References
+        -------
+        https://developers.google.com/earth-engine/datasets/catalog/landsat
+
+        Example
+        --------
+        >>> get_landsat = Reflectance_Data()
+        >>> collection, stats = get_landsat.get_optical_data(aoi, 2020, 2023, 'L8_SR', 30, True, True)
+        >>> # Without cloud masking
+        >>> collection, stats = get_landsat.get_optical_data(aoi, 2020, 2023, 'L8_SR', 
+        ...                                                   cloud_cover=30, apply_cloud_mask=False)
         """
         #Helper function so that the user only input year or specific date range
         def parse_year_or_date(date_input, is_start=True):
@@ -405,28 +418,11 @@ class Reflectance_Data:
             if not compute_detailed_stats:
                 self.logger.info("detailed statistics will not be computed")
 
-        #Initial collection
+        #Initial collection statistic
         initial_collection = (ee.ImageCollection(config['collection'])
                             .filterBounds(aoi)
                             .filterDate(start_date, end_date))
-        #Compute cloud within the area of interest (produce additional processing time)
-        '''
-        def add_aoi_cloud(img):
-            qa = img.select('QA_PIXEL')
-            cloud_mask = qa.bitwiseAnd(1 << 3).Or(qa.bitwiseAnd(1<<4))
-            total = ee.Number(cloud_mask.reduceRegion(
-                reducer=ee.Reducer.count(), geometry=aoi, scale=30, maxPixels=1e9
-            ).values().get(0))
-            cloudy = ee.Number(cloud_mask.reduceRegion(
-                reducer=ee.Reducer.sum(), geometry=aoi, scale=30, maxPixels=1e9
-            ).values().get(0))
-            cloud_perc = cloudy.divide(total).multiply(100)
-            return img.set({'CLOUDY_PERC_AOI': cloud_perc})
-        
-        #Apply the AOI cloud percentage to the image collection
-        initial_collection = initial_collection.map(add_aoi_cloud)
-        '''
-        #initial_stats = self.get_collection_statistics(initial_collection, compute_detailed_stats)
+        #Used the class Reflectance stats for improved report 
         stats_object = Reflectance_Stats()
         initial_stats = stats_object.get_collection_statistics(initial_collection, compute_detailed_stats)
         if verbose and compute_detailed_stats and initial_stats.get('total_images', 0) > 0:
@@ -463,10 +459,16 @@ class Reflectance_Data:
                                     f"{initial_stats['cloud_cover']['max']:.1f}%")
         elif verbose:
             self.logger.info("Filtered collection created (use compute_detailed_stats=True for more information)")
-
-        #Apply masking and band renaming to image collection after filtering
+        #Apply masking and band renaming to image collection after filtering. Masking is now optional 
+        if apply_cloud_mask:
+            collection = collection.map(lambda img: self.mask_landsat_sr(img))
+            if verbose:
+                self.logger.info("Cloud masking applied using QA_PIXEL band")
+        else:
+            if verbose:
+                self.logger.info("Cloud masking skipped - all pixels preserved")
+        
         collection = (collection
-                    .map(lambda img: self.mask_landsat_sr(img))
                     .map(lambda img: self.apply_scale_factors(img))
                     .map(lambda img: self.rename_landsat_bands(img, config['sensor'])))
 
@@ -476,13 +478,14 @@ class Reflectance_Data:
             'sensor': config['sensor'],
             'date_range_requested': f"{start_date} to {end_date}",
             'cloud_cover_threshold': cloud_cover,
+            'cloud_mask_applied': apply_cloud_mask,
             'initial_collection': initial_stats,
             'filtered_collection': filtered_stats,
             'detailed_stats_computed': compute_detailed_stats
         }
     #TOA-based Thermal Bands
     def get_thermal_bands(self, aoi, start_date, end_date, thermal_data = 'L8_TOA', cloud_cover=30,
-                        verbose=True, compute_detailed_stats=True):
+                        apply_cloud_mask=True, verbose=True, compute_detailed_stats=True):
         """
         Get the thermal bands from landsat TOA data
     
@@ -491,7 +494,7 @@ class Reflectance_Data:
         aoi :  ee.FeatureCollection. Area of interest.
         start_date : str. Start date in format 'YYYY-MM-DD' or year.
         end_date : str. End date in format 'YYYY-MM-DD' or year.
-        optical_data : str. Dataset type: 'L5_SR', 'L7_SR', 'L8_SR', 'L9_SR'.
+        thermal_data : str. Dataset type: 'L4_TOA', 'L5_TOA', 'L7_TOA', 'L8_TOA', 'L9_TOA'.
         cloud_cover : int. Maximum cloud cover percentage on land (default: 30).
         verbose : bool. Print detailed information about the collection (default: True).
         compute_detailed_stats : bool
@@ -537,7 +540,6 @@ class Reflectance_Data:
                 raise ValueError(f"thermal_data must be one of: {list(self.THERMAL_DATASETS.keys())}")
 
         config = self.THERMAL_DATASETS[thermal_data]
-
         #Decide which thermal band to select
         sensor = config['sensor']
         if sensor in ['L4', 'L5']:
@@ -578,8 +580,15 @@ class Reflectance_Data:
         elif verbose:
             self.logger.info("Filtered collection created (use compute_detailed_stats=True for detailed info)")
         
-        #Apply masking (QA-based)
-        collection = collection.map(lambda img: self.mask_landsat_sr(img))
+        #Apply masking (QA-based) - optional
+        if apply_cloud_mask:
+            collection = collection.map(lambda img: self.mask_landsat_sr(img))
+            if verbose:
+                self.logger.info("Cloud masking applied using QA_PIXEL band")
+        else:
+            if verbose:
+                self.logger.info("Cloud masking skipped - all pixels preserved")
+        
         collection = collection.select(thermal_band)
         collection = collection.map(rename_thermal_band)
 
@@ -590,6 +599,7 @@ class Reflectance_Data:
             'thermal_band': thermal_band,
             'date_range_requested': f"{start_date} to {end_date}",
             'cloud_cover_threshold': cloud_cover,
+            'cloud_mask_applied': apply_cloud_mask,
             'initial_collection': initial_stats,
             'filtered_collection': filtered_stats,
             'detailed_stats_computed': compute_detailed_stats
@@ -658,10 +668,6 @@ class Reflectance_Stats:
                     }
                     if print_report:
                         self.print_collection_report(stats)
-                    #if total_images <= 20:
-                    #    self.logger.info(f"Scene IDs:{', '.join(scene_id)}")
-                    #else:
-                    #    self.logger.info(f"Scene IDs (first 10): {', '.join(scene_id[:10])}")
                 else:
                     stats = {
                         'total_images': 0,
@@ -779,9 +785,98 @@ class final_Image:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(log_level)
         self.logger.info("final_Image initialized.")
-    #Quality mosaic for stacking multiple scene and then clip them
-    #Quality mosaic use all the pixel value in a single scene
-    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI', verbose=True):
+    #Function to calculate data coverage (pixel validity) within AOI
+    def calculate_data_coverage(self, composite_image, aoi, scale=30, max_pixels=1e9, verbose=True):
+        """
+        Calculate data coverage (valid pixels) percentage within AOI for a composite image.
+        This shows how much of your AOI has valid data after compositing.
+        
+        Parameters
+        ----------
+        composite_image : ee.Image
+            Composite image (from get_temporal_composite or get_quality_mosaic)
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest for coverage calculation
+        scale : int
+            Pixel scale for computation in meters (default: 30m for Landsat)
+        max_pixels : float
+            Maximum number of pixels to process (default: 1e9)
+        verbose : bool
+            If True, log detailed information (default: True)
+        
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - 'data_coverage_percent': Percentage of AOI with valid data (0-100)
+            - 'data_gap_percent': Percentage of AOI with missing/masked data (0-100)
+            - 'total_area_km2': Total AOI area in km²
+            - 'valid_area_km2': Area with valid data in km²
+            - 'gap_area_km2': Area with data gaps in km²
+        
+        Example
+        -------
+        >>> image_processor = final_Image()
+        >>> composite = image_processor.get_temporal_composite(collection, aoi)
+        >>> coverage = image_processor.calculate_data_coverage(composite, aoi)
+        >>> print(f"Data coverage: {coverage['data_coverage_percent']:.1f}%")
+        """
+        if isinstance(aoi, ee.FeatureCollection):
+            geometry = aoi.geometry()
+        else:
+            geometry = aoi
+        
+        if verbose:
+            self.logger.info("Calculating data coverage within AOI...")
+        
+        #Create a mask of valid (non-masked) pixels
+        #Use the first band to check for valid data (all bands should have same mask)
+        first_band = composite_image.select(0)
+        valid_mask = first_band.mask()
+        #Calculate pixel area
+        pixel_area = ee.Image.pixelArea()
+        #Total area in AOI
+        total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
+            bestEffort=True,
+            tileScale=4
+        )
+        #Valid (unmasked) area
+        valid_area_img = valid_mask.multiply(pixel_area).rename('valid_area')
+        valid_area = valid_area_img.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
+            bestEffort=True,
+            tileScale=4
+        )
+        #Calculate coverage percentage
+        total = ee.Number(total_area.get('area')).max(1)  # Avoid division by zero
+        valid = ee.Number(valid_area.get('valid_area')).max(0)  # Default to 0 if null
+        coverage_percent = valid.multiply(100).divide(total)
+        gap_percent = ee.Number(100).subtract(coverage_percent)
+        # Clamp between 0-100 (make sure its 0 - 100)
+        coverage_percent = coverage_percent.max(0).min(100)
+        gap_percent = gap_percent.max(0).min(100)
+        #Get values (pull from server)
+        total_val = total.getInfo()
+        valid_val = valid.getInfo()
+        coverage_val = coverage_percent.getInfo()
+        gap_val = gap_percent.getInfo()
+        #Convert to km²
+        total_km2 = total_val / 1e6
+        valid_km2 = valid_val / 1e6
+        gap_km2 = (total_val - valid_val) / 1e6
+        #Data logging if needed
+        if verbose:
+            self.logger.info(f"Data coverage: {coverage_val:.1f}% ({valid_km2:.2f} km² of {total_km2:.2f} km²)")
+            self.logger.info(f"Data gaps: {gap_val:.1f}% ({gap_km2:.2f} km²)")
+        return {
+            'data_coverage_percent': round(coverage_val, 2),
+            'data_gap_percent': round(gap_val, 2),
+            'total_area_km2': round(total_km2, 2),
+            'valid_area_km2': round(valid_km2, 2),
+            'gap_area_km2': round(gap_km2, 2)
+        }
+    #Quality mosaic for stacking multiple scene and then clip them. This procedure stacked all of the imagery regardless of the pixel value
+    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI', 
+                          calculate_coverage=False, coverage_scale=30, verbose=True):
         """
         Create a mosaic that selects the best available pixels across the AOI.
         Uses qualityMosaic to automatically select pixels with highest quality metric.
@@ -797,13 +892,20 @@ class final_Image:
             - 'NDVI': Normalized Difference Vegetation Index (Select pixels with high NDVI value)
             - 'NIR': Near-infrared band (general purpose, select pixel with highest NIR reflectance)
             - 'BLUE': Blue band (inverted - selects clearest pixels, since lower blue value correspond to haze)
+        calculate_coverage : bool
+            If True, calculate data coverage within AOI (default: False)
+            Note: This triggers a client-side computation and may be slow for large areas
+        coverage_scale : int
+            Pixel scale in meters for coverage calculation (default: 30m)
+            Use larger values (90m+) for faster computation on large areas
         verbose : bool
             If True, log detailed information (default: True)
             
         Returns
         -------
-        ee.Image
-            Quality mosaic image clipped to AOI with best available pixels
+        tuple : (ee.Image, dict) if calculate_coverage=True, else ee.Image
+            - Quality mosaic image clipped to AOI with best available pixels
+            - Coverage statistics dict (only if calculate_coverage=True)
             
         Example
         -------
@@ -811,6 +913,10 @@ class final_Image:
         >>> collection, stats = data_fetcher.get_optical_data(aoi, 2020, 2020, 'L8_SR')
         >>> image_processor = final_Image()
         >>> quality_image = image_processor.get_quality_mosaic(collection, aoi, quality_band='NDVI')
+        >>> # With coverage calculation
+        >>> quality_image, coverage = image_processor.get_quality_mosaic(
+        ...     collection, aoi, quality_band='NDVI', calculate_coverage=True
+        ... )
         """
         #safety checks, make sure the AOI is ee feature collection
         if isinstance(aoi, ee.FeatureCollection):
@@ -877,12 +983,20 @@ class final_Image:
             end_str = end_date.getInfo()
             self.logger.info(f"Mosaic date range: {start_str} to {end_str}")
         
-        return clipped
+        # Calculate data coverage if requested
+        if calculate_coverage:
+            coverage_stats = self.calculate_data_coverage(
+                clipped, aoi, scale=coverage_scale, verbose=verbose
+            )
+            return clipped, coverage_stats
+        else:
+            return clipped
     #Temporal composite computes statistics across pixels
     #logic behind cloud 'removal' is that cloud typically have higher pixel value due to high reflectance,
     #thus when median composite is used cloud get 'remove' from the final image
     def get_temporal_composite(self, collection, aoi, reducer='median', 
-                              add_band_stats=False, verbose=True):
+                              add_band_stats=False, calculate_coverage=False, 
+                              coverage_scale=30, verbose=True):
         """
         Create a temporal composite from image collection using specified reducer.
         Output is always clipped to the AOI.
@@ -898,13 +1012,20 @@ class final_Image:
             (default: 'median')
         add_band_stats : bool
             If True, add additional bands with stdDev and count (default: False)
+        calculate_coverage : bool
+            If True, calculate data coverage within AOI (default: False)
+            Note: This triggers a client-side computation and may be slow for large areas
+        coverage_scale : int
+            Pixel scale in meters for coverage calculation (default: 30m)
+            Use larger values (90m+) for faster computation on large areas
         verbose : bool
             If True, log detailed information (default: True)
             
         Returns
         -------
-        ee.Image
-            Composite image clipped to AOI with original band names (NIR, RED, etc.)
+        tuple : (ee.Image, dict) if calculate_coverage=True, else ee.Image
+            - Composite image clipped to AOI with original band names (NIR, RED, etc.)
+            - Coverage statistics dict (only if calculate_coverage=True)
             
         Example
         -------
@@ -912,6 +1033,10 @@ class final_Image:
         >>> collection, stats = data_fetcher.get_optical_data(aoi, 2020, 2020, 'L8_SR')
         >>> image_processor = final_Image()
         >>> composite = image_processor.get_temporal_composite(collection, aoi, reducer='median')
+        >>> # With coverage calculation
+        >>> composite, coverage = image_processor.get_temporal_composite(
+        ...     collection, aoi, reducer='median', calculate_coverage=True
+        ... )
         """
         if isinstance(aoi, ee.FeatureCollection):
             geometry = aoi.geometry()
@@ -995,4 +1120,11 @@ class final_Image:
             end_date_str = end_date.getInfo()
             self.logger.info(f"Composite created from {start_date_str} to {end_date_str}")
         
-        return composite
+        # Calculate data coverage if requested
+        if calculate_coverage:
+            coverage_stats = self.calculate_data_coverage(
+                composite, aoi, scale=coverage_scale, verbose=verbose
+            )
+            return composite, coverage_stats
+        else:
+            return composite

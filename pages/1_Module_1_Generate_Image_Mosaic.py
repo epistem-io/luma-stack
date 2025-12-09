@@ -85,6 +85,9 @@ if 'gdf' not in st.session_state:
     st.session_state.gdf = None
 if 'export_tasks' not in st.session_state:
     st.session_state.export_tasks = []
+# Track whether the user has completed the imagery search step of Module 1
+if 'module1_search_completed' not in st.session_state:
+    st.session_state.module1_search_completed = False
 # Store search results to prevent re-searching on visualization changes
 if 'search_results' not in st.session_state:
     st.session_state.search_results = None
@@ -364,6 +367,16 @@ if st.button("Cari citra satelit", type="primary") and st.session_state.aoi is n
             st.session_state.search_results = collection
             st.session_state.thermal_collection = thermal_collection
             st.session_state.detailed_stats = detailed_stats
+            # Mark that the user successfully completed the imagery search step
+            st.session_state.module1_search_completed = True
+
+            # Show a short congratulatory notice and celebration
+            try:
+                st.success("🎉 Pencarian citra berhasil — Anda menyelesaikan langkah pencarian Modul 1!")
+                st.balloons()
+            except Exception:
+                # If the environment doesn't support balloons, silently ignore
+                pass
 
 
 #=========4. Displaying the result of the search===========
@@ -685,9 +698,9 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
             st.rerun()
             
 elif st.session_state.aoi is not None:
-    st.info("Click 'Search Landsat Imagery' button above to begin searching.")
+    st.info("Klik tombol 'Search Landsat Imagery' untuk mencari citra")
 else:
-    st.info("Upload an AOI and specify search criteria to begin.")
+    st.info("Unggah lingkup wilayah (AOI) dan masukan criteria pencarian citra untuk memulai modul ini")
 
 #=========5. Exporting the image collection===========
 #current version only support direct download for data no larger in 32mb 
@@ -698,13 +711,13 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
     
     # Export destination selection
     export_destination = st.radio(
-        "Pilih tujuan ekspor:",
+        "Pilih metode penyimpanan data:",
         ["Unduh Langsung", "Google Cloud Storage"],
         index=0,
         help="Pilih lokasi untuk menyimpan hasil gabungan citra"
     )
     #Create an export setting for the user to filled
-    with st.expander("Pengaturan ekspor", expanded=True):
+    with st.expander("Pengaturan penyimpanan", expanded=True):
         col1 = st.columns(1)
         #File Naming
         default_name = f"Landsat_{st.session_state.search_metadata.get('sensor', 'unknown')}_{st.session_state.search_metadata.get('start_date', '')}_{st.session_state.search_metadata.get('end_date', '')}_mosaic"
