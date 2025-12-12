@@ -418,13 +418,46 @@ if reference_data_source:
                 # Initialize map
                 m = folium.Map(tiles="OpenStreetMap")
         
-                # Add basemap from module 1 if available
+                # Add basemap from module 1 if available with advanced band control
                 if st.session_state.geotiff_overlay is not None:
-                    vis_params = {
-                        'bands': ['RED', 'GREEN', 'BLUE'],
-                        'min': 0,
-                        'max': 0.3
+                    # Get available bands from the composite
+                    available_bands = st.session_state.geotiff_overlay.bandNames().getInfo()
+                    
+                    # Add commonly used band combination for Landsat
+                    band_combinations = {
+                        "True Color (RGB)": {
+                            'bands': ['RED', 'GREEN', 'BLUE'],
+                            'min': 0.0,
+                            'max': 0.3,
+                            'gamma': 1.4
+                        },
+                        "False Color Infrared (NIR/Red/Green)": {
+                            'bands': ['NIR', 'RED', 'GREEN'],
+                            'min': 0,
+                            'max': 0.4,
+                            'gamma': 1.1
+                        },
+                        "Short-wave Infrared (SWIR2/NIR/RED)": {
+                            'bands': ['SWIR2', 'NIR', 'RED'],
+                            'min': 0,
+                            'max': 0.4,
+                            'gamma': 1.2
+                        },
+                        "Land/Water (NIR/SWIR1/RED)": {
+                            'bands': ['NIR','SWIR1','RED'],
+                            'min': 0,
+                            'max': 0.4,
+                            'gamma': [0.95, 1.1, 1]
+                        }
                     }
+                    
+                    # Use session state to remember band selection for this module
+                    if 'module3_band_selection' not in st.session_state:
+                        st.session_state['module3_band_selection'] = "True Color (RGB)"
+                    
+                    # Get the selected visualization parameters
+                    vis_params = band_combinations[st.session_state['module3_band_selection']].copy()
+                    
                     ee_image = st.session_state.geotiff_overlay.clip(AOI)
                     def add_ee_layer(self, ee_image_object, vis_params, name, opacity=1):
                         map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
@@ -727,13 +760,38 @@ else:
                                 # Initialize map
                                 m = folium.Map(tiles="OpenStreetMap")
                         
-                                # Add basemap from module 1 if available
+                                # Add basemap from module 1 if available with advanced band control
                                 if st.session_state.geotiff_overlay is not None:
-                                    vis_params = {
-                                        'bands': ['RED', 'GREEN', 'BLUE'],
-                                        'min': 0,
-                                        'max': 0.3
+                                    # Use the same band combination as selected in the main interface
+                                    band_combinations = {
+                                        "True Color (RGB)": {
+                                            'bands': ['RED', 'GREEN', 'BLUE'],
+                                            'min': 0.0,
+                                            'max': 0.3,
+                                            'gamma': 1.4
+                                        },
+                                        "False Color Infrared (NIR/Red/Green)": {
+                                            'bands': ['NIR', 'RED', 'GREEN'],
+                                            'min': 0,
+                                            'max': 0.4,
+                                            'gamma': 1.1
+                                        },
+                                        "Short-wave Infrared (SWIR2/NIR/RED)": {
+                                            'bands': ['SWIR2', 'NIR', 'RED'],
+                                            'min': 0,
+                                            'max': 0.4,
+                                            'gamma': 1.2
+                                        },
+                                        "Land/Water (NIR/SWIR1/RED)": {
+                                            'bands': ['NIR','SWIR1','RED'],
+                                            'min': 0,
+                                            'max': 0.4,
+                                            'gamma': [0.95, 1.1, 1]
+                                        }
                                     }
+                                    selected_band_combo = st.session_state.get('module3_band_selection', "True Color (RGB)")
+                                    vis_params = band_combinations[selected_band_combo].copy()
+                                    
                                     ee_image = st.session_state.geotiff_overlay.clip(AOI)
                                     def add_ee_layer(self, ee_image_object, vis_params, name, opacity=1):
                                         map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
@@ -1148,7 +1206,35 @@ else:
         m = folium.Map(location=map_center, zoom_start=st.session_state.map_zoom, **config)
 
         if show_geotiff and st.session_state.geotiff_overlay is not None:
-            vis_params = {'bands': ['RED', 'GREEN', 'BLUE'], 'min': 0, 'max': 0.3}
+            # Use the same band combination as selected in the main interface
+            band_combinations = {
+                "True Color (RGB)": {
+                    'bands': ['RED', 'GREEN', 'BLUE'],
+                    'min': 0.0,
+                    'max': 0.3,
+                    'gamma': 1.4
+                },
+                "False Color Infrared (NIR/Red/Green)": {
+                    'bands': ['NIR', 'RED', 'GREEN'],
+                    'min': 0,
+                    'max': 0.4,
+                    'gamma': 1.1
+                },
+                "Short-wave Infrared (SWIR2/NIR/RED)": {
+                    'bands': ['SWIR2', 'NIR', 'RED'],
+                    'min': 0,
+                    'max': 0.4,
+                    'gamma': 1.2
+                },
+                "Land/Water (NIR/SWIR1/RED)": {
+                    'bands': ['NIR','SWIR1','RED'],
+                    'min': 0,
+                    'max': 0.4,
+                    'gamma': [0.95, 1.1, 1]
+                }
+            }
+            selected_band_combo = st.session_state.get('module3_band_selection', "True Color (RGB)")
+            vis_params = band_combinations[selected_band_combo].copy()
             m.add_ee_layer(st.session_state.geotiff_overlay.clip(AOI), vis_params, "Custom Basemap", opacity=0.8)
 
         if show_aoi and AOI_GDF is not None:
@@ -1203,6 +1289,50 @@ else:
 
         
         with col_colors:
+            # Band combination controls
+            if st.session_state.geotiff_overlay is not None:
+                st.markdown("**Kombinasi Kanal:**")
+                band_combinations = {
+                    "True Color (RGB)": {
+                        'bands': ['RED', 'GREEN', 'BLUE'],
+                        'min': 0.0,
+                        'max': 0.3,
+                        'gamma': 1.4
+                    },
+                    "False Color Infrared (NIR/Red/Green)": {
+                        'bands': ['NIR', 'RED', 'GREEN'],
+                        'min': 0,
+                        'max': 0.4,
+                        'gamma': 1.1
+                    },
+                    "Short-wave Infrared (SWIR2/NIR/RED)": {
+                        'bands': ['SWIR2', 'NIR', 'RED'],
+                        'min': 0,
+                        'max': 0.4,
+                        'gamma': 1.2
+                    },
+                    "Land/Water (NIR/SWIR1/RED)": {
+                        'bands': ['NIR','SWIR1','RED'],
+                        'min': 0,
+                        'max': 0.4,
+                        'gamma': [0.95, 1.1, 1]
+                    }
+                }
+                
+                selected_combination = st.selectbox(
+                    "Pilih Kombinasi:",
+                    list(band_combinations.keys()),
+                    index=list(band_combinations.keys()).index(st.session_state.get('module3_band_selection', "True Color (RGB)")),
+                    key="module3_band_combo"
+                )
+                
+                # Update session state if selection changed
+                if selected_combination != st.session_state.get('module3_band_selection'):
+                    st.session_state['module3_band_selection'] = selected_combination
+                    st.rerun()
+                
+                st.divider()
+            
             # Batch feature capture button
             if st.button("✅ Tambahkan Fitur", type="primary", width="stretch"):
                 # Get all drawn features from the map
