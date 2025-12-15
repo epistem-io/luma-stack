@@ -213,6 +213,16 @@ notebooks/Module_3_Generate_ROI.ipynb
 *.geojson
 /i18n
 
+# OAuth2 and secrets
+oauth_client_config.json
+client_secret.json
+*oauth_client_config*.json
+*client_secret*.json
+oauth_client_config_b64.txt
+*_b64.txt
+secrets/
+.secrets/
+
 **/report*
 **/report
 **/report/

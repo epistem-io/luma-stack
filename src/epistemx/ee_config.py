@@ -1,5 +1,5 @@
 """
-Earth Engine Configuration Module
+Earth Engine and Google Drive Configuration Module
 
 Centralized Earth Engine authentication and initialization for the epistemx package.
 This module ensures Earth Engine is properly set up before any GEE operations.
@@ -12,7 +12,15 @@ import logging
 import os
 import json
 from typing import Optional, Dict, Any
-from pathlib import Path
+import streamlit as st
+import json
+import os
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+import logging
+from typing import Optional, Dict, Any
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -366,3 +374,271 @@ def setup_earth_engine(
         return authenticate_manually(project=project)
     
     return False
+
+logger = logging.getLogger(__name__)
+
+# OAuth2 scopes for Google Drive access
+SCOPES = [
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/earthengine'
+]
+
+class GoogleDriveAuth:
+    """Handle Google Drive OAuth2 authentication for Streamlit apps."""
+    
+    def __init__(self, client_config: Optional[Dict] = None):
+        """
+        Initialize Google Drive authentication.
+        
+        Parameters
+        ----------
+        client_config : dict, optional
+            OAuth2 client configuration. If None, loads from environment.
+        """
+        self.client_config = client_config or self._load_client_config()
+        self.credentials = None
+        
+    def _load_client_config(self) -> Optional[Dict]:
+        """Load OAuth2 client configuration from environment or file."""
+        # Try environment variable first (JSON string)
+        client_config_json = os.environ.get('GOOGLE_OAUTH_CLIENT_CONFIG')
+        if client_config_json:
+            try:
+                return json.loads(client_config_json)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in GOOGLE_OAUTH_CLIENT_CONFIG: {e}")
+        
+        # Try file path from environment
+        client_config_file = os.environ.get('GOOGLE_OAUTH_CLIENT_FILE')
+        if client_config_file and os.path.exists(client_config_file):
+            try:
+                with open(client_config_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load OAuth config from {client_config_file}: {e}")
+        
+        # Try common file locations
+        config_files = [
+            'oauth_client_config.json',
+            'client_secret.json',
+            'auth/oauth_client_config.json',
+            'auth/client_secret.json'
+        ]
+        
+        for config_file in config_files:
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r') as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.error(f"Failed to load OAuth config from {config_file}: {e}")
+        
+        return None
+    
+    def is_configured(self) -> bool:
+        """Check if OAuth2 is properly configured."""
+        return self.client_config is not None
+    
+    def get_auth_url(self, redirect_uri: str = "http://localhost:7860") -> Optional[str]:
+        """
+        Get OAuth2 authorization URL.
+        
+        Parameters
+        ----------
+        redirect_uri : str
+            OAuth2 redirect URI
+            
+        Returns
+        -------
+        str or None
+            Authorization URL or None if not configured
+        """
+        if not self.is_configured():
+            return None
+            
+        try:
+            flow = Flow.from_client_config(
+                self.client_config,
+                scopes=SCOPES,
+                redirect_uri=redirect_uri
+            )
+            
+            auth_url, _ = flow.authorization_url(
+                access_type='offline',
+                include_granted_scopes='true',
+                prompt='consent'
+            )
+            
+            # Store flow in session state for later use
+            st.session_state['oauth_flow'] = flow
+            
+            return auth_url
+            
+        except Exception as e:
+            logger.error(f"Failed to create auth URL: {e}")
+            return None
+    
+    def handle_auth_code(self, auth_code: str, redirect_uri: str = "http://localhost:7860") -> bool:
+        """
+        Handle OAuth2 authorization code and get credentials.
+        
+        Parameters
+        ----------
+        auth_code : str
+            Authorization code from OAuth2 callback
+        redirect_uri : str
+            OAuth2 redirect URI
+            
+        Returns
+        -------
+        bool
+            True if authentication successful
+        """
+        if not self.is_configured():
+            return False
+            
+        try:
+            # Use flow from session state or create new one
+            flow = st.session_state.get('oauth_flow')
+            if not flow:
+                flow = Flow.from_client_config(
+                    self.client_config,
+                    scopes=SCOPES,
+                    redirect_uri=redirect_uri
+                )
+            
+            # Exchange code for credentials
+            flow.fetch_token(code=auth_code)
+            self.credentials = flow.credentials
+            
+            # Store credentials in session state
+            st.session_state['drive_credentials'] = {
+                'token': self.credentials.token,
+                'refresh_token': self.credentials.refresh_token,
+                'token_uri': self.credentials.token_uri,
+                'client_id': self.credentials.client_id,
+                'client_secret': self.credentials.client_secret,
+                'scopes': self.credentials.scopes
+            }
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to handle auth code: {e}")
+            return False
+    
+    def load_credentials_from_session(self) -> bool:
+        """Load credentials from Streamlit session state."""
+        creds_data = st.session_state.get('drive_credentials')
+        if not creds_data:
+            return False
+            
+        try:
+            self.credentials = Credentials(
+                token=creds_data['token'],
+                refresh_token=creds_data['refresh_token'],
+                token_uri=creds_data['token_uri'],
+                client_id=creds_data['client_id'],
+                client_secret=creds_data['client_secret'],
+                scopes=creds_data['scopes']
+            )
+            
+            # Refresh if needed
+            if self.credentials.expired and self.credentials.refresh_token:
+                self.credentials.refresh(Request())
+                # Update session state with new token
+                st.session_state['drive_credentials']['token'] = self.credentials.token
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load credentials from session: {e}")
+            return False
+    
+    def is_authenticated(self) -> bool:
+        """Check if user is authenticated and credentials are valid."""
+        if not self.credentials:
+            return self.load_credentials_from_session()
+        
+        if self.credentials.expired and self.credentials.refresh_token:
+            try:
+                self.credentials.refresh(Request())
+                # Update session state
+                if 'drive_credentials' in st.session_state:
+                    st.session_state['drive_credentials']['token'] = self.credentials.token
+                return True
+            except Exception as e:
+                logger.error(f"Failed to refresh credentials: {e}")
+                return False
+        
+        return self.credentials.valid
+    
+    def get_user_info(self) -> Optional[Dict[str, Any]]:
+        """Get authenticated user information."""
+        if not self.is_authenticated():
+            return None
+            
+        try:
+            # Use OAuth2 API to get user info
+            service = build('oauth2', 'v2', credentials=self.credentials)
+            user_info = service.userinfo().get().execute()
+            return user_info
+        except Exception as e:
+            logger.error(f"Failed to get user info: {e}")
+            return None
+    
+    def logout(self):
+        """Clear authentication credentials."""
+        self.credentials = None
+        if 'drive_credentials' in st.session_state:
+            del st.session_state['drive_credentials']
+        if 'oauth_flow' in st.session_state:
+            del st.session_state['oauth_flow']
+    
+    def get_drive_service(self):
+        """Get authenticated Google Drive service."""
+        if not self.is_authenticated():
+            return None
+            
+        try:
+            return build('drive', 'v3', credentials=self.credentials)
+        except Exception as e:
+            logger.error(f"Failed to create Drive service: {e}")
+            return None
+
+def create_oauth_config_template() -> Dict:
+    """Create a template for OAuth2 client configuration."""
+    return {
+        "web": {
+            "client_id": "your-client-id.apps.googleusercontent.com",
+            "project_id": "your-project-id",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": "your-client-secret",
+            "redirect_uris": ["http://localhost:7860"]
+        }
+    }
+
+def show_oauth_setup_instructions():
+    """Display OAuth2 setup instructions."""
+    st.markdown("""
+    ### Google Drive OAuth2 Setup Required
+    
+    To export to Google Drive, you need to set up OAuth2 authentication:
+    
+    1. **Create OAuth2 Credentials:**
+       - Go to [Google Cloud Console](https://console.cloud.google.com/)
+       - Enable Google Drive API and Earth Engine API
+       - Create OAuth2 credentials (Web application)
+    - Add `http://localhost:7860` to authorized redirect URIs
+    
+    2. **Configure Credentials:**
+       - Download the client configuration JSON
+       - Save as `oauth_client_config.json` in the project root or `auth/` folder
+       - Or set `GOOGLE_OAUTH_CLIENT_CONFIG` environment variable with JSON content
+    
+    3. **Required Scopes:**
+       - `https://www.googleapis.com/auth/drive.file`
+       - `https://www.googleapis.com/auth/earthengine`
+    """)

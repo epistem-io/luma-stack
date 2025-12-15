@@ -13,6 +13,7 @@ import geemap.foliumap as geemap
 import geopandas as gpd
 from epistemx.module_1 import Reflectance_Data, Reflectance_Stats, final_Image
 from epistemx.shapefile_utils import shapefile_validator, EE_converter
+from epistemx.ee_config import GoogleDriveAuth, show_oauth_setup_instructions
 from modules.nav import Navbar
 import tempfile
 import zipfile
@@ -103,6 +104,12 @@ if 'task_cache' not in st.session_state:
     st.session_state.task_cache = {}
 if 'last_cache_update' not in st.session_state:
     st.session_state.last_cache_update = {}
+
+# Google Drive authentication state
+if 'drive_auth' not in st.session_state:
+    st.session_state.drive_auth = GoogleDriveAuth()
+if 'drive_authenticated' not in st.session_state:
+    st.session_state.drive_authenticated = False
 
 #Cache task status with time to live to reduce API calls
 def get_cached_task_status(task_id, cache_ttl=30):
@@ -712,7 +719,7 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
     # Export destination selection
     export_destination = st.radio(
         "Pilih metode penyimpanan data:",
-        ["Unduh Langsung", "Google Cloud Storage"],
+        ["Unduh Langsung", "Google Cloud Storage", "Google Drive"],
         index=0,
         help="Pilih lokasi untuk menyimpan hasil gabungan citra"
     )
@@ -729,9 +736,98 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
         # Export destination specific settings
         if export_destination == "Unduh Langsung":
             st.info("📥 Berkas akan diunduh langsung ke komputer Anda dalam format GeoTIFF")
-            st.warning("⚠️ Catatan: Unduhan langsung dibatasi maksimal 32 MB. Untuk area yang lebih besar, gunakan Google Cloud Storage.")
+            st.warning("⚠️ Catatan: Unduhan langsung dibatasi maksimal 32 MB. Untuk area yang lebih besar, gunakan Google Drive atau Google Cloud Storage.")
         
-        else:  # Google Cloud Storage
+        elif export_destination == "Google Drive":
+            st.subheader("Pengaturan Google Drive")
+            
+            # Check OAuth2 configuration
+            drive_auth = st.session_state.drive_auth
+            if not drive_auth.is_configured():
+                st.error("❌ OAuth2 belum dikonfigurasi untuk Google Drive")
+                show_oauth_setup_instructions()
+                st.stop()
+            
+            # Authentication status and controls
+            col_auth1, col_auth2 = st.columns([2, 1])
+            
+            with col_auth1:
+                # Check current authentication status
+                is_authenticated = drive_auth.is_authenticated()
+                st.session_state.drive_authenticated = is_authenticated
+                
+                if is_authenticated:
+                    user_info = drive_auth.get_user_info()
+                    if user_info:
+                        st.success(f"✅ Terhubung sebagai: {user_info.get('email', 'Unknown')}")
+                        st.info("📁 Berkas akan disimpan di Google Drive Anda dalam folder 'EarthEngine Exports'")
+                    else:
+                        st.success("✅ Terhubung ke Google Drive")
+                else:
+                    st.warning("⚠️ Belum terhubung ke Google Drive")
+                    
+                    # Handle OAuth2 callback if present
+                    query_params = st.query_params
+                    if 'code' in query_params:
+                        auth_code = query_params['code']
+                        with st.spinner("Memproses autentikasi..."):
+                            if drive_auth.handle_auth_code(auth_code):
+                                st.success("✅ Autentikasi berhasil!")
+                                st.session_state.drive_authenticated = True
+                                # Clear the code from URL
+                                st.query_params.clear()
+                                st.rerun()
+                            else:
+                                st.error("❌ Autentikasi gagal. Silakan coba lagi.")
+            
+            with col_auth2:
+                if is_authenticated:
+                    if st.button("🚪 Logout", help="Keluar dari Google Drive"):
+                        drive_auth.logout()
+                        st.session_state.drive_authenticated = False
+                        st.rerun()
+                else:
+                    # Generate auth URL and show login button
+                    auth_url = drive_auth.get_auth_url()
+                    if auth_url:
+                        # Redirect in the same tab so Streamlit session state is preserved
+                        st.markdown(f"""
+                        <script>
+                            function redirectToAuth() {{
+                                window.location.href = "{auth_url}";
+                            }}
+                        </script>
+                        <div onclick="redirectToAuth()" style="
+                            background-color: #4285f4;
+                            color: white;
+                            padding: 0.5rem 1rem;
+                            border-radius: 0.25rem;
+                            text-align: center;
+                            font-weight: 500;
+                            cursor: pointer;
+                            display: inline-block;
+                            width: 100%;
+                            box-sizing: border-box;
+                        ">
+                            🔐 Login Google
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        st.caption("Klik untuk login ke Google Drive")
+                    else:
+                        st.error("❌ Tidak dapat membuat URL autentikasi")
+            
+            # Drive folder settings (only show if authenticated)
+            if is_authenticated:
+                drive_folder = st.text_input(
+                    "Folder Google Drive:",
+                    value="EarthEngine_Exports",
+                    help="Nama folder di Google Drive untuk menyimpan hasil ekspor"
+                )
+                
+                st.info(f"📁 Berkas akan disimpan di: Google Drive/{drive_folder}/{export_name}.tif")
+        
+        elif export_destination == "Google Cloud Storage":
             st.subheader("Pengaturan Google Cloud Storage")
             
             # Nama GCS Bucket
@@ -795,8 +891,10 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
         export_button_text = f"Mulai ekspor ke {export_destination}"
         export_disabled = False
         
-        # Disable button if GCS is selected but bucket name is missing
+        # Disable button based on export destination requirements
         if export_destination == "Google Cloud Storage" and not gcs_bucket:
+            export_disabled = True
+        elif export_destination == "Google Drive" and not st.session_state.drive_authenticated:
             export_disabled = True
             
         if st.button(export_button_text, type="primary", disabled=export_disabled):
@@ -887,6 +985,75 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
                             st.info("💡 Coba kurangi area kajian atau gunakan Google Cloud Storage untuk area yang lebih besar.")
                         
                         # Direct download completed - no task needed
+                        
+                    elif export_destination == "Google Drive":
+                        # Google Drive export using OAuth2 authenticated user credentials
+                        drive_auth = st.session_state.drive_auth
+                        
+                        # Initialize Earth Engine with user credentials for Drive export
+                        try:
+                            # Use the OAuth2 credentials for Earth Engine authentication
+                            ee.Reset()  # Reset current authentication
+                            ee.Initialize(credentials=drive_auth.credentials)
+                            
+                            # Configure export parameters for Google Drive
+                            export_params = {
+                                "image": export_image,
+                                "description": export_name.replace(" ", "_"),
+                                "folder": drive_folder,
+                                "fileNamePrefix": export_name,
+                                "scale": scale,
+                                "crs": export_crs,
+                                "maxPixels": 1e13,
+                                "fileFormat": "GeoTIFF",
+                                "formatOptions": {"cloudOptimized": True},
+                                "region": export_region
+                            }
+                            
+                            # Start Google Drive export task
+                            task = ee.batch.Export.image.toDrive(**export_params)
+                            task.start()
+                            
+                            # Store task info in session state for monitoring
+                            task_info = {
+                                'id': task.id,
+                                'name': export_name,
+                                'destination': export_destination,
+                                'folder': drive_folder,
+                                'crs': export_crs,
+                                'scale': scale,
+                                'start_time': datetime.datetime.now(),
+                                'last_progress': 0,
+                                'last_update': datetime.datetime.now()
+                            }
+                            
+                            st.session_state.export_tasks.append(task_info)
+                            st.success(f"✅ Tugas ekspor '{export_name}' berhasil dikirim ke Google Drive!")
+                            st.info(f"ID Tugas: {task.id}")
+                            
+                            # Display export details
+                            st.markdown(f"""
+                            **Detail Ekspor:**
+                            - Tujuan: Google Drive
+                            - Folder: {drive_folder}
+                            - Nama berkas: {export_name}.tif
+                            - CRS: {export_crs}
+                            - Resolusi: {scale}m
+                            
+                            Periksa progres di [Earth Engine Task Manager](https://code.earthengine.google.com/tasks) atau gunakan pemantau tugas di bawah ini.
+                            Berkas akan muncul di Google Drive Anda setelah ekspor selesai.
+                            """)
+                            
+                        except Exception as drive_error:
+                            st.error(f"❌ Gagal mengekspor ke Google Drive: {str(drive_error)}")
+                            st.info("💡 Pastikan Anda sudah login ke Google Drive dan memiliki izin yang diperlukan.")
+                            
+                            # Try to re-initialize with service account for other operations
+                            try:
+                                from epistemx.ee_config import auto_initialize
+                                auto_initialize()
+                            except:
+                                pass
                         
                     else:  # Google Cloud Storage
                         #Summarize the export parameter from user input for GCS

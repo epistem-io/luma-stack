@@ -24,11 +24,15 @@ COPY --chown=user:user . .
 # Install the epistemx package in development mode
 RUN pip install -e .
 
-# Get Google Service Account JSON secret and save it to auth directory at buildtime
+# Get Google Service Account JSON secret and OAuth2 client config at buildtime
 RUN --mount=type=secret,id=GOOGLE_SERVICE_ACCOUNT_JSON_B64,mode=0444,required=false \
+    --mount=type=secret,id=GOOGLE_OAUTH_CLIENT_CONFIG_B64,mode=0444,required=false \
     mkdir -p /home/user/app/auth && \
     if [ -f /run/secrets/GOOGLE_SERVICE_ACCOUNT_JSON_B64 ]; then \
         base64 -d /run/secrets/GOOGLE_SERVICE_ACCOUNT_JSON_B64 > /home/user/app/auth/service-account.json; \
+    fi && \
+    if [ -f /run/secrets/GOOGLE_OAUTH_CLIENT_CONFIG_B64 ]; then \
+        base64 -d /run/secrets/GOOGLE_OAUTH_CLIENT_CONFIG_B64 > /home/user/app/auth/oauth_client_config.json; \
     fi && \
     chown -R user:user /home/user/app/auth
 

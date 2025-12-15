@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  epistemx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      secrets:
+        - GOOGLE_SERVICE_ACCOUNT_JSON_B64
+        - GOOGLE_OAUTH_CLIENT_CONFIG_B64
+    ports:
+      - "7860:7860"
+    environment:
+      # Optional: You can also pass OAuth config as environment variable
+      # GOOGLE_OAUTH_CLIENT_CONFIG_B64: ${GOOGLE_OAUTH_CLIENT_CONFIG_B64}
+      
+      # Other environment variables
+      STREAMLIT_SERVER_PORT: 7860
+      STREAMLIT_SERVER_ADDRESS: 0.0.0.0
+      STREAMLIT_SERVER_HEADLESS: "true"
+      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+    
+    # Optional: Mount volumes for development
+    # volumes:
+    #   - .:/home/user/app
+    
+    # Optional: Health check
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:7860/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+secrets:
+  GOOGLE_SERVICE_ACCOUNT_JSON_B64:
+    file: ./secrets/service_account_b64.txt
+  GOOGLE_OAUTH_CLIENT_CONFIG_B64:
+    file: ./secrets/oauth_client_config_b64.txt
