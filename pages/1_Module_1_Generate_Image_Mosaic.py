@@ -13,7 +13,16 @@ import geemap.foliumap as geemap
 import geopandas as gpd
 from epistemx.module_1 import Reflectance_Data, Reflectance_Stats, final_Image
 from epistemx.shapefile_utils import shapefile_validator, EE_converter
-from epistemx.ee_config import GoogleDriveAuth, show_oauth_setup_instructions
+from epistemx.ee_config import (
+    setup_google_drive_oauth,
+    is_user_authenticated,
+    get_authenticated_user,
+    get_google_drive_service,
+    logout_user,
+    initiate_google_oauth_login,
+    handle_google_oauth_callback,
+    show_oauth_setup_instructions
+)
 from modules.nav import Navbar
 import tempfile
 import zipfile
@@ -106,8 +115,8 @@ if 'last_cache_update' not in st.session_state:
     st.session_state.last_cache_update = {}
 
 # Google Drive authentication state
-if 'drive_auth' not in st.session_state:
-    st.session_state.drive_auth = GoogleDriveAuth()
+if 'authenticator' not in st.session_state:
+    st.session_state.authenticator = setup_google_drive_oauth()
 if 'drive_authenticated' not in st.session_state:
     st.session_state.drive_authenticated = False
 
@@ -741,81 +750,74 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
         elif export_destination == "Google Drive":
             st.subheader("Pengaturan Google Drive")
             
-            # Check OAuth2 configuration
-            drive_auth = st.session_state.drive_auth
-            if not drive_auth.is_configured():
+            # Initialize authenticator if not available
+            authenticator = st.session_state.authenticator
+            if not authenticator:
                 st.error("❌ OAuth2 belum dikonfigurasi untuk Google Drive")
                 show_oauth_setup_instructions()
                 st.stop()
             
-            # Authentication status and controls
+            # Display authentication status and controls
             col_auth1, col_auth2 = st.columns([2, 1])
             
             with col_auth1:
                 # Check current authentication status
-                is_authenticated = drive_auth.is_authenticated()
+                is_authenticated = is_user_authenticated()
                 st.session_state.drive_authenticated = is_authenticated
                 
                 if is_authenticated:
-                    user_info = drive_auth.get_user_info()
-                    if user_info:
-                        st.success(f"✅ Terhubung sebagai: {user_info.get('email', 'Unknown')}")
-                        st.info("📁 Berkas akan disimpan di Google Drive Anda dalam folder 'EarthEngine Exports'")
-                    else:
-                        st.success("✅ Terhubung ke Google Drive")
+                    username = get_authenticated_user()
+                    st.success(f"✅ Terhubung sebagai: {username}")
+                    st.info("📁 Berkas akan disimpan di Google Drive Anda dalam folder 'EarthEngine Exports'")
                 else:
                     st.warning("⚠️ Belum terhubung ke Google Drive")
                     
-                    # Handle OAuth2 callback if present
+                    # Check for OAuth2 callback code in URL parameters
                     query_params = st.query_params
                     if 'code' in query_params:
-                        auth_code = query_params['code']
-                        with st.spinner("Memproses autentikasi..."):
-                            if drive_auth.handle_auth_code(auth_code):
-                                st.success("✅ Autentikasi berhasil!")
+                        code = query_params['code']
+                        with st.spinner("🔐 Memproses autentikasi Google..."):
+                            if handle_google_oauth_callback(code):
+                                st.success("✅ Autentikasi Google berhasil!")
                                 st.session_state.drive_authenticated = True
                                 # Clear the code from URL
                                 st.query_params.clear()
                                 st.rerun()
                             else:
                                 st.error("❌ Autentikasi gagal. Silakan coba lagi.")
+                    else:
+                        # Show Google login button
+                        auth_url = initiate_google_oauth_login()
+                        if auth_url:
+                            st.markdown(f"""
+                            <a href="{auth_url}" style="text-decoration: none;">
+                                <div style="
+                                    background-color: #4285f4;
+                                    color: white;
+                                    padding: 0.75rem 1.5rem;
+                                    border-radius: 0.5rem;
+                                    text-align: center;
+                                    font-weight: 600;
+                                    font-size: 1rem;
+                                    cursor: pointer;
+                                    display: inline-block;
+                                    min-width: 200px;
+                                    transition: background-color 0.3s;
+                                " onmouseover="this.style.backgroundColor='#1e40af'" onmouseout="this.style.backgroundColor='#4285f4'">
+                                    🔐 Login dengan Google
+                                </div>
+                            </a>
+                            """, unsafe_allow_html=True)
+                            st.caption("Klik tombol untuk login dengan akun Google Anda")
+                        else:
+                            st.error("❌ Tidak dapat membuat URL autentikasi Google")
             
             with col_auth2:
                 if is_authenticated:
                     if st.button("🚪 Logout", help="Keluar dari Google Drive"):
-                        drive_auth.logout()
+                        logout_user()
                         st.session_state.drive_authenticated = False
                         st.rerun()
-                else:
-                    # Generate auth URL and show login button
-                    auth_url = drive_auth.get_auth_url()
-                    if auth_url:
-                        # Redirect in the same tab so Streamlit session state is preserved
-                        st.markdown(f"""
-                        <script>
-                            function redirectToAuth() {{
-                                window.location.href = "{auth_url}";
-                            }}
-                        </script>
-                        <div onclick="redirectToAuth()" style="
-                            background-color: #4285f4;
-                            color: white;
-                            padding: 0.5rem 1rem;
-                            border-radius: 0.25rem;
-                            text-align: center;
-                            font-weight: 500;
-                            cursor: pointer;
-                            display: inline-block;
-                            width: 100%;
-                            box-sizing: border-box;
-                        ">
-                            🔐 Login Google
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        st.caption("Klik untuk login ke Google Drive")
-                    else:
-                        st.error("❌ Tidak dapat membuat URL autentikasi")
             
             # Drive folder settings (only show if authenticated)
             if is_authenticated:
@@ -987,15 +989,15 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
                         # Direct download completed - no task needed
                         
                     elif export_destination == "Google Drive":
-                        # Google Drive export using OAuth2 authenticated user credentials
-                        drive_auth = st.session_state.drive_auth
-                        
-                        # Initialize Earth Engine with user credentials for Drive export
+                        # Google Drive export using Streamlit Authenticator OAuth2 credentials
                         try:
-                            # Use the OAuth2 credentials for Earth Engine authentication
-                            ee.Reset()  # Reset current authentication
-                            ee.Initialize(credentials=drive_auth.credentials)
+                            # Get authenticated Drive service
+                            drive_service = get_google_drive_service()
+                            if not drive_service:
+                                st.error("❌ Tidak dapat membuat koneksi ke Google Drive. Silakan login terlebih dahulu.")
+                                st.stop()
                             
+                            # Initialize Earth Engine (already authenticated)
                             # Configure export parameters for Google Drive
                             export_params = {
                                 "image": export_image,
@@ -1047,13 +1049,6 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
                         except Exception as drive_error:
                             st.error(f"❌ Gagal mengekspor ke Google Drive: {str(drive_error)}")
                             st.info("💡 Pastikan Anda sudah login ke Google Drive dan memiliki izin yang diperlukan.")
-                            
-                            # Try to re-initialize with service account for other operations
-                            try:
-                                from epistemx.ee_config import auto_initialize
-                                auto_initialize()
-                            except:
-                                pass
                         
                     else:  # Google Cloud Storage
                         #Summarize the export parameter from user input for GCS

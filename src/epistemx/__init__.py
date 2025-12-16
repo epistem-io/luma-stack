@@ -18,9 +18,16 @@ from .ee_config import (
 )
 
 from .ee_config import (
-    GoogleDriveAuth,
-    create_oauth_config_template,
-    show_oauth_setup_instructions
+    setup_google_drive_oauth,
+    is_user_authenticated,
+    get_authenticated_user,
+    get_google_drive_service,
+    logout_user,
+    get_google_oauth_config,
+    initiate_google_oauth_login,
+    handle_google_oauth_callback,
+    show_oauth_setup_instructions,
+    print_oauth_setup_instructions
 )
 import os
 import warnings
@@ -198,7 +205,14 @@ __all__ = [
     'setup_earth_engine',
     'reset_ee_initialization',
     'auto_initialize',
-    'GoogleDriveAuth',
-    'create_oauth_config_template',
-    'show_oauth_setup_instructions'
+    'setup_google_drive_oauth',
+    'is_user_authenticated',
+    'get_authenticated_user',
+    'get_google_drive_service',
+    'logout_user',
+    'get_google_oauth_config',
+    'initiate_google_oauth_login',
+    'handle_google_oauth_callback',
+    'show_oauth_setup_instructions',
+    'print_oauth_setup_instructions'
 ]

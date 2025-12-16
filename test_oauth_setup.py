@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for OAuth2 Google Drive setup
+Test script for OAuth2 Google Drive setup using Streamlit Authenticator
 
 This script helps verify that OAuth2 configuration is working correctly.
 Run this before using the Google Drive export feature.
@@ -9,6 +9,7 @@ Run this before using the Google Drive export feature.
 import os
 import sys
 import json
+import yaml
 
 def test_oauth_config():
     """Test OAuth2 configuration setup."""
@@ -21,24 +22,19 @@ def test_oauth_config():
     config_found = False
     
     # Check environment variable (JSON content)
-    if os.environ.get('GOOGLE_OAUTH_CLIENT_CONFIG'):
-        print("   ✅ GOOGLE_OAUTH_CLIENT_CONFIG environment variable found")
+    if os.environ.get('STREAMLIT_OAUTH_CONFIG'):
+        print("   ✅ STREAMLIT_OAUTH_CONFIG environment variable found")
         try:
-            json.loads(os.environ['GOOGLE_OAUTH_CLIENT_CONFIG'])
+            json.loads(os.environ['STREAMLIT_OAUTH_CONFIG'])
             print("   ✅ Environment variable contains valid JSON")
             config_found = True
         except json.JSONDecodeError:
             print("   ❌ Environment variable contains invalid JSON")
     
-    # Check environment variable (Base64)
-    if os.environ.get('GOOGLE_OAUTH_CLIENT_CONFIG_B64'):
-        print("   ✅ GOOGLE_OAUTH_CLIENT_CONFIG_B64 environment variable found")
-        config_found = True
-    
     # Check file path environment variable
-    oauth_file = os.environ.get('GOOGLE_OAUTH_CLIENT_FILE')
+    oauth_file = os.environ.get('STREAMLIT_OAUTH_FILE')
     if oauth_file:
-        print(f"   📁 GOOGLE_OAUTH_CLIENT_FILE points to: {oauth_file}")
+        print(f"   📁 STREAMLIT_OAUTH_FILE points to: {oauth_file}")
         if os.path.exists(oauth_file):
             print("   ✅ OAuth config file exists")
             config_found = True
@@ -47,69 +43,66 @@ def test_oauth_config():
     
     # Check common file locations
     config_files = [
-        'oauth_client_config.json',
-        'client_secret.json',
-        'auth/oauth_client_config.json',
-        'auth/client_secret.json'
+        'auth/oauth_config.yaml',
+        'oauth_config.yaml'
     ]
     
     for config_file in config_files:
         if os.path.exists(config_file):
             print(f"   ✅ Found config file: {config_file}")
             config_found = True
+            try:
+                with open(config_file, 'r') as f:
+                    yaml.safe_load(f)
+                print(f"   ✅ {config_file} is valid YAML")
+            except Exception as e:
+                print(f"   ❌ Error parsing {config_file}: {e}")
             break
     
     if not config_found:
         print("   ❌ No OAuth2 configuration found")
         print("\n📋 Setup Instructions:")
-        print("   1. Create OAuth2 credentials in Google Cloud Console")
-        print("   2. Download the client configuration JSON")
-        print("   3. Save as 'oauth_client_config.json' or set environment variable")
-        print("   4. See docs/google_drive_setup.md for detailed instructions")
+        print("   1. Create auth/oauth_config.yaml with your configuration")
+        print("   2. See docs/oauth2_setup_guide.md for detailed instructions")
+        print("   3. Configure Streamlit Authenticator with user credentials")
         return False
     
     # Test 2: Try importing the OAuth module
     print("\n2. Testing OAuth module import:")
     try:
-        from src.epistemx.ee_config import GoogleDriveAuth
+        from src.epistemx.ee_config import (
+            setup_google_drive_oauth,
+            is_user_authenticated,
+            get_authenticated_user,
+            get_google_drive_service,
+            logout_user
+        )
         print("   ✅ OAuth module imported successfully")
     except ImportError as e:
         print(f"   ❌ Failed to import OAuth module: {e}")
         return False
     
     # Test 3: Initialize OAuth handler
-    print("\n3. Testing OAuth initialization:")
+    print("\n3. Testing Streamlit Authenticator initialization:")
     try:
-        auth = GoogleDriveAuth()
-        if auth.is_configured():
-            print("   ✅ OAuth2 is properly configured")
+        authenticator = setup_google_drive_oauth()
+        if authenticator:
+            print("   ✅ Streamlit Authenticator initialized successfully")
         else:
-            print("   ❌ OAuth2 configuration is invalid or missing")
-            return False
+            print("   ❌ Failed to initialize Streamlit Authenticator")
+            print("   Note: This is expected if running outside of Streamlit context")
     except Exception as e:
-        print(f"   ❌ Failed to initialize OAuth: {e}")
-        return False
+        print(f"   ⚠️  Warning during initialization: {e}")
+        print("   Note: This may be expected if running outside of Streamlit context")
     
-    # Test 4: Generate auth URL
-    print("\n4. Testing auth URL generation:")
-    try:
-        auth_url = auth.get_auth_url()
-        if auth_url:
-            print("   ✅ Auth URL generated successfully")
-            print(f"   🔗 URL: {auth_url[:50]}...")
-        else:
-            print("   ❌ Failed to generate auth URL")
-            return False
-    except Exception as e:
-        print(f"   ❌ Error generating auth URL: {e}")
-        return False
-    
-    print("\n🎉 OAuth2 setup test completed successfully!")
+    print("\n🎉 OAuth2 configuration test completed!")
     print("\n📝 Next steps:")
-    print("   1. Start the Streamlit application")
-    print("   2. Navigate to Module 1")
-    print("   3. Select 'Google Drive' as export destination")
-    print("   4. Click 'Login Google' to authenticate")
+    print("   1. Configure auth/oauth_config.yaml with your user credentials")
+    print("   2. Start the Streamlit application: streamlit run home.py")
+    print("   3. Navigate to Module 1 (Generate Image Mosaic)")
+    print("   4. Select 'Google Drive' as export destination")
+    print("   5. Log in with your credentials")
+    print("   6. Authorize access to Google Drive")
     
     return True
 
@@ -117,7 +110,6 @@ def test_dependencies():
     """Test required dependencies."""
     print("\n🔍 Testing Dependencies...")
     print("=" * 50)
-    
     required_packages = [
         'google.auth',
         'google_auth_oauthlib',

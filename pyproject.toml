@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Streamlit application for the Epistem land cover mapping platform."
 dependencies = [
     "streamlit",
+    "streamlit-authenticator",
     "pandas",
     "geopandas",
     "earthengine-api",

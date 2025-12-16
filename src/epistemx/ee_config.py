@@ -5,22 +5,20 @@ Centralized Earth Engine authentication and initialization for the epistemx pack
 This module ensures Earth Engine is properly set up before any GEE operations.
 
 Supports both service account authentication and manual user authentication.
+Uses Streamlit Authenticator for OAuth2 Google Drive authentication.
 """
 
 import ee
 import logging
 import os
 import json
+import yaml
 from typing import Optional, Dict, Any
 import streamlit as st
-import json
-import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-import logging
-from typing import Optional, Dict, Any
+import streamlit_authenticator as stauth
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -375,270 +373,364 @@ def setup_earth_engine(
     
     return False
 
-logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Google Drive OAuth2 Authentication using Streamlit Authenticator
+# ============================================================================
 
 # OAuth2 scopes for Google Drive access
-SCOPES = [
+OAUTH_SCOPES = [
     'https://www.googleapis.com/auth/drive.file',
     'https://www.googleapis.com/auth/earthengine'
 ]
 
-class GoogleDriveAuth:
-    """Handle Google Drive OAuth2 authentication for Streamlit apps."""
+
+def _load_oauth_config() -> Optional[Dict]:
+    """
+    Load OAuth2 configuration from environment or file.
     
-    def __init__(self, client_config: Optional[Dict] = None):
-        """
-        Initialize Google Drive authentication.
-        
-        Parameters
-        ----------
-        client_config : dict, optional
-            OAuth2 client configuration. If None, loads from environment.
-        """
-        self.client_config = client_config or self._load_client_config()
-        self.credentials = None
-        
-    def _load_client_config(self) -> Optional[Dict]:
-        """Load OAuth2 client configuration from environment or file."""
-        # Try environment variable first (JSON string)
-        client_config_json = os.environ.get('GOOGLE_OAUTH_CLIENT_CONFIG')
-        if client_config_json:
+    Priority:
+    1. STREAMLIT_OAUTH_CONFIG environment variable (JSON string)
+    2. STREAMLIT_OAUTH_FILE environment variable (path to YAML file)
+    3. auth/oauth_config.yaml (default file location)
+    4. oauth_config.yaml (root directory)
+    
+    Returns
+    -------
+    dict or None
+        OAuth configuration dictionary or None if not found
+    """
+    # Try environment variable first (JSON string)
+    oauth_config_json = os.environ.get('STREAMLIT_OAUTH_CONFIG')
+    if oauth_config_json:
+        try:
+            return json.loads(oauth_config_json)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in STREAMLIT_OAUTH_CONFIG: {e}")
+    
+    # Try file path from environment variable
+    oauth_config_file = os.environ.get('STREAMLIT_OAUTH_FILE')
+    if oauth_config_file and os.path.exists(oauth_config_file):
+        try:
+            with open(oauth_config_file, 'r') as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Failed to load OAuth config from {oauth_config_file}: {e}")
+    
+    # Try common file locations
+    config_files = [
+        'auth/oauth_config.yaml',
+        'oauth_config.yaml',
+    ]
+    
+    for config_file in config_files:
+        if os.path.exists(config_file):
             try:
-                return json.loads(client_config_json)
-            except json.JSONDecodeError as e:
-                logger.error(f"Invalid JSON in GOOGLE_OAUTH_CLIENT_CONFIG: {e}")
-        
-        # Try file path from environment
-        client_config_file = os.environ.get('GOOGLE_OAUTH_CLIENT_FILE')
-        if client_config_file and os.path.exists(client_config_file):
-            try:
-                with open(client_config_file, 'r') as f:
-                    return json.load(f)
+                with open(config_file, 'r') as f:
+                    return yaml.safe_load(f)
             except Exception as e:
-                logger.error(f"Failed to load OAuth config from {client_config_file}: {e}")
+                logger.error(f"Failed to load OAuth config from {config_file}: {e}")
+    
+    return None
+
+
+def setup_google_drive_oauth(
+    config: Optional[Dict] = None,
+    cookie_name: str = "epistemx_oauth",
+    cookie_key: str = "epistemx_key",
+    cookie_expiry_days: int = 30
+) -> Optional[Any]:
+    """
+    Initialize Streamlit Authenticator for Google Drive OAuth2.
+    
+    Parameters
+    ----------
+    config : dict, optional
+        OAuth configuration. If None, loads from file or environment.
+    cookie_name : str, default "epistemx_oauth"
+        Name for session cookie
+    cookie_key : str, default "epistemx_key"
+        Key for session cookie encryption
+    cookie_expiry_days : int, default 30
+        Cookie expiration time in days
         
-        # Try common file locations
-        config_files = [
-            'oauth_client_config.json',
-            'client_secret.json',
-            'auth/oauth_client_config.json',
-            'auth/client_secret.json'
-        ]
+    Returns
+    -------
+    Authenticator object or None
+        Initialized Streamlit Authenticator or None if config not found
         
-        for config_file in config_files:
-            if os.path.exists(config_file):
-                try:
-                    with open(config_file, 'r') as f:
-                        return json.load(f)
-                except Exception as e:
-                    logger.error(f"Failed to load OAuth config from {config_file}: {e}")
-        
+    Example
+    -------
+    >>> from epistemx.ee_config import setup_google_drive_oauth
+    >>> authenticator = setup_google_drive_oauth()
+    >>> if authenticator:
+    ...     authenticator.login()
+    """
+    # Load config if not provided
+    if config is None:
+        config = _load_oauth_config()
+    
+    if not config:
+        logger.error("OAuth configuration not found. Please check your config file or environment variables.")
         return None
     
-    def is_configured(self) -> bool:
-        """Check if OAuth2 is properly configured."""
-        return self.client_config is not None
-    
-    def get_auth_url(self, redirect_uri: str = "http://localhost:7860") -> Optional[str]:
-        """
-        Get OAuth2 authorization URL.
+    try:
+        # Initialize Streamlit Authenticator
+        authenticator = stauth.Authenticate(
+            credentials=config.get('credentials', {}),
+            cookie_name=cookie_name,
+            cookie_key=cookie_key,
+            cookie_expiry_days=cookie_expiry_days,
+            pre_authorized=config.get('pre_authorized', [])
+        )
         
-        Parameters
-        ----------
-        redirect_uri : str
-            OAuth2 redirect URI
-            
-        Returns
-        -------
-        str or None
-            Authorization URL or None if not configured
-        """
-        if not self.is_configured():
-            return None
-            
-        try:
-            flow = Flow.from_client_config(
-                self.client_config,
-                scopes=SCOPES,
-                redirect_uri=redirect_uri
-            )
-            
-            auth_url, _ = flow.authorization_url(
-                access_type='offline',
-                include_granted_scopes='true',
-                prompt='consent'
-            )
-            
-            # Store flow in session state for later use
-            st.session_state['oauth_flow'] = flow
-            
-            return auth_url
-            
-        except Exception as e:
-            logger.error(f"Failed to create auth URL: {e}")
-            return None
-    
-    def handle_auth_code(self, auth_code: str, redirect_uri: str = "http://localhost:7860") -> bool:
-        """
-        Handle OAuth2 authorization code and get credentials.
+        logger.info("Streamlit Authenticator initialized successfully")
+        return authenticator
         
-        Parameters
-        ----------
-        auth_code : str
-            Authorization code from OAuth2 callback
-        redirect_uri : str
-            OAuth2 redirect URI
-            
-        Returns
-        -------
-        bool
-            True if authentication successful
-        """
-        if not self.is_configured():
-            return False
-            
-        try:
-            # Use flow from session state or create new one
-            flow = st.session_state.get('oauth_flow')
-            if not flow:
-                flow = Flow.from_client_config(
-                    self.client_config,
-                    scopes=SCOPES,
-                    redirect_uri=redirect_uri
-                )
-            
-            # Exchange code for credentials
-            flow.fetch_token(code=auth_code)
-            self.credentials = flow.credentials
-            
-            # Store credentials in session state
-            st.session_state['drive_credentials'] = {
-                'token': self.credentials.token,
-                'refresh_token': self.credentials.refresh_token,
-                'token_uri': self.credentials.token_uri,
-                'client_id': self.credentials.client_id,
-                'client_secret': self.credentials.client_secret,
-                'scopes': self.credentials.scopes
-            }
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to handle auth code: {e}")
-            return False
-    
-    def load_credentials_from_session(self) -> bool:
-        """Load credentials from Streamlit session state."""
-        creds_data = st.session_state.get('drive_credentials')
-        if not creds_data:
-            return False
-            
-        try:
-            self.credentials = Credentials(
-                token=creds_data['token'],
-                refresh_token=creds_data['refresh_token'],
-                token_uri=creds_data['token_uri'],
-                client_id=creds_data['client_id'],
-                client_secret=creds_data['client_secret'],
-                scopes=creds_data['scopes']
-            )
-            
-            # Refresh if needed
-            if self.credentials.expired and self.credentials.refresh_token:
-                self.credentials.refresh(Request())
-                # Update session state with new token
-                st.session_state['drive_credentials']['token'] = self.credentials.token
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to load credentials from session: {e}")
-            return False
-    
-    def is_authenticated(self) -> bool:
-        """Check if user is authenticated and credentials are valid."""
-        if not self.credentials:
-            return self.load_credentials_from_session()
-        
-        if self.credentials.expired and self.credentials.refresh_token:
-            try:
-                self.credentials.refresh(Request())
-                # Update session state
-                if 'drive_credentials' in st.session_state:
-                    st.session_state['drive_credentials']['token'] = self.credentials.token
-                return True
-            except Exception as e:
-                logger.error(f"Failed to refresh credentials: {e}")
-                return False
-        
-        return self.credentials.valid
-    
-    def get_user_info(self) -> Optional[Dict[str, Any]]:
-        """Get authenticated user information."""
-        if not self.is_authenticated():
-            return None
-            
-        try:
-            # Use OAuth2 API to get user info
-            service = build('oauth2', 'v2', credentials=self.credentials)
-            user_info = service.userinfo().get().execute()
-            return user_info
-        except Exception as e:
-            logger.error(f"Failed to get user info: {e}")
-            return None
-    
-    def logout(self):
-        """Clear authentication credentials."""
-        self.credentials = None
-        if 'drive_credentials' in st.session_state:
-            del st.session_state['drive_credentials']
-        if 'oauth_flow' in st.session_state:
-            del st.session_state['oauth_flow']
-    
-    def get_drive_service(self):
-        """Get authenticated Google Drive service."""
-        if not self.is_authenticated():
-            return None
-            
-        try:
-            return build('drive', 'v3', credentials=self.credentials)
-        except Exception as e:
-            logger.error(f"Failed to create Drive service: {e}")
-            return None
+    except Exception as e:
+        logger.error(f"Failed to initialize Streamlit Authenticator: {e}")
+        return None
 
-def create_oauth_config_template() -> Dict:
-    """Create a template for OAuth2 client configuration."""
-    return {
-        "web": {
-            "client_id": "your-client-id.apps.googleusercontent.com",
-            "project_id": "your-project-id",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_secret": "your-client-secret",
-            "redirect_uris": ["http://localhost:7860"]
+
+def get_google_oauth_config() -> Optional[Dict]:
+    """
+    Get Google OAuth2 configuration from loaded config.
+    
+    Returns
+    -------
+    dict or None
+        Google OAuth2 configuration if available and enabled, None otherwise
+    """
+    config = _load_oauth_config()
+    if not config:
+        return None
+    
+    google_oauth = config.get('google_oauth', {})
+    if google_oauth.get('enabled', False):
+        return google_oauth
+    
+    return None
+
+
+def initiate_google_oauth_login() -> Optional[str]:
+    """
+    Generate Google OAuth2 authorization URL for Streamlit app.
+    
+    This creates the URL that users should click to authenticate with Google.
+    
+    Returns
+    -------
+    str or None
+        Authorization URL or None if OAuth2 not configured
+        
+    Example
+    -------
+    >>> from epistemx.ee_config import initiate_google_oauth_login
+    >>> auth_url = initiate_google_oauth_login()
+    >>> if auth_url:
+    ...     st.markdown(f'[Login with Google]({auth_url})')
+    """
+    try:
+        google_config = get_google_oauth_config()
+        if not google_config:
+            logger.error("Google OAuth2 not configured or not enabled")
+            return None
+        
+        from google_auth_oauthlib.flow import Flow
+        
+        # Create OAuth2 flow
+        flow = Flow.from_client_config(
+            {
+                "installed": {
+                    "client_id": google_config.get('client_id'),
+                    "client_secret": google_config.get('client_secret'),
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [google_config.get('redirect_uri')]
+                }
+            },
+            scopes=google_config.get('scopes', OAUTH_SCOPES),
+            redirect_uri=google_config.get('redirect_uri')
+        )
+        
+        # Generate authorization URL
+        auth_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'
+        )
+        
+        # Store flow in session state for later use
+        st.session_state['oauth_flow'] = flow
+        st.session_state['oauth_state'] = state
+        
+        logger.info("Google OAuth2 authorization URL generated")
+        return auth_url
+        
+    except Exception as e:
+        logger.error(f"Failed to generate Google OAuth2 URL: {e}")
+        return None
+
+
+def handle_google_oauth_callback(code: str) -> bool:
+    """
+    Handle Google OAuth2 callback and save credentials to session.
+    
+    Parameters
+    ----------
+    code : str
+        Authorization code from Google OAuth2 callback
+        
+    Returns
+    -------
+    bool
+        True if authentication successful, False otherwise
+    """
+    try:
+        flow = st.session_state.get('oauth_flow')
+        if not flow:
+            logger.error("OAuth flow not found in session state")
+            return False
+        
+        # Exchange authorization code for credentials
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+        
+        # Store credentials in session state
+        st.session_state['oauth_credentials'] = {
+            'token': credentials.token,
+            'refresh_token': credentials.refresh_token,
+            'token_uri': credentials.token_uri,
+            'client_id': credentials.client_id,
+            'client_secret': credentials.client_secret,
+            'scopes': credentials.scopes
         }
-    }
+        
+        # Get user info
+        try:
+            from googleapiclient.discovery import build
+            oauth2_service = build('oauth2', 'v2', credentials=credentials)
+            user_info = oauth2_service.userinfo().get().execute()
+            st.session_state['authenticated_user'] = user_info.get('email', 'Unknown')
+            st.session_state['authentication_status'] = True
+        except Exception as e:
+            logger.warning(f"Could not retrieve user info: {e}")
+            st.session_state['authenticated_user'] = 'Google User'
+            st.session_state['authentication_status'] = True
+        
+        logger.info("Google OAuth2 authentication successful")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to handle OAuth2 callback: {e}")
+        return False
 
-def show_oauth_setup_instructions():
-    """Display OAuth2 setup instructions."""
-    st.markdown("""
-    ### Google Drive OAuth2 Setup Required
+
+def is_user_authenticated() -> bool:
+    """
+    Check if user is currently authenticated.
     
-    To export to Google Drive, you need to set up OAuth2 authentication:
+    Returns
+    -------
+    bool
+        True if user is authenticated, False otherwise
+    """
+    return st.session_state.get('authentication_status', False) is True
+
+
+def get_authenticated_user() -> Optional[str]:
+    """
+    Get the current authenticated username.
     
-    1. **Create OAuth2 Credentials:**
-       - Go to [Google Cloud Console](https://console.cloud.google.com/)
-       - Enable Google Drive API and Earth Engine API
-       - Create OAuth2 credentials (Web application)
-    - Add `http://localhost:7860` to authorized redirect URIs
+    Returns
+    -------
+    str or None
+        Username if authenticated, None otherwise
+    """
+    if is_user_authenticated():
+        return st.session_state.get('username')
+    return None
+
+
+def get_google_drive_service() -> Optional[Any]:
+    """
+    Get an authenticated Google Drive service instance.
     
-    2. **Configure Credentials:**
-       - Download the client configuration JSON
-       - Save as `oauth_client_config.json` in the project root or `auth/` folder
-       - Or set `GOOGLE_OAUTH_CLIENT_CONFIG` environment variable with JSON content
+    Requires user to be authenticated via setup_google_drive_oauth().
     
-    3. **Required Scopes:**
-       - `https://www.googleapis.com/auth/drive.file`
-       - `https://www.googleapis.com/auth/earthengine`
-    """)
+    Returns
+    -------
+    googleapiclient.discovery.Resource or None
+        Authenticated Drive service or None if not authenticated
+        
+    Example
+    -------
+    >>> from epistemx.ee_config import get_google_drive_service
+    >>> service = get_google_drive_service()
+    >>> if service:
+    ...     files = service.files().list().execute()
+    """
+    if not is_user_authenticated():
+        logger.warning("User not authenticated. Cannot create Drive service.")
+        return None
+    
+    try:
+        # Get credentials from session state (set by Streamlit Authenticator)
+        credentials_data = st.session_state.get('oauth_credentials')
+        if not credentials_data:
+            logger.error("OAuth credentials not found in session state")
+            return None
+        
+        # Create credentials object
+        credentials = Credentials(
+            token=credentials_data.get('token'),
+            refresh_token=credentials_data.get('refresh_token'),
+            token_uri=credentials_data.get('token_uri'),
+            client_id=credentials_data.get('client_id'),
+            client_secret=credentials_data.get('client_secret'),
+            scopes=credentials_data.get('scopes', OAUTH_SCOPES)
+        )
+        
+        # Refresh if needed
+        if credentials.expired and credentials.refresh_token:
+            credentials.refresh(Request())
+            # Update session state
+            st.session_state['oauth_credentials']['token'] = credentials.token
+        
+        # Build and return Drive service
+        service = build('drive', 'v3', credentials=credentials)
+        return service
+        
+    except Exception as e:
+        logger.error(f"Failed to create Google Drive service: {e}")
+        return None
+
+
+def logout_user() -> None:
+    """
+    Log out the current user and clear authentication data.
+    
+    Example
+    -------
+    >>> from epistemx.ee_config import logout_user
+    >>> if st.button("Logout"):
+    ...     logout_user()
+    ...     st.rerun()
+    """
+    try:
+        # Clear authentication-related session state
+        auth_keys_to_remove = [
+            'authentication_status',
+            'username',
+            'oauth_credentials',
+            'oauth_flow'
+        ]
+        
+        for key in auth_keys_to_remove:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        logger.info("User logged out successfully")
+        
+    except Exception as e:
+        logger.error(f"Error during logout: {e}")
