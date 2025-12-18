@@ -14,10 +14,7 @@ from .ee_config import (
     get_auth_status,
     print_auth_instructions,
     setup_earth_engine,
-    reset_ee_initialization
-)
-
-from .ee_config import (
+    reset_ee_initialization,
     setup_google_drive_oauth,
     is_user_authenticated,
     get_authenticated_user,

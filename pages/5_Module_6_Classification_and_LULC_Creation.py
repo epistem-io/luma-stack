@@ -734,7 +734,7 @@ with tab3:
                 st.metric("G-Mean Score", f"{overall_gmean:.3f}")
             
             # Interpretation guidelines
-            with st.expander("📖 Panduan Interpretasi Hasil", expanded=False):
+            with st.expander("📖 Contoh Interpretasi Akurasi Model", expanded=False):
                 st.markdown("""
                 **Overall Accuracy (Akurasi Keseluruhan):**
                 - **≥ 85%**: Akurasi yang baik untuk sebagian besar kajian penutup/penggunaan lahan
@@ -836,7 +836,7 @@ with tab3:
                 text_auto=True,
                 aspect="auto",
                 color_continuous_scale="Blues",
-                title="Confusion Matrix: Actual vs Predicted Classes"
+                title="Confusion Matrix: Kelas Aktual vs Prediksi"
             )
             
             # Improve layout for better readability
@@ -886,7 +886,7 @@ with tab3:
                 """)
             
             # Add summary statistics
-            st.markdown("#### Confusion Matrix Summary")
+            st.markdown("#### Ringkasan Matriks Kesalahan")
             col1, col2 = st.columns(2)
             
             with col1:
@@ -903,7 +903,7 @@ with tab3:
                     "Class Accuracy (%)": np.round(per_class_accuracy, 1)
                 })
                 
-                st.markdown("**Per-Class Performance:**")
+                st.markdown("**Ringkasan Tingkat Kelas:**")
                 st.dataframe(accuracy_df, use_container_width=True, hide_index=True)
             
             with col2:
@@ -925,7 +925,7 @@ with tab3:
                     misclass_df = misclass_df.sort_values('Count', ascending=False).head(5)
                     st.dataframe(misclass_df, use_container_width=True, hide_index=True)
                 else:
-                    st.success("🎉 Perfect classification! No misclassifications found.")
+                    st.success("🎉 Kelasahan klasifikasi minimal.")
 
 # ==================== TAB 4 Visualization ====================
 #USE MODULE 2 CLASSIFICATION SCHEME 
@@ -937,16 +937,14 @@ with tab4:
     namun anda masih bisa melakukan penyesuaian jika memang diperlukan
     """)
     if st.session_state.classification_result is None:
-        st.info("ℹ️ No classification results yet. Please run classification first.")
+        st.info("ℹ️ Klasifikasi belum dilakukan, silahkan lakukan klasifikasi terlebih dahulu.")
     else:
-        st.success("✅ Klasifikasi Selesai!")
         # Visualization section
         st.subheader("Pratinjau Hasil Klasifikasi")
         if st.checkbox("Tunjukan klasifikasi tutupan lahan", value=True):
             try:
                 #Prepare visualization
                 classification_map = st.session_state.classification_result
-                
                 # Get class information from Module 2 and training data
                 class_info = {}
                 palette = []
@@ -999,7 +997,7 @@ with tab4:
                     }
                     
                     # Display legend before the map
-                    st.subheader("🗺️ Legenda Klasifikasi")
+                    st.subheader("🗺️ Legenda Peta")
                     
                     # Create legend in columns for better layout
                     num_cols = min(4, len(unique_classes))  # Max 4 columns
@@ -1026,7 +1024,7 @@ with tab4:
                             )
                     
                     # Option to customize colors (expandable section)
-                    with st.expander("🎨 Customize Map Colors", expanded=False):
+                    with st.expander("🎨 Rubah warna kelas", expanded=False):
                         st.markdown("Adjust colors for each land cover class:")
                         
                         # Create color pickers for each class
@@ -1122,7 +1120,7 @@ with tab5:
     st.markdown("""
     Pada bagian ini anda dapat menyimpan hasil klasifikasi dengan dua pilihan:
     
-    1. **Unduh Langsung**: Unduh berkas GeoTIFF langsung ke komputer Anda (untuk area kecil hingga menengah)
+    1. **Unduh Langsung**: Unduh berkas GeoTIFF langsung ke komputer Anda (Maksimal 32 Mb)
     2. **Google Cloud Storage**: Untuk area yang lebih besar atau jika unduhan langsung gagal
     
     **Tips penamaan berkas:** Gunakan format yang mudah dikenali seperti LULC_Area_Studi_Tahun_citra, contoh: LULC_Sumsel_2024_Landsat8
@@ -1139,7 +1137,7 @@ with tab5:
             "Pilih tujuan ekspor:",
             ["Unduh Langsung", "Google Cloud Storage"],
             index=0,
-            help="Pilih lokasi untuk menyimpan hasil klasifikasi"
+            help="Pilih lokasi penyimpanan hasil klasifikasi"
         )
         
         #Create export settings
@@ -1469,7 +1467,7 @@ with tab5:
                                 if st.button(f"Remove from monitor", key=f"remove_class_{i}"):
                                     st.session_state.export_tasks.pop(i)
                                     st.rerun()
-                        
+                
                         except Exception as e:
                             st.error(f"Failed to get task status: {str(e)}")
                             st.write(f"Task ID: {task_info['id']}")
@@ -1513,6 +1511,6 @@ with col2:
 
 # Show completion status
 if st.session_state.classification_result is not None:
-    st.success(f"Classification completed using {st.session_state.get('classification_mode', 'N/A')}")
+    st.success("Anda telah menyelesaikan modul 6. Silahkan lanjut ke modul berikutnya")
 else:
     st.info("💡 Complete feature extraction and classification to proceed")
