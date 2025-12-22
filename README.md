@@ -12,7 +12,7 @@ Land Use Mapping for All (Luma) is an online mapping platform that integrates op
 -   [Contributing](#contributing)
 -   [License](#license)
 
-## Overview {#overview}
+## Overview
 
 Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospatial engine for the Luma platform. The system follows a structured 7-module pipeline:
 
@@ -30,7 +30,7 @@ Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospati
 -   **`notebooks/`**: Jupyter notebooks used for development, experimentation, and demonstrating the functionality of the core modules.
 -   **`pyproject.toml`**: The standard Python project configuration file. It defines project metadata and core dependencies for `pip`.
 
-## Getting Started {#getting-started}
+## Getting Started
 
 Follow these instructions to set up and run the project on your local machine.
 
@@ -146,7 +146,7 @@ After opening `notebooks/Module_implementation.ipynb`, you can run the minimum s
 
 **For advanced development, you can modify the notebook or integrate `luma_ge` into your own custom Python script projects.**
 
-## Troubleshooting {#troubleshooting}
+## Troubleshooting
 
 It is common to encounter issues during the initial setup of `luma_ge`. You can search for existing issues in the [GitHub Issues](https://github.com/epistem-io/luma-stack/issues) page to find common solutions.
 
@@ -157,7 +157,7 @@ If your issue is not covered, please create a new issue with a minimum explanati
 -   Minimal code (including data) example that can reproduce the issue
 -   Steps you have already tried to resolve the problem
 
-## Contributing {#contributing}
+## Contributing
 
 We welcome contributions to Luma! Here are ways you can help:
 
@@ -204,6 +204,6 @@ We welcome contributions to Luma! Here are ways you can help:
 
 7.  Push to your fork and create a Pull Request
 
-## License {#license}
+## License
 
 Will be set up soon.
