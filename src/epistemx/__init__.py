@@ -22,9 +22,7 @@ from .ee_config import (
     logout_user,
     get_google_oauth_config,
     initiate_google_oauth_login,
-    handle_google_oauth_callback,
-    show_oauth_setup_instructions,
-    print_oauth_setup_instructions
+    handle_google_oauth_callback
 )
 import os
 import warnings
