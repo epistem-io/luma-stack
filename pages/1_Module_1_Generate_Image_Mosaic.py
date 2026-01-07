@@ -20,8 +20,7 @@ from epistemx.ee_config import (
     get_google_drive_service,
     logout_user,
     initiate_google_oauth_login,
-    handle_google_oauth_callback,
-    show_oauth_setup_instructions
+    handle_google_oauth_callback
 )
 from modules.nav import Navbar
 import tempfile
@@ -754,7 +753,6 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
             authenticator = st.session_state.authenticator
             if not authenticator:
                 st.error("❌ OAuth2 belum dikonfigurasi untuk Google Drive")
-                show_oauth_setup_instructions()
                 st.stop()
             
             # Display authentication status and controls
