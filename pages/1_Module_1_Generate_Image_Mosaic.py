@@ -508,6 +508,26 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
         
         #Add section for visualization control
         st.subheader("Kombinasi Kanal Majemuk")
+        with st.expander("Bagaimana suatu gambar citra terbentuk?", expanded=False):
+            st.markdown("""
+            Sebuah gambar tersusun dari kanal **RGB** (*Red*, *Green*, *Blue*). Gambar yang sehari - hari kita lihat
+            memiliki saluran merah (untuk kanal *Red*), hijau (untuk kanal *Green*), dan biru (untuk kanal *Blue*).
+            Susunan kanal ini membentuk gambar warna nyata (***true*** atau ***natural color***). Konsep yang sama berlaku juga untuk citra satelit, 
+            ketika kita melihat tampilan citra satelit yang sama dengan warna yang kita lihat sehari - hari, maka kombinasi tersebut
+            dikenal sebagai kombinasi kanal saluran nyata, vegetasi memiliki warna hijau, air memiliki warna biru, dan seterusnya 
+            """)
+        with st.expander("Kenapa tampilan citra satelit kadang 'berbeda'?", expanded=False):
+            st.markdown("""
+            Sensor satelit memiliki kepekaan terhadap gelombang cahaya yang tidak nampak bagi mata manusia, seperti gelombang
+            inframerah dan termal. Ketika saluran - saluran ini digunakan untuk membuat suatu gambar (RGB) maka akan tergentuk gambar 
+            yang tidak asli (*false color*). Contoh, ketika saluran inframerah, merah, dan hijau digunakan untuk membuat gambar RGB, maka
+            vegetasi akan menjadi merah, badan air akan terlihat biru tua, dan seterusnya""")
+        with st.expander("Apa itu kombinasi kanal majemuk?", expanded=False):
+            st.markdown("""
+            Kombinasi kanal yang berbeda sering digunakan untuk menekankan suatu fitur yang mungkin tidak terlalu terlihat dengan kombinasi saluran asli.
+            Sebagai contoh, kombinasi saluran inframerah, merah, dan hijau (**false color infrared**) digunakana untuk melihat kehadiran vegetasi disuatu daerah. 
+            Karena vegetasi hijau memantulkan gelombang inframerah, maka vegetasi hijau akan terlihat merah, sedangkan vegetasi yang tidak hijau akan terlihat lebih kecoklatan.
+            """)
         #Add commonly used band combination for Landsat
         band_combinations = {
             "True Color (RGB)": {
@@ -713,7 +733,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
             st.rerun()
             
 elif st.session_state.aoi is not None:
-    st.info("Klik tombol 'Search Landsat Imagery' untuk mencari citra")
+    st.info("Klik tombol 'Cari citra satelit' untuk mulai pencarian")
 else:
     st.info("Unggah lingkup wilayah (AOI) dan masukan criteria pencarian citra untuk memulai modul ini")
 
