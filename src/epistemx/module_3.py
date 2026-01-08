@@ -4,13 +4,9 @@ Module 3 Backend - Training Data Management
 This module provides training data loading and processing functionality.
 """
 
-import streamlit as st
 import pandas as pd
 import geopandas as gpd
-import numpy as np
 import ee
-from typing import Dict, List, Optional, Tuple, Any, Union
-import warnings
 import logging
 from shapely.geometry import shape
 
@@ -27,6 +23,7 @@ try:
         def LoadTrainData(landcover_df, aoi_geometry, training_shp_path=None, training_ee_path=None):
             """Load training data from EE asset or shapefile."""
             try:
+                 #Training data from earth engine
                 if training_ee_path:
                     logger.info(f"Loading training data from EE asset: {training_ee_path}")
                     
@@ -46,7 +43,7 @@ try:
                         logger.error(f"Failed to access Earth Engine asset: {ee_error}")
                         raise Exception(f"Cannot access Earth Engine asset '{training_ee_path}': {str(ee_error)}")
                     
-                    # Filter by AOI if provided
+                    # Filter by AOI
                     if aoi_geometry:
                         logger.info("Filtering by AOI bounds...")
                         logger.info(f"AOI geometry type: {type(aoi_geometry)}")
@@ -96,8 +93,7 @@ try:
                             # First get distinct classes
                             unique_classes = training_fc.aggregate_array(class_field).distinct()
                             
-                            # Get count for each class - build this as a server-side computation
-                            # We'll create a dictionary of class -> count
+                            #Get count for each class, keep the computation on the server side
                             class_counts_list = unique_classes.map(lambda cls: 
                                 ee.Feature(None, {
                                     'class': cls,
@@ -105,7 +101,7 @@ try:
                                 })
                             )
                             
-                            # Get ALL class counts in ONE .getInfo() call
+                            #Bring the result into client side, minimizing .getInfo() calls
                             class_counts_info = class_counts_list.getInfo()
                             
                             # Parse the results
@@ -281,8 +277,51 @@ try:
                             'warnings': []
                         }
                     }
+                
+                elif training_shp_path:
+                    logger.info(f"Loading training data from shapefile: {training_shp_path}")
+                    
+                    # Load shapefile
+                    training_gdf = gpd.read_file(training_shp_path)
+                    
+                    # Ensure CRS is set
+                    if training_gdf.crs is None:
+                        logger.warning("Shapefile has no CRS, assuming EPSG:4326")
+                        training_gdf.set_crs('EPSG:4326', inplace=True)
+                    
+                    # Convert to WGS84 if needed
+                    if training_gdf.crs != 'EPSG:4326':
+                        logger.info(f"Converting from {training_gdf.crs} to EPSG:4326")
+                        training_gdf = training_gdf.to_crs('EPSG:4326')
+                    
+                    logger.info(f"Loaded {len(training_gdf)} features from shapefile")
+                    
+                    # Log class field info
+                    if 'kelas' in training_gdf.columns:
+                        unique_classes = training_gdf['kelas'].unique()
+                        logger.info(f"Unique classes in training data: {unique_classes}")
+                        logger.info(f"Class counts: {training_gdf['kelas'].value_counts().to_dict()}")
+                    else:
+                        logger.warning("'kelas' field not found in training data")
+                        logger.info(f"Available columns: {training_gdf.columns.tolist()}")
+                    
+                    return {
+                        'training_data': training_gdf,
+                        'landcover_df': landcover_df,
+                        'class_field': 'kelas',
+                        'validation_results': {
+                            'total_points': len(training_gdf),
+                            'valid_points': len(training_gdf),
+                            'points_after_class_filter': len(training_gdf),
+                            'invalid_classes': [],
+                            'outside_aoi': [],
+                            'insufficient_samples': [],
+                            'warnings': []
+                        }
+                    }
+                
                 else:
-                    raise ValueError("No training data path provided")
+                    raise ValueError("Either training_ee_path or training_shp_path must be provided")
                     
             except Exception as e:
                 logger.error(f"Error loading training data: {str(e)}")

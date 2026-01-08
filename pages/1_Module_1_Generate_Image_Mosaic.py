@@ -508,26 +508,53 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
         
         #Add section for visualization control
         st.subheader("Kombinasi Kanal Majemuk")
-        with st.expander("Bagaimana suatu gambar citra terbentuk?", expanded=False):
+        
+        # Educational guide with improved formatting
+        with st.expander("📚 Panduan Kombinasi Kanal", expanded=False):
+            # First question
+            st.markdown("#### 🎨 Bagaimana suatu gambar citra terbentuk?")
             st.markdown("""
-            Sebuah gambar tersusun dari kanal **RGB** (*Red*, *Green*, *Blue*). Gambar yang sehari - hari kita lihat
-            memiliki saluran merah (untuk kanal *Red*), hijau (untuk kanal *Green*), dan biru (untuk kanal *Blue*).
-            Susunan kanal ini membentuk gambar warna nyata (***true*** atau ***natural color***). Konsep yang sama berlaku juga untuk citra satelit, 
-            ketika kita melihat tampilan citra satelit yang sama dengan warna yang kita lihat sehari - hari, maka kombinasi tersebut
-            dikenal sebagai kombinasi kanal saluran nyata, vegetasi memiliki warna hijau, air memiliki warna biru, dan seterusnya 
+            Sebuah gambar tersusun dari kanal **RGB** (*Red*, *Green*, *Blue*):
+            - 🔴 **Kanal Merah** (Red)
+            - 🟢 **Kanal Hijau** (Green)  
+            - 🔵 **Kanal Biru** (Blue)
+            
+            Susunan kanal ini membentuk gambar **warna nyata** (***true*** atau ***natural color***). 
+            Konsep yang sama berlaku untuk citra satelit — ketika kombinasi kanal sama dengan warna yang kita lihat sehari-hari, 
+            maka dinamakan **kombinasi kanal saluran nyata**: 🌱 vegetasi berwarna hijau, 💧 air berwarna biru, dan lain-lain.
             """)
-        with st.expander("Kenapa tampilan citra satelit kadang 'berbeda'?", expanded=False):
+            
+            st.divider()
+            
+            # Second question
+            st.markdown("#### 🔄 Kenapa tampilan citra satelit kadang 'berbeda'?")
             st.markdown("""
-            Sensor satelit memiliki kepekaan terhadap gelombang cahaya yang tidak nampak bagi mata manusia, seperti gelombang
-            inframerah dan termal. Ketika saluran - saluran ini digunakan untuk membuat suatu gambar (RGB) maka akan tergentuk gambar 
-            yang tidak asli (*false color*). Contoh, ketika saluran inframerah, merah, dan hijau digunakan untuk membuat gambar RGB, maka
-            vegetasi akan menjadi merah, badan air akan terlihat biru tua, dan seterusnya""")
-        with st.expander("Apa itu kombinasi kanal majemuk?", expanded=False):
-            st.markdown("""
-            Kombinasi kanal yang berbeda sering digunakan untuk menekankan suatu fitur yang mungkin tidak terlalu terlihat dengan kombinasi saluran asli.
-            Sebagai contoh, kombinasi saluran inframerah, merah, dan hijau (**false color infrared**) digunakana untuk melihat kehadiran vegetasi disuatu daerah. 
-            Karena vegetasi hijau memantulkan gelombang inframerah, maka vegetasi hijau akan terlihat merah, sedangkan vegetasi yang tidak hijau akan terlihat lebih kecoklatan.
+            Sensor satelit memiliki kepekaan terhadap gelombang cahaya yang **tidak terlihat oleh mata manusia**, seperti:
+            - 🌡️ Gelombang inframerah
+            - 🌡️ Gelombang termal
+            
+            Ketika saluran-saluran ini digunakan untuk membuat gambar RGB, maka terbentuklah gambar yang **tidak asli** 
+            (***false color***).
+            
+            **Contoh:** Kombinasi saluran inframerah, merah, dan hijau menghasilkan:
+            - 🌿 Vegetasi → berwarna **merah**
+            - 💧 Badan air → berwarna **biru tua**
             """)
+            
+            st.divider()
+            
+            # Third question
+            st.markdown("#### 🎯 Apa itu kombinasi kanal majemuk?")
+            st.markdown("""
+            Kombinasi kanal yang berbeda digunakan untuk **menekankan fitur spesifik** yang mungkin tidak terlihat 
+            dengan kombinasi saluran asli.
+            
+            **Contoh:** Kombinasi **False Color Infrared** (Inframerah, Merah, Hijau)
+            - Digunakan untuk melihat **kehadiran vegetasi** di suatu daerah
+            - 🌿 Vegetasi hijau → tampil **merah** (karena memantulkan inframerah)
+            - 🌾 Vegetasi mati/kurang sehat → tampil **kecoklatan**
+            """)
+        
         #Add commonly used band combination for Landsat
         band_combinations = {
             "True Color (RGB)": {
