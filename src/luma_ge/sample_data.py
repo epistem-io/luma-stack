@@ -4,9 +4,13 @@ Module 3 Backend - Training Data Management
 This module provides training data loading and processing functionality.
 """
 
+import streamlit as st
 import pandas as pd
 import geopandas as gpd
+import numpy as np
 import ee
+from typing import Dict, List, Optional, Tuple, Any, Union
+import warnings
 import logging
 from shapely.geometry import shape
 
@@ -85,126 +89,74 @@ try:
                         logger.info(f"Collection has {collection_size} features, implementing stratified sampling for class representation")
                         
                         try:
-                            # Get unique classes and their counts in ONE server-side operation
-                            class_field = 'kelas'
+                            # Get unique classes and their counts
+                            class_field = 'kelas'  # The field containing class information
+                            unique_classes = training_fc.aggregate_array(class_field).distinct().getInfo()
+                            logger.info(f"Found {len(unique_classes)} unique classes: {unique_classes}")
                             
-                            # Create a server-side computation for class counts
-                            # First get distinct classes
-                            unique_classes = training_fc.aggregate_array(class_field).distinct()
-                            
-                            # Get count for each class - build this as a server-side computation
-                            # We'll create a dictionary of class -> count
-                            class_counts_list = unique_classes.map(lambda cls: 
-                                ee.Feature(None, {
-                                    'class': cls,
-                                    'count': training_fc.filter(ee.Filter.eq(class_field, cls)).size()
-                                })
-                            )
-                            
-                            # Get ALL class counts in ONE .getInfo() call
-                            class_counts_info = class_counts_list.getInfo()
-                            
-                            # Parse the results
-                            class_data = []
-                            for item in class_counts_info['features']:
-                                props = item['properties']
-                                class_data.append({
-                                    'class': props['class'],
-                                    'count': props['count']
-                                })
-                            
-                            # Sort classes by count (descending)
-                            class_data.sort(key=lambda x: x['count'], reverse=True)
-                            
-                            logger.info(f"Found {len(class_data)} unique classes")
-                            
-                            # Calculate sampling strategy
+                            # Calculate samples per class (aim for 5000 total)
                             target_total = 5000
-                            remaining_samples = target_total
+                            base_samples_per_class = target_total // len(unique_classes)
+                            remaining_samples = target_total % len(unique_classes)
                             
-                            # First pass: allocate minimum samples for each class
-                            sampling_plan = []
-                            for class_info in class_data:
-                                cls = class_info['class']
-                                count = class_info['count']
-                                
-                                if count == 0:
-                                    logger.warning(f"Class {cls} has no features, skipping")
-                                    continue
-                                
-                                # Base allocation (proportional to class size but with minimum)
-                                base_samples = max(1, int((count / collection_size) * target_total))
-                                actual_samples = min(base_samples, count)
-                                
-                                sampling_plan.append({
-                                    'class': cls,
-                                    'total_count': count,
-                                    'target_samples': actual_samples
-                                })
-                                remaining_samples -= actual_samples
+                            logger.info(f"Target: {target_total} samples, Base per class: {base_samples_per_class}")
                             
-                            logger.info(f"Initial allocation: {sum(p['target_samples'] for p in sampling_plan)} samples")
+                            all_features = []
+                            class_counts = {}
                             
-                            # Second pass: distribute remaining samples to largest classes
-                            if remaining_samples > 0:
-                                # Sort by remaining capacity (total_count - target_samples)
-                                sampling_plan.sort(key=lambda x: x['total_count'] - x['target_samples'], reverse=True)
-                                
-                                for plan in sampling_plan:
-                                    if remaining_samples <= 0:
-                                        break
+                            for i, class_value in enumerate(unique_classes):
+                                try:
+                                    # Calculate samples for this class
+                                    samples_for_class = base_samples_per_class
+                                    if i < remaining_samples:  # Distribute remaining samples to first few classes
+                                        samples_for_class += 1
                                     
-                                    remaining_capacity = plan['total_count'] - plan['target_samples']
-                                    if remaining_capacity > 0:
-                                        additional = min(remaining_samples, remaining_capacity)
-                                        plan['target_samples'] += additional
-                                        remaining_samples -= additional
+                                    logger.info(f"Sampling class {class_value}: targeting {samples_for_class} samples")
+                                    
+                                    # Filter by class and get count
+                                    class_fc = training_fc.filter(ee.Filter.eq(class_field, class_value))
+                                    class_size = class_fc.size().getInfo()
+                                    
+                                    if class_size == 0:
+                                        logger.warning(f"Class {class_value} has no features, skipping")
+                                        continue
+                                    
+                                    # Sample from this class
+                                    actual_samples = min(samples_for_class, class_size)
+                                    if class_size <= samples_for_class:
+                                        # Take all features if class has fewer than target
+                                        sampled_fc = class_fc
+                                        logger.info(f"Class {class_value}: taking all {class_size} features")
+                                    else:
+                                        # Random sample if class has more than target
+                                        sampled_fc = class_fc.randomColumn('random', 42).sort('random').limit(actual_samples)
+                                        logger.info(f"Class {class_value}: sampling {actual_samples} from {class_size} features")
+                                    
+                                    # Get the features
+                                    class_info = sampled_fc.getInfo()
+                                    class_features = class_info['features']
+                                    
+                                    all_features.extend(class_features)
+                                    class_counts[class_value] = len(class_features)
+                                    
+                                    logger.info(f"Class {class_value}: collected {len(class_features)} features")
+                                    
+                                except Exception as class_error:
+                                    logger.error(f"Error sampling class {class_value}: {class_error}")
+                                    continue
                             
-                            # Build the sampling as a single Earth Engine operation
-                            sampled_collections = []
+                            # Create combined feature info
+                            info = {
+                                'type': 'FeatureCollection',
+                                'features': all_features
+                            }
+                            features = all_features
                             
-                            for plan in sampling_plan:
-                                cls = plan['class']
-                                target = plan['target_samples']
-                                total = plan['total_count']
-                                
-                                # Filter by class
-                                class_fc = training_fc.filter(ee.Filter.eq(class_field, cls))
-                                
-                                # Sample if needed
-                                if total <= target:
-                                    # Take all
-                                    sampled = class_fc
-                                    logger.info(f"Class {cls}: taking all {total} features")
-                                else:
-                                    # Random sample
-                                    sampled = class_fc.randomColumn('random', 42).sort('random').limit(target)
-                                    logger.info(f"Class {cls}: sampling {target} from {total} features")
-                                
-                                sampled_collections.append(sampled)
-                            
-                            # Merge all sampled collections
-                            if sampled_collections:
-                                # Start with first collection
-                                merged_fc = sampled_collections[0]
-                                # Merge the rest
-                                for i in range(1, len(sampled_collections)):
-                                    merged_fc = merged_fc.merge(sampled_collections[i])
-                                
-                                # Get the merged collection in ONE .getInfo() call
-                                info = merged_fc.getInfo()
-                                features = info['features']
-                                
-                                # Log final distribution
-                                final_counts = {}
-                                for plan in sampling_plan:
-                                    final_counts[plan['class']] = plan['target_samples']
-                                
-                                total_final = sum(final_counts.values())
-                                logger.info(f"Stratified sampling complete: {total_final} total features")
-                                for class_val, count in final_counts.items():
-                                    percentage = (count / total_final) * 100 if total_final > 0 else 0
-                                    logger.info(f"  Class {class_val}: {count} features ({percentage:.1f}%)")
+                            # Log final class distribution
+                            logger.info(f"Stratified sampling complete: {len(features)} total features")
+                            for class_val, count in class_counts.items():
+                                percentage = (count / len(features)) * 100 if len(features) > 0 else 0
+                                logger.info(f"  Class {class_val}: {count} features ({percentage:.1f}%)")
                             
                         except Exception as stratified_error:
                             logger.error(f"Stratified sampling failed: {stratified_error}")
@@ -277,8 +229,36 @@ try:
                             'warnings': []
                         }
                     }
+                elif training_shp_path:
+                    logger.info(f"Loading training data from shapefile: {training_shp_path}")
+                    data = gpd.read_file(training_shp_path)
+                    training_gdf = gpd.GeoDataFrame(data, geometry='geometry', crs='EPSG:4326')
+                    
+                    # Log class field info
+                    if 'kelas' in training_gdf.columns:
+                        unique_classes = training_gdf['kelas'].unique()
+                        logger.info(f"Unique classes in training data: {unique_classes}")
+                        logger.info(f"Class counts: {training_gdf['kelas'].value_counts().to_dict()}")
+                    else:
+                        logger.warning("'kelas' field not found in training data")
+                        logger.info(f"Available columns: {training_gdf.columns.tolist()}")
+                    
+                    return {
+                        'training_data': training_gdf,
+                        'landcover_df': landcover_df,
+                        'class_field': 'kelas',
+                        'validation_results': {
+                            'total_points': len(training_gdf),
+                            'valid_points': len(training_gdf),
+                            'points_after_class_filter': len(training_gdf),
+                            'invalid_classes': [],
+                            'outside_aoi': [],
+                            'insufficient_samples': [],
+                            'warnings': []
+                        }
+                    }
                 else:
-                    raise ValueError("No training data path provided")
+                    raise ValueError("Either training_ee_path or training_shp_path must be provided")
                     
             except Exception as e:
                 logger.error(f"Error loading training data: {str(e)}")
