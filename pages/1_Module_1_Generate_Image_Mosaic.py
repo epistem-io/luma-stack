@@ -589,8 +589,8 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 'max': 0.4,
                 'gamma': [0.95, 1.1, 1]
             },
-            "Kombinasi saluran bebas": {
-                'bands': ['NIR', 'RED', 'GREEN'],  # Default for custom
+            "Buat kombinasi saluran": {
+                'bands': ['RED', 'GREEN', 'BLUE'],  #initial combination true color
                 'min': 0.0,
                 'max': 0.4,
                 'gamma': 1.0
@@ -611,8 +611,8 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
         vis_params = band_combinations[selected_combination].copy()
         
         # If custom is selected, show band selection interface
-        if selected_combination == "Kombinasi saluran bebas":
-            st.info("💡 Pilih satu kanal untuk kombinasi hitam putih dan 3 kanal untuk visualisasi berwarna")
+        if selected_combination == "Buat kombinasi saluran":
+            st.info("💡 Pilih satu kanal untuk visualisasi hitam putih dan 3 kanal untuk visualisasi berwarna")
             
             col_band1, col_band2, col_band3 = st.columns(3)
             
@@ -659,11 +659,44 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 st.warning("⚠️ Please select either 1 band (grayscale) or 3 bands (RGB)")
                 vis_params['bands'] = [band1, band1, band1]  # Fallback to grayscale
         
-        # Advanced visualization controls in expander
+        #Advanced visualization controls in expander
         with st.expander("Pengaturan visualisasi citra", expanded=False):
+            # Educational guide for visualization parameters
+            with st.expander("📖 Parameter Visualisasi", expanded=True):
+                st.markdown("""
+                
+                Parameter visualisasi digunakan untuk menyesuaikan tampilan citra satelit agar fitur yang ingin diamati lebih jelas terlihat.
+                Terdapat dua parameter utama yang dapat disesuaikan:
+                
+                ##### 1️⃣ **Nilai Minimal dan Maksimal (Min/Max)**
+                
+                Nilai minimum dan maksimum menentukan **rentang nilai piksel** yang ditampilkan:
+                
+                - **Nilai Minimal (Min):** Nilai piksel terendah yang ditampilkan sebagai warna paling gelap (hitam)
+                - **Nilai Maksimal (Max):** Nilai piksel tertinggi yang ditampilkan sebagai warna paling terang (putih/warna cerah)
+                
+                ##### 2️⃣ **Nilai Gamma**
+                
+                Gamma adalah parameter yang mengontrol **kurva kecerahan** (brightness curve) dari citra:
+                
+                - **Gamma < 1.0**
+                  - Membuat citra lebih **terang**
+                  - Detail di area gelap menjadi lebih jelas
+    
+                - **Gamma = 1.0**
+                  - Nilai standar, citra ditampilkan sesuai dengan rentang nilai
+                
+                - **Gamma > 1.0**
+                  - Membuat citra lebih **gelap**
+                  - Meningkatkan kontras di area terang
+                
+                
+                """)
+            
             col1, col2 = st.columns(2)
             
             with col1:
+                st.markdown("#### ⚙️ Penyesuaian Nilai Minimal dan Maksimal")
                 # Min/Max value controls
                 min_val = st.slider(
                     "Nilai Minimal:",
@@ -671,7 +704,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                     0.5,
                     float(vis_params['min']),
                     0.01,
-                    help="Adjust the minimum display value",
+                    help="Nilai piksel yang akan ditampilkan sebagai warna paling gelap. Piksel lebih rendah akan berwarna hitam.",
                     key="vis_min_slider"
                 )
                 max_val = st.slider(
@@ -680,7 +713,7 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                     1.0,
                     float(vis_params['max']),
                     0.01,
-                    help="Adjust the maximum display value",
+                    help="Nilai piksel yang akan ditampilkan sebagai warna paling terang. Piksel lebih tinggi akan berwarna putih.",
                     key="vis_max_slider"
                 )
                 
@@ -689,23 +722,26 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                 vis_params['max'] = max_val
             
             with col2:
-                # Gamma controls - adapt based on number of bands
+                st.markdown("#### ⚙️ Penyesuaian Nilai Gamma")
+                #Gamma value controls, adapt based on number of bands selected
                 num_bands = len(vis_params['bands'])
-                
+                #if RGB with each band gamma control
                 if num_bands == 3 and isinstance(vis_params['gamma'], list):
-                    st.write("**Nillai Gamma setiap kanal (R, G, B):**")
-                    gamma_r = st.slider("Red Gamma:", 0.1, 2.0, float(vis_params['gamma'][0]), 0.1, key="gamma_r")
-                    gamma_g = st.slider("Green Gamma:", 0.1, 2.0, float(vis_params['gamma'][1]), 0.1, key="gamma_g")
-                    gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, float(vis_params['gamma'][2]), 0.1, key="gamma_b")
+                    st.write("**Nilai Gamma setiap kanal (R, G, B):**")
+                    st.caption("Sesuaikan kecerahan untuk setiap kanal warna secara terpisah")
+                    gamma_r = st.slider("Red Gamma (Merah):", 0.1, 2.0, float(vis_params['gamma'][0]), 0.1, help="Gamma untuk kanal merah. < 1 = lebih terang, > 1 = lebih gelap", key="gamma_r")
+                    gamma_g = st.slider("Green Gamma (Hijau):", 0.1, 2.0, float(vis_params['gamma'][1]), 0.1, help="Gamma untuk kanal hijau", key="gamma_g")
+                    gamma_b = st.slider("Blue Gamma (Biru):", 0.1, 2.0, float(vis_params['gamma'][2]), 0.1, help="Gamma untuk kanal biru", key="gamma_b")
                     vis_params['gamma'] = [gamma_r, gamma_g, gamma_b]
                 elif num_bands == 3:
-                    # RGB but single gamma value
-                    use_per_band = st.checkbox("Gunakan nilai gamma setiap kanal", value=False, key="use_per_band_gamma")
+                    #RGB but single gamma value
+                    use_per_band = st.checkbox("Gunakan nilai gamma setiap kanal", value=False, key="use_per_band_gamma", help="Centang untuk menyesuaikan Gamma R, G, B secara terpisah")
                     if use_per_band:
                         st.write("**Gamma setiap kanal (R, G, B):**")
-                        gamma_r = st.slider("Red Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_r2")
-                        gamma_g = st.slider("Green Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_g2")
-                        gamma_b = st.slider("Blue Gamma:", 0.1, 2.0, 1.0, 0.1, key="gamma_b2")
+                        st.caption("Anda dapat menyesuaikan kecerahan untuk setiap warna")
+                        gamma_r = st.slider("Red Gamma (Merah):", 0.1, 2.0, 1.0, 0.1, help="Gamma untuk kanal merah", key="gamma_r2")
+                        gamma_g = st.slider("Green Gamma (Hijau):", 0.1, 2.0, 1.0, 0.1, help="Gamma untuk kanal hijau", key="gamma_g2")
+                        gamma_b = st.slider("Blue Gamma (Biru):", 0.1, 2.0, 1.0, 0.1, help="Gamma untuk kanal biru", key="gamma_b2")
                         vis_params['gamma'] = [gamma_r, gamma_g, gamma_b]
                     else:
                         gamma = st.slider(
@@ -714,24 +750,25 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
                             2.0,
                             float(vis_params['gamma']) if not isinstance(vis_params['gamma'], list) else 1.0,
                             0.1,
-                            help="Adjust image brightness/contrast",
+                            help="Sesuaikan kecerahan keseluruhan citra. Nilai < 1 membuat lebih terang, > 1 membuat lebih gelap.",
                             key="gamma_single"
                         )
                         vis_params['gamma'] = gamma
                 else:
-                    # Single band (grayscale)
+                    #Single band (grayscale)
                     gamma = st.slider(
                         "Gamma:",
                         0.1,
                         2.0,
                         float(vis_params['gamma']) if not isinstance(vis_params['gamma'], list) else 1.0,
                         0.1,
-                        help="Adjust image brightness/contrast",
+                        help="Sesuaikan kecerahan untuk citra hitam putih. Nilai < 1 membuat lebih terang, > 1 membuat lebih gelap.",
                         key="gamma_grayscale"
                     )
                     vis_params['gamma'] = gamma
             
-        # Thermal band visualization parameters
+        #Thermal band visualization parameters
+        #No need to add visualization control
         thermal_vis = {
             'min': 286,
             'max': 300,
