@@ -2,6 +2,8 @@
 
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue)](https://www.python.org/downloads/) [![GitHub Issues](https://img.shields.io/github/issues/epistem-io/luma-stack)](https://github.com/epistem-io/luma-stack/issues) [![Pull Requests](https://img.shields.io/github/issues-pr/epistem-io/luma-stack)](https://github.com/epistem-io/luma-stack/pulls)
 
+![Result showcase](docs/img/luma_stack_result_showcase.gif)
+
 Land Use Mapping for All (Luma) is an online mapping platform that integrates open-source spatial data and cloud-based computing for generating land use and land cover (LULC) maps. Luma is designed to accommodate a wide range of users through its user-friendly interface and guided steps, enabling anyone to easily produce custom LULC maps tailored to their needs.
 
 ## Table of Contents
@@ -10,9 +12,9 @@ Land Use Mapping for All (Luma) is an online mapping platform that integrates op
 -   [Getting Started](#getting-started)
 -   [Troubleshooting](#troubleshooting)
 -   [Contributing](#contributing)
--   [License](#license)
+-   [Acknowledgement](#acknowledgement)
 
-## Overview
+## Overview {#overview}
 
 Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospatial engine for the Luma platform. The system follows a structured 7-module pipeline:
 
@@ -26,11 +28,14 @@ Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospati
 
 ### File Structure
 
--   **`src/luma_ge/`**: This is the core Python package for this project. It contains all the backend logic, helper functions, and modules for interacting with Google Earth Engine.
+-   **`data/`**: Contains example datasets for testing and experimentation.
+-   **`docs/`**: Contains miscellaneous supporting documents and resources.
 -   **`notebooks/`**: Jupyter notebooks used for development, experimentation, and demonstrating the functionality of the core modules.
+-   **`src/luma_ge/`**: This is the core Python package for this project. It contains all the backend logic, helper functions, and modules for interacting with Google Earth Engine.
+-   **`Dockerfile`**: Docker build configuration.
 -   **`pyproject.toml`**: The standard Python project configuration file. It defines project metadata and core dependencies for `pip`.
 
-## Getting Started
+## Getting Started {#getting-started}
 
 Follow these instructions to set up and run the project on your local machine.
 
@@ -122,7 +127,7 @@ pip install git+https://github.com/epistem-io/luma-stack.git
 
 1.  **Create a Codespace** from the repository:
 
-    ![Image showing steps to create a codespace](docs/img/codespace.png)
+    ![Steps to create a codespace](docs/img/codespace.png)
 
     -   Navigate to the [luma-stack repository](https://github.com/epistem-io/luma-stack) on GitHub
     -   Click the green **Code** button (a)
@@ -146,7 +151,7 @@ After opening `notebooks/Module_implementation.ipynb`, you can run the minimum s
 
 **For advanced development, you can modify the notebook or integrate `luma_ge` into your own custom Python script projects.**
 
-## Troubleshooting
+## Troubleshooting {#troubleshooting}
 
 It is common to encounter issues during the initial setup of `luma_ge`. You can search for existing issues in the [GitHub Issues](https://github.com/epistem-io/luma-stack/issues) page to find common solutions.
 
@@ -157,7 +162,7 @@ If your issue is not covered, please create a new issue with a minimum explanati
 -   Minimal code (including data) example that can reproduce the issue
 -   Steps you have already tried to resolve the problem
 
-## Contributing
+## Contributing {#contributing}
 
 We welcome contributions to Luma! Here are ways you can help:
 
@@ -166,8 +171,6 @@ We welcome contributions to Luma! Here are ways you can help:
 -   Bug Reports: Submit detailed issue reports with reproducible examples
 -   Feature Requests: Propose new features or enhancements
 -   Code Contributions: Fix bugs, add features, or improve performance
--   Documentation: Improve tutorials, examples, or API documentation
--   Testing: Add test cases or improve test coverage
 -   Examples: Share use cases and application examples
 
 ### Development Setup
@@ -204,6 +207,6 @@ We welcome contributions to Luma! Here are ways you can help:
 
 7.  Push to your fork and create a Pull Request
 
-## License
+# Acknowledgement {#acknowledgement}
 
-Will be set up soon.
+This work is part of the **Evolving Participatory Information System for Nature-based Climate Solutions ([Epistem](https://epistem.io/))** initiative, which aims to develop an open-source landscape monitoring technology that can address multiple thematic requirements of diverse actors and stakeholders of nature-based climate solutions.
