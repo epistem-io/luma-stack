@@ -6,15 +6,7 @@
 
 Land Use Mapping for All (Luma) is an online mapping platform that integrates open-source spatial data and cloud-based computing for generating land use and land cover (LULC) maps. Luma is designed to accommodate a wide range of users through its user-friendly interface and guided steps, enabling anyone to easily produce custom LULC maps tailored to their needs.
 
-## Table of Contents
-
--   [Overview](#overview)
--   [Getting Started](#getting-started)
--   [Troubleshooting](#troubleshooting)
--   [Contributing](#contributing)
--   [Acknowledgement](#acknowledgement)
-
-## Overview {#overview}
+# Overview
 
 Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospatial engine for the Luma platform. The system follows a structured 7-module pipeline:
 
@@ -35,7 +27,7 @@ Luma Geospatial Engine (Luma-ge) is a Python package that serves as the geospati
 -   **`Dockerfile`**: Docker build configuration.
 -   **`pyproject.toml`**: The standard Python project configuration file. It defines project metadata and core dependencies for `pip`.
 
-## Getting Started {#getting-started}
+# Getting Started
 
 Follow these instructions to set up and run the project on your local machine.
 
@@ -151,7 +143,7 @@ After opening `notebooks/Module_implementation.ipynb`, you can run the minimum s
 
 **For advanced development, you can modify the notebook or integrate `luma_ge` into your own custom Python script projects.**
 
-## Troubleshooting {#troubleshooting}
+# Troubleshooting
 
 It is common to encounter issues during the initial setup of `luma_ge`. You can search for existing issues in the [GitHub Issues](https://github.com/epistem-io/luma-stack/issues) page to find common solutions.
 
@@ -162,7 +154,7 @@ If your issue is not covered, please create a new issue with a minimum explanati
 -   Minimal code (including data) example that can reproduce the issue
 -   Steps you have already tried to resolve the problem
 
-## Contributing {#contributing}
+# Contributing
 
 We welcome contributions to Luma! Here are ways you can help:
 
@@ -207,6 +199,6 @@ We welcome contributions to Luma! Here are ways you can help:
 
 7.  Push to your fork and create a Pull Request
 
-# Acknowledgement {#acknowledgement}
+# Acknowledgement
 
 This work is part of the **Evolving Participatory Information System for Nature-based Climate Solutions ([Epistem](https://epistem.io/))** initiative, which aims to develop an open-source landscape monitoring technology that can address multiple thematic requirements of diverse actors and stakeholders of nature-based climate solutions.
