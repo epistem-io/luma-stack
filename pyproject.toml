@@ -12,7 +12,6 @@ dependencies = [
     "numpy",
     "matplotlib",
     "seaborn",
-    "scipy"
     "altair",
     "tqdm",
     "pillow",

@@ -12,9 +12,10 @@ from shapely.geometry import MultiPoint
 
 #Based on early experiments, shapefile with complex geometry often cause issues in GEE
 #The following functions are used to handle the common geometry issues
-#This input utils is used for streamlit, dont know if the true frontend will used this function
+
 # Module 1: Cloudless Image Mosaic
 ## System Response 1.1: Area of Interest Definition
+
 #1. Shapefile Validation. Validate common shapefile issues, such as too complex geometry, null geom, or invalid CRS
 class shapefile_validator:
     """
