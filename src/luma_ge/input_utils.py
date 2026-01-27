@@ -25,22 +25,20 @@ if not logger.handlers:
 # Module 1: Cloudless Image Mosaic
 ## System Response 1.1: Area of Interest Definition
 
-#1. Shapefile Validation. Validate common shapefile issues, such as too complex geometry, null geom, or invalid CRS
-class shapefile_validator:
+#A new class since geometry validation is used by both shapefile and kmz
+#Therefore, a new class optimize the code reusability
+class GeometryValidator:
     """
-    Handle shapefile validation from user upload. Used in module 1 for AOI, and module 3 for ROI and 7 for thematic accuracy
-    Designed for point, multipoint, polygon, and multipolygon
+    Base class for geometry validation shared by different file formats.
+    Provides common validation methods that can be overridden by subclasses.
     """
     def __init__(self, verbose=True):
-        """
-        Initialize the validator
-        Ensure Earth Engine is initialized lazily (avoids import-time failures).
-        """
-        # Ensure Earth Engine is initialized when first used (raises helpful error if not)
+        """Initialize the validator"""
         ensure_ee_initialized()
-        
         self.verbose = verbose
+    
     def log(self, message, level="info"):
+        """Log messages using Python's logging module"""
         if self.verbose:
             if level == "error":
                 logger.error(message)
@@ -50,37 +48,20 @@ class shapefile_validator:
                 logger.info(f"SUCCESS: {message}")
             else:
                 logger.info(message)
-        #Core validation and fixing functions
-    def validate_and_fix_geometry(self, gdf, geometry = "mixed"):
-        """
-        Validate and fix geometry issues
-        """
-        self.log("Validating geometry...")
-        #Checking the basic shapefile info
-        self.log(f"Original CRS: {gdf.crs}")
-        self.log(f"Number of features: {len(gdf)}")
-        self.log(f"Geometry types: {gdf.geometry.geom_type.unique()}")
-        #handle coordinate reference system (CRS) conversion
-        gdf = self._fix_crs(gdf)
-        if gdf is None:
-            return None
-        # Remove invalid, empty, and null geometries
-        gdf = self._clean_geometries(gdf)
-        if gdf is None or len(gdf) == 0:
-            return None
-        # Geometry-specific validation
-        if geometry in ["point", "mixed"]:
-            gdf = self._validate_points(gdf)
-        if geometry in ["polygon", "mixed"]:
-            gdf = self._validate_polygons(gdf)
-        # Final validation
-        if not self._final_validation(gdf):
-            return None
-        self.log("Geometry validation completed!", "success")
-        self.log(f"Final geometry types: {gdf.geometry.geom_type.value_counts().to_dict()}")
-        self.log(f"Valid features: {len(gdf)}")
-        return gdf
-    #All shapefile should be WGS 1984 (EPSG:4326)
+    #check for valid coordinates
+    def _is_valid_coordinate(self, x, y):
+        """Check if coordinates are within valid lat/lon ranges"""
+        return (-180 <= x <= 180) and (-90 <= y <= 90)
+    
+    def _count_vertices(self, geom):
+        """Count vertices in a geometry"""
+        if hasattr(geom, 'exterior'):
+            return len(geom.exterior.coords)
+        elif hasattr(geom, 'geoms'):
+            return sum(len(poly.exterior.coords) for poly in geom.geoms)
+        else:
+            return 0
+    #make sure the crs is set to WGS84, avoid unexpected problems in earth engine
     def _fix_crs(self, gdf):
         """Fix coordinate reference system issues"""
         if gdf.crs is None:
@@ -95,9 +76,9 @@ class shapefile_validator:
                 self.log(f"CRS conversion failed: {e}", "error")
                 return None
         return gdf
-     #Function to support the validation (validate_and_fix_geometry)
+    #clean invalid geometries
     def _clean_geometries(self, gdf):
-        """Remove and fix invalid geometries"""
+        """Remove and fix invalid geometries (can be overridden by subclasses)"""
         original_count = len(gdf)
         
         #Fix invalid geometries
@@ -122,7 +103,7 @@ class shapefile_validator:
             self.log(f"Removed {original_count - len(gdf)} invalid geometries")
             
         return gdf
-     #Function to support the validation (validate_and_fix_geometry). For point data
+    #for point data
     def _validate_points(self, gdf):
         """Validate point geometries"""
         point_mask = gdf.geometry.geom_type.isin(['Point', 'MultiPoint'])
@@ -132,7 +113,6 @@ class shapefile_validator:
         self.log("Validating point coordinates...")
         
         indices_to_remove = []
-        #fixed and validate geometry for every single point data
         for idx in gdf[point_mask].index:
             geom = gdf.loc[idx, 'geometry']
             
@@ -159,51 +139,34 @@ class shapefile_validator:
             self.log(f"Removed {len(indices_to_remove)} features with invalid coordinates")
             
         return gdf
-    #Function to support the validation (validate_and_fix_geometry). For polygon data. Complex polygon shape (with a lot of vertex, will be simplified here)
+    #for polygon data (used in module 1,3 and 7)
     def _validate_polygons(self, gdf):
-        """Validate and simplify polygon geometries"""
+        """Validate and simplify polygon geometries (can be overridden by subclasses)"""
         poly_mask = gdf.geometry.geom_type.isin(['Polygon', 'MultiPolygon'])
         if not poly_mask.any():
             return gdf
             
         self.log("Checking polygon complexity...")
-        #validate the polygon for each ID
         for idx in gdf[poly_mask].index:
             geom = gdf.loc[idx, 'geometry']
             vertex_count = self._count_vertices(geom)
             
-            if vertex_count > 3000:  #Complexity threshold (number of vertex)
+            if vertex_count > 3000:
                 self.log(f"Complex geometry at index {idx} ({vertex_count} vertices). Simplifying...", "warning")
                 gdf.loc[idx, 'geometry'] = geom.simplify(tolerance=0.001, preserve_topology=True)
                 
         return gdf
-    #check valid coordinate range 
-    def _is_valid_coordinate(self, x, y):
-        """Check if coordinates are within valid lat/lon ranges"""
-        return (-180 <= x <= 180) and (-90 <= y <= 90)
-    #vertex calculation. Determine complexity of a geometry
-    def _count_vertices(self, geom):
-        """Count vertices in a geometry"""
-        if hasattr(geom, 'exterior'):
-            return len(geom.exterior.coords)
-        elif hasattr(geom, 'geoms'):  # MultiPolygon
-            return sum(len(poly.exterior.coords) for poly in geom.geoms)
-        else:
-            return 0
     
     def _final_validation(self, gdf):
-        """Perform final validation checks"""
-        #Check if any geometries remain
+        """Perform final validation checks (can be overridden by subclasses)"""
         if len(gdf) == 0:
             self.log("No valid geometries remaining after validation!", "error")
             return False
         
-        #Check geometry validity
         if not gdf.geometry.is_valid.all():
             self.log("Could not fix all geometry issues!", "error")
             return False
         
-        #Check coordinate bounds
         bounds = gdf.total_bounds
         if not (-180 <= bounds[0] <= 180 and -180 <= bounds[2] <= 180 and 
                 -90 <= bounds[1] <= 90 and -90 <= bounds[3] <= 90):
@@ -212,7 +175,149 @@ class shapefile_validator:
             return False
             
         return True
+
+#1. Validate common shapefile issues, such as too complex geometry, null geom, or invalid CRS
+#Implement the geometry validation class
+class shapefile_validator(GeometryValidator):
+    """
+    Handle shapefile validation from user upload. Used in module 1 for AOI, and module 3 for ROI and 7 for thematic accuracy
+    Designed for point, multipoint, polygon, and multipolygon
+    """
+    def validate_and_fix_geometry(self, gdf, geometry="mixed"):
+        """
+        Validate and fix geometry issues
+        """
+        self.log("Validating geometry...")
+        self.log(f"Original CRS: {gdf.crs}")
+        self.log(f"Number of features: {len(gdf)}")
+        self.log(f"Geometry types: {gdf.geometry.geom_type.unique()}")
+        
+        gdf = self._fix_crs(gdf)
+        if gdf is None:
+            return None
+        
+        gdf = self._clean_geometries(gdf)
+        if gdf is None or len(gdf) == 0:
+            return None
+        
+        if geometry in ["point", "mixed"]:
+            gdf = self._validate_points(gdf)
+        if geometry in ["polygon", "mixed"]:
+            gdf = self._validate_polygons(gdf)
+        
+        if not self._final_validation(gdf):
+            return None
+        
+        self.log("Geometry validation completed!", "success")
+        self.log(f"Final geometry types: {gdf.geometry.geom_type.value_counts().to_dict()}")
+        self.log(f"Valid features: {len(gdf)}")
+        return gdf
+
+#1b.KML/KMZ validation 
+class kml_validator(GeometryValidator):
+    """
+    Handle KML/KMZ file validation from user upload. KML/KMZ files are
+    generally well-formed and require minimal validation compared to shapefiles.
+    Designed for point, multipoint, polygon, and multipolygon geometries.
+    """
+    def load_and_validate(self, file_path, geometry="mixed"):
+        """
+        Load KML/KMZ file and validate geometry
+        """
+        try:
+            self.log(f"Loading KML/KMZ file: {file_path}")
+            gdf = gpd.read_file(file_path)
+            self.log(f"Successfully loaded file with {len(gdf)} features", "success")
+            return self.validate_and_fix_geometry(gdf, geometry)
+        except Exception as e:
+            self.log(f"Failed to load KML/KMZ file: {e}", "error")
+            return None
     
+    def validate_and_fix_geometry(self, gdf, geometry="mixed"):
+        """
+        Simplified validation for KML/KMZ files
+        """
+        self.log("Validating KML/KMZ geometry...")
+        self.log(f"Original CRS: {gdf.crs}")
+        self.log(f"Number of features: {len(gdf)}")
+        
+        # KML is guaranteed WGS84, just verify and ensure
+        gdf = self._verify_kml_crs(gdf)
+        if gdf is None:
+            return None
+        
+        # Simplified cleaning - only remove nulls/empty, skip invalid fixing
+        gdf = self._clean_geometries_kml(gdf)
+        if gdf is None or len(gdf) == 0:
+            return None
+        
+        # Validate points if needed
+        if geometry in ["point", "mixed"]:
+            gdf = self._validate_points(gdf)
+        
+        # Skip polygon simplification for KML (already optimized)
+        # Only validate geometry validity
+        
+        if not self._final_validation_kml(gdf):
+            return None
+        
+        self.log("Geometry validation completed!", "success")
+        self.log(f"Valid features: {len(gdf)}")
+        return gdf
+    
+    def _verify_kml_crs(self, gdf):
+        """Lightweight CRS verification for KML (KML is always WGS84)"""
+        if gdf.crs is None or gdf.crs != 'EPSG:4326':
+            if gdf.crs is None:
+                self.log("No CRS found in KML. Setting to WGS84.", "warning")
+                gdf = gdf.set_crs('EPSG:4326')
+            else:
+                self.log(f"Converting from {gdf.crs} to WGS84")
+                try:
+                    gdf = gdf.to_crs('EPSG:4326')
+                except Exception as e:
+                    self.log(f"CRS conversion failed: {e}", "error")
+                    return None
+        return gdf
+    
+    def _clean_geometries_kml(self, gdf):
+        """
+        Simplified geometry cleaning for KML - skip invalid fixing, just remove nulls/empty
+        KML files are generally well-formed so aggressive fixing is unnecessary.
+        """
+        original_count = len(gdf)
+        
+        # Remove empty geometries
+        empty_mask = gdf.geometry.is_empty
+        if empty_mask.any():
+            self.log(f"Removing {empty_mask.sum()} empty geometries", "warning")
+            gdf = gdf[~empty_mask].copy()
+        
+        # Remove null geometries
+        null_mask = gdf.geometry.isnull()
+        if null_mask.any():
+            self.log(f"Removing {null_mask.sum()} null geometries", "warning")
+            gdf = gdf[~null_mask].copy()
+        
+        if len(gdf) < original_count:
+            gdf = gdf.reset_index(drop=True)
+            self.log(f"Removed {original_count - len(gdf)} geometries")
+            
+        return gdf
+    
+    def _final_validation_kml(self, gdf):
+        """
+        Lightweight final validation for KML - skip strict bounds checking
+        KML files from Google Earth/Maps are generally reliable
+        """
+        # Check if any geometries remain
+        if len(gdf) == 0:
+            self.log("No valid geometries remaining after validation!", "error")
+            return False
+        
+        return True
+    
+
 #2. Functions to convert geodataframe into EE geometry
 #Several option is presented here:
 #a. direct conversion for single geometry (geemap function is utilzed here)
@@ -254,23 +359,18 @@ class EE_converter:
             return aoi
         except Exception as e:
             self.log(f"geemap conversion failed: {e}", "warning")
-                
             try:
-                    #If failed, use Manual conversion via GeoJSON
+                #If failed, use Manual conversion via GeoJSON
                 self.log("Trying manual GeoJSON conversion...")
-                    
-                    # Union multiple geometries if present
+                #Union multiple geometries if present
                 if len(gdf) > 1:
                         self.log("Multiple features found. Creating union...")
                         union_geom = gdf.geometry.unary_union
                         gdf = gpd.GeoDataFrame([{'geometry': union_geom}], crs=gdf.crs)
-                    
-                    # Convert to GeoJSON
+                #Convert to GeoJSON
                 geojson = json.loads(gdf.to_json())
-                    
                 if geojson['features']:
                     geometry = geojson['features'][0]['geometry']
-                        
                     if geometry['type'] == 'Polygon':
                             coords = geometry['coordinates']
                             aoi = ee.Geometry.Polygon(coords)
@@ -280,7 +380,6 @@ class EE_converter:
                     else:
                             self.log(f"Unsupported geometry type: {geometry['type']}", "error")
                             return None
-                        
                     self.log("Successfully converted using manual method", "success")
                     return aoi
                         
