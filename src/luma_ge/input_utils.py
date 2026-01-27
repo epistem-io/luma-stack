@@ -1,4 +1,4 @@
-import streamlit as st
+import logging
 import geopandas as gpd
 import pandas as pd
 import json
@@ -7,6 +7,15 @@ import geemap
 from .ee_config import ensure_ee_initialized
 from shapely.validation import make_valid
 from shapely.geometry import MultiPoint
+
+#Configure logging for error and info messages
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(levelname)s: %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
 
@@ -31,16 +40,16 @@ class shapefile_validator:
         ensure_ee_initialized()
         
         self.verbose = verbose
-    def log(self, message, level = "info"):
+    def log(self, message, level="info"):
         if self.verbose:
             if level == "error":
-                st.error(message)
+                logger.error(message)
             elif level == "warning":
-                st.warning(message)
+                logger.warning(message)
             elif level == "success":
-                st.success(message)
+                logger.info(f"SUCCESS: {message}")
             else:
-                st.info(message)
+                logger.info(message)
         #Core validation and fixing functions
     def validate_and_fix_geometry(self, gdf, geometry = "mixed"):
         """
@@ -223,16 +232,16 @@ class EE_converter:
         
         self.verbose = verbose
 
-    def log(self, message, level = "info"):
+    def log(self, message, level="info"):
         if self.verbose:
             if level == "error":
-                st.error(message)
+                logger.error(message)
             elif level == "warning":
-                st.warning(message)
+                logger.warning(message)
             elif level == "success":
-                st.success(message)
+                logger.info(f"SUCCESS: {message}")
             else:
-                st.info(message)  
+                logger.info(message)
     #Conversion for Single Geometry (AOI)      
     def convert_aoi_gdf(self, gdf):
         """
