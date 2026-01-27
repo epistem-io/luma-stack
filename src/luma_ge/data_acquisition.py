@@ -322,6 +322,15 @@ class Reflectance_Data:
 
         config = self.OPTICAL_DATASETS[optical_data]
 
+        # Warn if using legacy Landsat 1-3 data
+        if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
+            self.logger.warning(
+                f"WARNING: You are using {config['description']}"
+                f"Data avaliability and coverage for Landsat 1-3 (1972 - 1984) is very limited in some locations."
+                f"Consider using Landsat 4-9 for better data coverage."
+                f"Moreover, Landsat 1-3 data are DN values, representing scaled, calibrated at-sensor radiance. Further pre-processing are required. "
+            )
+
         #Use verbose to import detailed logging information
         if verbose:
             self.logger.info(f"Starting data fetch for {config['description']}")
@@ -613,10 +622,6 @@ class Reflectance_Stats:
                     }
                     if print_report:
                         self.print_collection_report(stats)
-                    #if total_images <= 20:
-                    #    self.logger.info(f"Scene IDs:{', '.join(scene_id)}")
-                    #else:
-                    #    self.logger.info(f"Scene IDs (first 10): {', '.join(scene_id[:10])}")
                 else:
                     stats = {
                         'total_images': 0,
