@@ -20,7 +20,7 @@ try:
         """Training data synchronization functionality."""
         
         @staticmethod
-        def LoadTrainData(landcover_df, aoi_geometry, training_shp_path=None, training_ee_path=None):
+        def LoadTrainData(landcover_df, aoi_geometry, column_id='kelas', training_shp_path=None, training_ee_path=None):
             """Load training data from EE asset or shapefile."""
             try:
                  #Training data from earth engine
@@ -50,16 +50,13 @@ try:
                         try:
                             # Convert AOI to EE geometry based on type
                             if hasattr(aoi_geometry, 'geometry') and hasattr(aoi_geometry.geometry, 'iloc'):
-                                # It's a GeoDataFrame - get the first geometry
                                 geom = aoi_geometry.geometry.iloc[0]
                                 ee_geom = ee.Geometry(geom.__geo_interface__)
                                 training_fc = training_fc.filterBounds(ee_geom)
                             elif hasattr(aoi_geometry, '__geo_interface__'):
-                                # It's a shapely geometry
                                 ee_geom = ee.Geometry(aoi_geometry.__geo_interface__)
                                 training_fc = training_fc.filterBounds(ee_geom)
                             else:
-                                # Assume it's already an EE geometry
                                 training_fc = training_fc.filterBounds(aoi_geometry)
                             
                             filtered_count = training_fc.size().getInfo()
@@ -86,11 +83,6 @@ try:
                         logger.info(f"Collection has {collection_size} features, implementing stratified sampling for class representation")
                         
                         try:
-                            # Get unique classes and their counts in ONE server-side operation
-                            class_field = 'kelas'
-                            
-                            # Create a server-side computation for class counts
-                            # First get distinct classes
                             unique_classes = training_fc.aggregate_array(class_field).distinct()
                             
                             #Get count for each class, keep the computation on the server side
@@ -122,7 +114,7 @@ try:
                             target_total = 5000
                             remaining_samples = target_total
                             
-                            # First pass: allocate minimum samples for each class
+
                             sampling_plan = []
                             for class_info in class_data:
                                 cls = class_info['class']
@@ -223,9 +215,9 @@ try:
                     if collection_size == 0:
                         logger.warning("No features found in collection")
                         return {
-                            'training_data': gpd.GeoDataFrame(columns=['kelas', 'geometry']),
+                            'training_data': gpd.GeoDataFrame(columns=[column_id, 'geometry']),
                             'landcover_df': landcover_df,
-                            'class_field': 'kelas',
+                            'class_field': column_id,
                             'validation_results': {
                                 'total_points': 0,
                                 'valid_points': 0,
@@ -255,18 +247,18 @@ try:
                     training_gdf = gpd.GeoDataFrame(data, geometry='geometry', crs='EPSG:4326')
                     
                     # Log class field info
-                    if 'kelas' in training_gdf.columns:
-                        unique_classes = training_gdf['kelas'].unique()
+                    if column_id in training_gdf.columns:
+                        unique_classes = training_gdf[column_id].unique()
                         logger.info(f"Unique classes in training data: {unique_classes}")
-                        logger.info(f"Class counts: {training_gdf['kelas'].value_counts().to_dict()}")
+                        logger.info(f"Class counts: {training_gdf[column_id].value_counts().to_dict()}")
                     else:
-                        logger.warning("'kelas' field not found in training data")
+                        logger.warning(f"'{column_id}' field not found in training data")
                         logger.info(f"Available columns: {training_gdf.columns.tolist()}")
 
                     return {
                         'training_data': training_gdf,
                         'landcover_df': landcover_df,
-                        'class_field': 'kelas',
+                        'class_field': column_id,
                         'validation_results': {
                             'total_points': len(training_gdf),
                             'valid_points': len(training_gdf),
@@ -297,18 +289,18 @@ try:
                     logger.info(f"Loaded {len(training_gdf)} features from shapefile")
                     
                     # Log class field info
-                    if 'kelas' in training_gdf.columns:
-                        unique_classes = training_gdf['kelas'].unique()
+                    if column_id in training_gdf.columns:
+                        unique_classes = training_gdf[column_id].unique()
                         logger.info(f"Unique classes in training data: {unique_classes}")
-                        logger.info(f"Class counts: {training_gdf['kelas'].value_counts().to_dict()}")
+                        logger.info(f"Class counts: {training_gdf[column_id].value_counts().to_dict()}")
                     else:
-                        logger.warning("'kelas' field not found in training data")
+                        logger.warning(f"'{column_id}' field not found in training data")
                         logger.info(f"Available columns: {training_gdf.columns.tolist()}")
                     
                     return {
                         'training_data': training_gdf,
                         'landcover_df': landcover_df,
-                        'class_field': 'kelas',
+                        'class_field': column_id,
                         'validation_results': {
                             'total_points': len(training_gdf),
                             'valid_points': len(training_gdf),
@@ -329,7 +321,7 @@ try:
                 return {
                     'training_data': None,
                     'landcover_df': landcover_df,
-                    'class_field': 'kelas',
+                    'class_field': column_id,
                     'validation_results': {
                         'total_points': 0,
                         'valid_points': 0,
@@ -349,11 +341,11 @@ try:
             return train_data_dict
         
         @staticmethod
-        def ValidClass(train_data_dict, use_class_ids=False):
+        def ValidClass(train_data_dict, column_id='kelas', use_class_ids=False):
             """Validate classes in training data."""
             if train_data_dict and train_data_dict.get('training_data') is not None:
                 training_data = train_data_dict['training_data']
-                class_field = train_data_dict.get('class_field', 'kelas')
+                class_field = train_data_dict.get('class_field', column_id)
                 landcover_df = train_data_dict.get('landcover_df')
                 
                 logger.info(f"Validating classes with use_class_ids={use_class_ids}")
@@ -362,10 +354,10 @@ try:
                 
                 if landcover_df is not None:
                     logger.info(f"Landcover DF columns: {landcover_df.columns.tolist()}")
-                    if use_class_ids and 'ID' in landcover_df.columns:
-                        logger.info(f"Valid IDs in landcover_df: {landcover_df['ID'].tolist()}")
-                    elif 'LULC_Type' in landcover_df.columns:
-                        logger.info(f"Valid LULC_Types in landcover_df: {landcover_df['LULC_Type'].tolist()}")
+                    if use_class_ids and len(landcover_df.columns) > 0:
+                        logger.info(f"Valid IDs in landcover_df: {landcover_df.iloc[:, 0].tolist()}")
+                    elif len(landcover_df.columns) > 1:
+                        logger.info(f"Valid LULC_Types in landcover_df: {landcover_df.iloc[:, 1].tolist()}")
                 
                 valid_classes = []
                 invalid_classes = []
@@ -380,14 +372,14 @@ try:
                             if pd.isna(cls):
                                 continue
                             if use_class_ids:
-                                if cls in landcover_df['ID'].values:
+                                if len(landcover_df.columns) > 0 and cls in landcover_df.iloc[:, 0].values:
                                     valid_classes.append(cls)
                                     logger.info(f"Valid class ID: {cls}")
                                 else:
                                     invalid_classes.append(cls)
                                     logger.warning(f"Invalid class ID: {cls}")
                             else:
-                                if cls in landcover_df['LULC_Type'].values:
+                                if len(landcover_df.columns) > 1 and cls in landcover_df.iloc[:, 1].values:
                                     valid_classes.append(cls)
                                     logger.info(f"Valid class type: {cls}")
                                 else:
@@ -416,12 +408,12 @@ try:
                     
                     for cls in classes:
                         if use_class_ids:
-                            if cls in landcover_df['ID'].values.tolist():
+                            if len(landcover_df.columns) > 0 and cls in landcover_df.iloc[:, 0].values.tolist():
                                 valid_classes.append(cls)
                             else:
                                 invalid_classes.append(cls)
                         else:
-                            if cls in landcover_df['LULC_Type'].values.tolist():
+                            if len(landcover_df.columns) > 1 and cls in landcover_df.iloc[:, 1].values.tolist():
                                 valid_classes.append(cls)
                             else:
                                 invalid_classes.append(cls)
@@ -446,11 +438,11 @@ try:
             return train_data_dict
         
         @staticmethod
-        def CheckSufficiency(train_data_dict, min_samples=20):
+        def CheckSufficiency(train_data_dict, column_id='kelas', min_samples=20):
             """Check if there are sufficient samples per class."""
             if train_data_dict and train_data_dict.get('training_data') is not None:
                 training_data = train_data_dict['training_data']
-                class_field = train_data_dict.get('class_field', 'kelas')
+                class_field = train_data_dict.get('class_field', column_id)
                 
                 if class_field in training_data.columns:
                     class_counts = training_data[class_field].value_counts()
@@ -463,12 +455,10 @@ try:
         def FilterTrainAoi(train_data_dict):
             """Filter training data by AOI."""
             if train_data_dict and train_data_dict.get('training_data') is not None:
-                # Simplified AOI filtering
                 training_data = train_data_dict['training_data']
                 aoi_geometry = train_data_dict.get('aoi_geometry')
                 
                 if aoi_geometry is not None and hasattr(aoi_geometry, 'geometry'):
-                    # Perform spatial filter (simplified)
                     try:
                         # Ensure both GeoDataFrames have the same CRS
                         if training_data.crs != aoi_geometry.crs:
@@ -476,7 +466,6 @@ try:
                             training_data = training_data.to_crs(aoi_geometry.crs)
                         
                         # Use 'intersects' instead of 'within' to catch polygons that overlap with AOI
-                        # This is more appropriate for polygon training data
                         filtered_data = gpd.sjoin(training_data, aoi_geometry, how='inner', predicate='intersects')
                         
                         # Remove duplicate columns from the join (index_right, etc.)
@@ -516,8 +505,8 @@ try:
                     
                     # Create mapping from ID to LULC_Type
                     id_to_lulc_type = {}
-                    if landcover_df is not None and 'ID' in landcover_df.columns and 'LULC_Type' in landcover_df.columns:
-                        id_to_lulc_type = dict(zip(landcover_df['ID'], landcover_df['LULC_Type']))
+                    if landcover_df is not None and len(landcover_df.columns) >= 2:
+                        id_to_lulc_type = dict(zip(landcover_df.iloc[:, 0], landcover_df.iloc[:, 1]))
                     
                     for class_id, count in class_counts.items():
                         percentage = (count / total_samples * 100) if total_samples > 0 else 0
@@ -558,37 +547,6 @@ try:
                 logger.error(f"Error creating training data summary: {str(e)}")
                 return pd.DataFrame(), 0, pd.DataFrame()
     
-    class SplitTrainData:
-        """Data splitting functionality."""
-        
-        @staticmethod
-        def SplitProcess(train_data, TrainSplitPct=0.7, random_state=123):
-            """Split training data into train and validation sets."""
-            try:
-                if train_data is None or train_data.empty:
-                    return gpd.GeoDataFrame(), gpd.GeoDataFrame()
-                
-                # Simple train/validation split
-                from sklearn.model_selection import train_test_split
-                
-                if hasattr(train_data, 'index'):
-                    # For GeoDataFrames, split by index to maintain spatial relationships
-                    train_indices, val_indices = train_test_split(
-                        train_data.index, 
-                        train_size=TrainSplitPct, 
-                        random_state=random_state,
-                        stratify=train_data.get('kelas', None) if 'kelas' in train_data.columns else None
-                    )
-                    train_split = train_data.loc[train_indices].copy()
-                    val_split = train_data.loc[val_indices].copy()
-                    return train_split, val_split
-                else:
-                    return gpd.GeoDataFrame(), gpd.GeoDataFrame()
-                
-            except Exception as e:
-                logger.error(f"Error splitting training data: {str(e)}")
-                return gpd.GeoDataFrame(), gpd.GeoDataFrame()
-
 except ImportError as e:
     logger.warning(f"Some functionality not available: {str(e)}")
     
@@ -617,25 +575,3 @@ except ImportError as e:
         def TrainDataRaw(*args, **kwargs):
             raise NotImplementedError("SyncTrainData not available")
     
-    class SplitTrainData:
-        @staticmethod
-        def SplitProcess(data, TrainSplitPct=0.7, random_state=123):
-            """Simple split functionality."""
-            try:
-                if data is None or data.empty:
-                    return gpd.GeoDataFrame(), gpd.GeoDataFrame()
-                
-                from sklearn.model_selection import train_test_split
-                
-                # Simple train/validation split
-                train_indices, val_indices = train_test_split(
-                    data.index, 
-                    train_size=TrainSplitPct, 
-                    random_state=random_state
-                )
-                train_split = data.loc[train_indices].copy()
-                val_split = data.loc[val_indices].copy()
-                return train_split, val_split
-            except Exception as e:
-                logger.error(f"Error in split: {str(e)}")
-                return gpd.GeoDataFrame(), gpd.GeoDataFrame()
