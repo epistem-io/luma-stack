@@ -10,18 +10,13 @@ Architecture:
 """
 
 import streamlit as st
-from epistemx.shapefile_utils import shapefile_validator, EE_converter
-from epistemx.module_4 import sample_quality
-from epistemx.module_4_part2 import spectral_plotter
+from luma_ge.input_utils import shapefile_validator, EE_converter
+from luma_ge.sample_data_quality import sample_quality, spectral_plotter
 from modules.nav import Navbar
 import matplotlib.pyplot as plt
 import numpy as np
 import geemap.foliumap as geemap
-import geopandas as gpd
 import traceback
-import tempfile
-import zipfile
-import os
 from ui_helper import show_footer, show_header
 
 #Page configuration

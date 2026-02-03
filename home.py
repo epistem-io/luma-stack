@@ -1,9 +1,8 @@
 import streamlit as st
 import leafmap.foliumap as leafmap
-from epistemx import auto_initialize
+from luma_ge import auto_initialize
 from modules.nav import Navbar
 import os
-import tempfile
 from ui_helper import show_footer, show_header, show_hero_banner
 
 st.set_page_config(

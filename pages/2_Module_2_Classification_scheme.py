@@ -12,7 +12,7 @@ Architecture:
 
 import streamlit as st
 import pandas as pd
-from epistemx.module_2 import LULC_Scheme_Manager
+from luma_ge.classification_scheme import LULC_Scheme_Manager
 from modules.nav import Navbar
 from ui_helper import show_footer, show_header
 

@@ -12,8 +12,7 @@ import os
 import math
 import shapefile
 from shapely.geometry import shape, Point, Polygon, mapping
-from epistemx.module_3 import SyncTrainData
-from epistemx.ee_config import initialize_earth_engine
+from luma_ge.sample_data import SyncTrainData
 from modules.nav import Navbar
 from ui_helper import show_footer, show_header
 
@@ -23,10 +22,6 @@ st.set_page_config(
     page_icon="logos/logo_epistem_crop.png",
     layout="wide"
 )
-
-# Initialize Earth Engine
-initialize_earth_engine()
-
 # Initialize session state variables
 session_defaults = {
     'sampling_data': {'type': 'FeatureCollection', 'features': []},

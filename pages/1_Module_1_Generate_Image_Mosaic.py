@@ -11,17 +11,8 @@ Architecture:
 import streamlit as st
 import geemap.foliumap as geemap
 import geopandas as gpd
-from epistemx.module_1 import Reflectance_Data, Reflectance_Stats, final_Image
-from epistemx.shapefile_utils import shapefile_validator, EE_converter
-from epistemx.ee_config import (
-    setup_google_drive_oauth,
-    is_user_authenticated,
-    get_authenticated_user,
-    get_google_drive_service,
-    logout_user,
-    initiate_google_oauth_login,
-    handle_google_oauth_callback
-)
+from luma_ge.data_acquisition import Reflectance_Data, Reflectance_Stats, final_Image
+from luma_ge.input_utils import shapefile_validator, EE_converter
 from modules.nav import Navbar
 import tempfile
 import zipfile
@@ -112,12 +103,6 @@ if 'task_cache' not in st.session_state:
     st.session_state.task_cache = {}
 if 'last_cache_update' not in st.session_state:
     st.session_state.last_cache_update = {}
-
-# Google Drive authentication state
-if 'authenticator' not in st.session_state:
-    st.session_state.authenticator = setup_google_drive_oauth()
-if 'drive_authenticated' not in st.session_state:
-    st.session_state.drive_authenticated = False
 
 #Cache task status with time to live to reduce API calls
 def get_cached_task_status(task_id, cache_ttl=30):
@@ -499,12 +484,12 @@ if st.session_state.search_results is not None and st.session_state.detailed_sta
         if thermal_collection is not None:
             thermal_median = thermal_collection.median().clip(aoi)
             #Create multispectral composite using median via final_Image
-            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', add_band_stats=False, verbose=False)
+            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', verbose=False)
             #Stack thermal band and ensure float type
             composite = composite.addBands(thermal_median).toFloat()
         else:
             #For Landsat 1-3 MSS: no thermal bands available — use temporal composite
-            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', add_band_stats=False, verbose=False).toFloat()
+            composite = image_processor.get_temporal_composite(collection, aoi, reducer='median', verbose=False).toFloat()
         
         #Add section for visualization control
         st.subheader("Kombinasi Kanal Majemuk")
@@ -850,75 +835,7 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
             # Display authentication status and controls
             col_auth1, col_auth2 = st.columns([2, 1])
             
-            with col_auth1:
-                # Check current authentication status
-                is_authenticated = is_user_authenticated()
-                st.session_state.drive_authenticated = is_authenticated
-                
-                if is_authenticated:
-                    username = get_authenticated_user()
-                    st.success(f"✅ Terhubung sebagai: {username}")
-                    st.info("📁 Berkas akan disimpan di Google Drive Anda dalam folder 'EarthEngine Exports'")
-                else:
-                    st.warning("⚠️ Belum terhubung ke Google Drive")
-                    
-                    # Check for OAuth2 callback code in URL parameters
-                    query_params = st.query_params
-                    if 'code' in query_params:
-                        code = query_params['code']
-                        with st.spinner("🔐 Memproses autentikasi Google..."):
-                            if handle_google_oauth_callback(code):
-                                st.success("✅ Autentikasi Google berhasil!")
-                                st.session_state.drive_authenticated = True
-                                # Clear the code from URL
-                                st.query_params.clear()
-                                st.rerun()
-                            else:
-                                st.error("❌ Autentikasi gagal. Silakan coba lagi.")
-                    else:
-                        # Show Google login button
-                        auth_url = initiate_google_oauth_login()
-                        if auth_url:
-                            st.markdown(f"""
-                            <a href="{auth_url}" style="text-decoration: none;">
-                                <div style="
-                                    background-color: #4285f4;
-                                    color: white;
-                                    padding: 0.75rem 1.5rem;
-                                    border-radius: 0.5rem;
-                                    text-align: center;
-                                    font-weight: 600;
-                                    font-size: 1rem;
-                                    cursor: pointer;
-                                    display: inline-block;
-                                    min-width: 200px;
-                                    transition: background-color 0.3s;
-                                " onmouseover="this.style.backgroundColor='#1e40af'" onmouseout="this.style.backgroundColor='#4285f4'">
-                                    🔐 Login dengan Google
-                                </div>
-                            </a>
-                            """, unsafe_allow_html=True)
-                            st.caption("Klik tombol untuk login dengan akun Google Anda")
-                        else:
-                            st.error("❌ Tidak dapat membuat URL autentikasi Google")
-            
-            with col_auth2:
-                if is_authenticated:
-                    if st.button("🚪 Logout", help="Keluar dari Google Drive"):
-                        logout_user()
-                        st.session_state.drive_authenticated = False
-                        st.rerun()
-            
-            # Drive folder settings (only show if authenticated)
-            if is_authenticated:
-                drive_folder = st.text_input(
-                    "Folder Google Drive:",
-                    value="EarthEngine_Exports",
-                    help="Nama folder di Google Drive untuk menyimpan hasil ekspor"
-                )
-                
-                st.info(f"📁 Berkas akan disimpan di: Google Drive/{drive_folder}/{export_name}.tif")
-        
+
         elif export_destination == "Google Cloud Storage":
             st.subheader("Pengaturan Google Cloud Storage")
             
@@ -1078,68 +995,7 @@ if st.session_state.composite is not None and st.session_state.aoi is not None:
                         
                         # Direct download completed - no task needed
                         
-                    elif export_destination == "Google Drive":
-                        # Google Drive export using Streamlit Authenticator OAuth2 credentials
-                        try:
-                            # Get authenticated Drive service
-                            drive_service = get_google_drive_service()
-                            if not drive_service:
-                                st.error("❌ Tidak dapat membuat koneksi ke Google Drive. Silakan login terlebih dahulu.")
-                                st.stop()
-                            
-                            # Initialize Earth Engine (already authenticated)
-                            # Configure export parameters for Google Drive
-                            export_params = {
-                                "image": export_image,
-                                "description": export_name.replace(" ", "_"),
-                                "folder": drive_folder,
-                                "fileNamePrefix": export_name,
-                                "scale": scale,
-                                "crs": export_crs,
-                                "maxPixels": 1e13,
-                                "fileFormat": "GeoTIFF",
-                                "formatOptions": {"cloudOptimized": True},
-                                "region": export_region
-                            }
-                            
-                            # Start Google Drive export task
-                            task = ee.batch.Export.image.toDrive(**export_params)
-                            task.start()
-                            
-                            # Store task info in session state for monitoring
-                            task_info = {
-                                'id': task.id,
-                                'name': export_name,
-                                'destination': export_destination,
-                                'folder': drive_folder,
-                                'crs': export_crs,
-                                'scale': scale,
-                                'start_time': datetime.datetime.now(),
-                                'last_progress': 0,
-                                'last_update': datetime.datetime.now()
-                            }
-                            
-                            st.session_state.export_tasks.append(task_info)
-                            st.success(f"✅ Tugas ekspor '{export_name}' berhasil dikirim ke Google Drive!")
-                            st.info(f"ID Tugas: {task.id}")
-                            
-                            # Display export details
-                            st.markdown(f"""
-                            **Detail Ekspor:**
-                            - Tujuan: Google Drive
-                            - Folder: {drive_folder}
-                            - Nama berkas: {export_name}.tif
-                            - CRS: {export_crs}
-                            - Resolusi: {scale}m
-                            
-                            Periksa progres di [Earth Engine Task Manager](https://code.earthengine.google.com/tasks) atau gunakan pemantau tugas di bawah ini.
-                            Berkas akan muncul di Google Drive Anda setelah ekspor selesai.
-                            """)
-                            
-                        except Exception as drive_error:
-                            st.error(f"❌ Gagal mengekspor ke Google Drive: {str(drive_error)}")
-                            st.info("💡 Pastikan Anda sudah login ke Google Drive dan memiliki izin yang diperlukan.")
-                        
+                   
                     else:  # Google Cloud Storage
                         #Summarize the export parameter from user input for GCS
                         export_params = {
