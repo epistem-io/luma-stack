@@ -16,6 +16,7 @@ from .ee_config import (
     setup_earth_engine,
     reset_ee_initialization
 )
+from .data_acquisition import GEEAssetManager
 import os
 import warnings
 
@@ -191,5 +192,6 @@ __all__ = [
     'print_auth_instructions',
     'setup_earth_engine',
     'reset_ee_initialization',
-    'auto_initialize'
+    'auto_initialize',
+    'GEE_Asset_Manager'
 ]
