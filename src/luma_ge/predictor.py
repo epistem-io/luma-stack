@@ -1232,3 +1232,284 @@ class PredictorCalculation:
                 "error": str(e),
                 "timestamp": datetime.datetime.now().isoformat()
             }
+#=================================== Correlation Analysis ===================================
+class EECorrelationAnalysis:
+    """
+    Minimal correlation analysis using Earth Engine native operations.
+    
+    This class computes correlation matrices for multi-band Earth Engine images
+    using random sampling and server-side correlation computation.
+    
+    Supported Correlation Methods:
+    - Spearman: Robust to outliers, detects monotonic relationships (default)
+    - Pearson: Faster computation, detects linear relationships only
+    
+    Usage Example:
+        analyzer = EECorrelationAnalysis(predictor_image, aoi_geometry)
+        corr_matrix = analyzer.compute_correlation(num_samples=5000)
+        fig = analyzer.visualize()
+    
+    """
+    
+    def __init__(self, image: ee.Image, aoi: ee.Geometry, method: str = 'spearman'):
+        """
+        Initialize the correlation analysis.
+        
+        Parameters:
+        -----------
+        image : ee.Image
+            Multi-band Earth Engine image containing predictor layers
+        aoi : ee.Geometry
+            Area of Interest geometry for analysis
+        method : str, default='spearman'
+            Correlation method to use:
+            - 'spearman': Robust to outliers, detects monotonic relationships
+            - 'pearson': Faster, detects linear relationships only
+            
+        Raises:
+        -------
+        ValueError
+            If method is not 'spearman' or 'pearson'
+        """
+        ensure_ee_initialized()
+        
+        self.image = image
+        self.aoi = aoi
+        self.method = method.lower()
+        self.correlation_matrix = None
+        
+        # Validate method
+        if self.method not in ['spearman', 'pearson']:
+            logger.error(f"Invalid correlation method: {method}")
+            raise ValueError(f"Method must be 'spearman' or 'pearson', got '{method}'")
+        
+        logger.info(f"Correlation analysis initialized with {method} method")
+
+    def generate_random_samples(self, num_samples: int = 2500, seed: int = 42) -> ee.FeatureCollection:
+        """
+        Generate random sample points within the Area of Interest.
+        
+        Uses Earth Engine's randomPoints to create a specified number of 
+        random points within the AOI boundary for correlation analysis.
+        
+        Parameters:
+        -----------
+        num_samples : int, default=2500
+            Number of random points to generate
+        seed : int, default=42
+            Random seed for reproducibility
+            
+        Returns:
+        --------
+        ee.FeatureCollection
+            Collection of random points within the AOI
+            
+        Raises:
+        -------
+        Exception
+            If random point generation fails
+            
+        Example:
+        --------
+        >>> samples = analyzer.generate_random_samples(num_samples=1000, seed=123)
+        >>> print(samples.size().getInfo())
+        1000
+        """
+        try:
+            logger.info(f"Generating {num_samples} random sample points with seed {seed}")
+            
+            samples = ee.FeatureCollection.randomPoints(
+                region=self.aoi,
+                points=num_samples,
+                seed=seed
+            )
+            
+            logger.info(f"Successfully generated {num_samples} random sample points")
+            return samples
+            
+        except Exception as e:
+            logger.error(f"Failed to generate random samples: {str(e)}")
+            raise
+
+    def compute_correlation(self, num_samples: int = 2500, scale: int = 30, seed: int = 42) -> pd.DataFrame:
+        """
+        Compute correlation matrix using the specified correlation method.
+        
+        This method performs server-side correlation analysis by:
+        1. Generating random sample points in the AOI
+        2. Extracting pixel values at those points for all bands
+        3. Computing pairwise correlations using Earth Engine reducers
+        4. Building a symmetric correlation matrix
+        5. Converting to pandas DataFrame with band names as labels
+        
+        Parameters:
+        -----------
+        num_samples : int, default=2500
+            Number of random samples to use for correlation computation
+        scale : int, default=30
+            Scale in meters for sampling pixel values
+        seed : int, default=42
+            Random seed for reproducibility
+            
+        Returns:
+        --------
+        pd.DataFrame
+            Correlation matrix with band names as index and columns
+            
+            
+        Example:
+        --------
+        >>> corr_matrix = analyzer.compute_correlation(num_samples=5000, scale=30)
+        >>> print(corr_matrix.shape)
+        (10, 10)
+        """
+        try:
+            logger.info(f"Computing {self.method} correlation matrix with {num_samples} samples at {scale}m scale")
+            
+            # Generate random samples
+            samples = self.generate_random_samples(num_samples=num_samples, seed=seed)
+            
+            # Get band names from the image
+            band_names = self.image.bandNames().getInfo()
+            n_bands = len(band_names)
+            
+            logger.info(f"Processing {n_bands} bands: {band_names}")
+            
+            # Initialize correlation matrix with ones on diagonal
+            corr_matrix = np.ones((n_bands, n_bands))
+            
+            # Select the appropriate reducer
+            if self.method == 'spearman':
+                reducer = ee.Reducer.spearmansCorrelation()
+            else:  # pearson
+                reducer = ee.Reducer.pearsonsCorrelation()
+            
+            # Compute pairwise correlations for upper triangle
+            for i in range(n_bands):
+                for j in range(i + 1, n_bands):
+                    logger.debug(f"Computing correlation between {band_names[i]} and {band_names[j]}")
+                    
+                    # Select the pair of bands
+                    pair_image = self.image.select([band_names[i], band_names[j]])
+                    
+                    # Sample the pair at random points
+                    pair_samples = pair_image.sampleRegions(
+                        collection=samples,
+                        scale=scale,
+                        tileScale=4
+                    )
+                    
+                    # Compute correlation using selected reducer
+                    stats = pair_samples.reduceColumns(
+                        reducer=reducer,
+                        selectors=[band_names[i], band_names[j]]
+                    ).getInfo()
+                    
+                    # Extract correlation value
+                    corr_value = stats.get('correlation', 0)
+                    
+                    # Fill symmetric matrix
+                    corr_matrix[i, j] = corr_value
+                    corr_matrix[j, i] = corr_value
+            
+            # Convert to DataFrame with band names as labels
+            correlation_df = pd.DataFrame(
+                corr_matrix,
+                index=band_names,
+                columns=band_names
+            )
+            
+            # Store in instance variable
+            self.correlation_matrix = correlation_df
+            
+            logger.info(f"Successfully computed {self.method} correlation matrix for {n_bands} bands")
+            return correlation_df
+            
+        except Exception as e:
+            logger.error(f"Failed to compute correlation matrix: {str(e)}")
+            raise
+
+    def visualize(self) -> go.Figure:
+        """
+        Create an interactive heatmap visualization of the correlation matrix.
+        
+        The visualization displays only the lower triangle of the correlation matrix
+        to avoid redundancy, with an interactive Plotly heatmap using a diverging
+        colorscale centered at zero.
+        
+        Returns:
+        --------
+        plotly.graph_objects.Figure
+            Interactive Plotly figure with correlation heatmap
+            
+        Raises:
+        -------
+        ValueError
+            If correlation matrix has not been computed yet
+        Exception
+            If visualization creation fails
+            
+        Example:
+        --------
+        >>> fig = analyzer.visualize()
+        >>> fig.show()
+        """
+        try:
+            # Check if correlation matrix exists
+            if self.correlation_matrix is None:
+                logger.error("Correlation matrix not computed. Call compute_correlation() first.")
+                raise ValueError("Correlation matrix not computed. Call compute_correlation() first.")
+            
+            logger.info("Creating correlation matrix visualization")
+            
+            # Create a copy and mask upper triangle with NaN
+            corr_data = self.correlation_matrix.copy()
+            mask = np.triu(np.ones_like(corr_data, dtype=bool), k=0)
+            corr_data[mask] = np.nan
+            
+            # Create hover text with predictor names and correlation values
+            hover_text = []
+            for i in range(len(corr_data)):
+                hover_row = []
+                for j in range(len(corr_data.columns)):
+                    if np.isnan(corr_data.iloc[i, j]):
+                        hover_row.append("N/A")
+                    else:
+                        hover_row.append(
+                            f"{corr_data.index[i]} ↔ {corr_data.columns[j]}<br>"
+                            f"Correlation: {corr_data.iloc[i, j]:.4f}"
+                        )
+                hover_text.append(hover_row)
+            
+            # Create Plotly heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_data.values,
+                x=corr_data.columns,
+                y=corr_data.index,
+                colorscale='RdBu_r',
+                zmid=0,
+                zmin=-1,
+                zmax=1,
+                hovertext=hover_text,
+                hoverinfo='text',
+                colorbar=dict(title="Correlation")
+            ))
+            
+            # Set layout with title and axis labels
+            method_name = self.method.capitalize()
+            fig.update_layout(
+                title=f"Predictor Correlation Matrix ({method_name})",
+                xaxis_title="Predictors",
+                yaxis_title="Predictors",
+                width=800,
+                height=800
+            )
+            
+            logger.info("Successfully created correlation matrix visualization")
+            return fig
+            
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to create visualization: {str(e)}")
+            raise
