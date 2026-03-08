@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from typing import Dict, List, Any, Tuple
 import ee
 from .ee_config import ensure_ee_initialized
 
@@ -388,3 +389,78 @@ class Generate_LULC:
         }
         
         return accuracy_metrics
+    
+    def reclassify_map_by_classes(
+        self,
+        classification_map: ee.Image,
+        classification_df,
+        selected_classes: Dict[str, Any],
+        other_class_id: int = 999,
+        scale: int = 30
+    ) -> Tuple[ee.Image, Dict[str, Any]]:
+        """
+        Reclassify a land cover map based on selected classes of interest.
+
+        Parameters
+        ----------
+        classification_map : ee.Image
+            Original classified map.
+        classification_df : pandas.DataFrame
+            DataFrame containing classification scheme with 'ID' column.
+        selected_classes : Dict[str, Any]
+            Dictionary containing selected classes (output from store_classes_of_interest).
+        other_class_id : int, default=999
+            ID assigned to all non-selected classes.
+        scale : int, default=30
+            Spatial resolution used for histogram check.
+
+        Returns
+        -------
+        Tuple[ee.Image, Dict[str, Any]]
+            - Reclassified Earth Engine image
+            - Metadata dictionary with histogram and validation info
+        """
+
+        # List of all class IDs in scheme
+        all_class_ids = classification_df["ID"].tolist()
+
+        # Selected classes
+        classes_of_interest = selected_classes["classes_of_interest"]
+
+        # Build remap values
+        to_values = [
+            cid if cid in classes_of_interest else other_class_id
+            for cid in all_class_ids
+        ]
+
+        # Apply remap
+        final_map = classification_map.remap(
+            all_class_ids,
+            to_values,
+            other_class_id
+        ).toInt()
+
+        # ---------------------------------
+        # Check class presence in AOI
+        # ---------------------------------
+        histogram_dict = final_map.reduceRegion(
+            reducer=ee.Reducer.frequencyHistogram(),
+            geometry=classification_map.geometry(),
+            scale=scale,
+            maxPixels=1e13
+        ).getInfo()
+
+        band_name = list(histogram_dict.keys())[0]
+        histogram = histogram_dict[band_name]
+
+        existing_classes = [c for c in classes_of_interest if str(c) in histogram]
+        missing_classes = [c for c in classes_of_interest if str(c) not in histogram]
+
+        metadata = {
+            "histogram": histogram,
+            "existing_classes": existing_classes,
+            "missing_classes": missing_classes,
+            "all_classes_present": len(missing_classes) == 0
+        }
+
+        return final_map, metadata
