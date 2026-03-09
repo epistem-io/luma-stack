@@ -456,7 +456,7 @@ class Generate_LULC:
         existing_classes = [c for c in classes_of_interest if str(c) in histogram]
         missing_classes = [c for c in classes_of_interest if str(c) not in histogram]
 
-        # Guardrail: show
+        # Guardrail: show warning message if none of the selected classes are present in the final map
         if len(existing_classes) == 0:
             raise RuntimeError(
             f"None of the selected classes of interest were found in the final classification map. No class were reclassified."
