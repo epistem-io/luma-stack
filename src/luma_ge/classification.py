@@ -108,6 +108,18 @@ class Generate_LULC:
         Perform classification to generate Land Cover Land Use Map. The parameters used in the classification should be the result of hyperparameter tuning
         """
 
+        # Registry of prebuilt wall-to-wall maps per default scheme.
+        # Add new years here as maps are finalized — nothing else needs to change.
+        self._prebuilt_registry = {
+            "RESTORE+ Project": {
+                "assets": {
+                    2018: "users/hadicu06/IIASA/RESTORE/classified_maps/class_hardened/with_crowdsourced_data/primary_classification" #PLACEHOLDER ASSET DIRECTORY
+                },
+                "class_band": "classification",
+                "scale": 100,
+            }
+        }
+
     ############################# 1. Multiclass Classification ###########################
     def hard_classification(self, training_data, class_property, image, ntrees = 100, 
                                   v_split = None, min_leaf = 1, return_model = False,  seed=0):
@@ -471,3 +483,100 @@ class Generate_LULC:
         }
 
         return final_map, metadata
+    
+    def classify_from_prebuilt(
+        self,
+        scheme_name: str,
+        aoi: ee.Geometry,
+        year: int,
+        scheme_classes: List[Dict[str, Any]],  # manager.classes passed in directly
+    ) -> Dict[str, Any]:
+        """
+        Bypass the full RF pipeline and return a clipped prebuilt wall-to-wall
+        map when the user selects a default scheme.
+
+        Replaces hard_classification() / soft_classification() when a prebuilt
+        map is available. The return dict mirrors what the RF path produces so
+        downstream code (display, export, legend) needs no branching.
+
+        Parameters
+        ----------
+        scheme_name    : str               — must match a key in _prebuilt_registry
+        aoi            : ee.Geometry       — user's area of interest
+        year           : int               — user's temporal input
+        scheme_classes : List[Dict]        — manager.classes (ID / Class Name / Color Code)
+
+        Returns
+        -------
+        Dict with keys:
+            final_map        : ee.Image        — clipped classified map
+            present_classes  : List[Dict]      — scheme_classes filtered to AOI
+            vis_params       : dict            — ee-style vis params
+            source           : str             — "prebuilt_bypass"
+            year_used        : int             — actual year loaded (may differ if fallback)
+            scheme           : str             — scheme_name
+        """
+        cfg = self._prebuilt_registry.get(scheme_name)
+        if cfg is None:
+            raise ValueError(
+                f"No prebuilt map registered for scheme '{scheme_name}'. "
+                f"Available: {list(self._prebuilt_registry.keys())}"
+            )
+
+        # Resolve year with graceful fallback 
+        available_years = sorted(cfg["assets"].keys())
+        year_used = year
+
+        if year not in cfg["assets"]:
+            year_used = min(available_years, key=lambda y: abs(y - year))
+            print(
+                f"[classify_from_prebuilt] Year {year} not available for '{scheme_name}'. "
+                f"Falling back to nearest: {year_used}. Available: {available_years}"
+            )
+
+        # Load & clip 
+        national_map = ee.Image(cfg["assets"][year_used])
+        clipped_map  = national_map.clip(aoi)
+
+        # Detect class IDs present in AOI
+        class_band = cfg["class_band"]
+        hist_dict = (
+            clipped_map
+            .select(class_band)
+            .reduceRegion(
+                reducer   = ee.Reducer.frequencyHistogram(),
+                geometry  = aoi,
+                scale     = cfg["scale"],
+                maxPixels = 1e13,
+            )
+            .get(class_band)
+            .getInfo()                          # {str(class_id): pixel_count}
+        )
+        present_ids = {int(k) for k, v in hist_dict.items() if v > 0}
+
+        # Filter legend to AOI-present classes 
+        # Reuses the exact names & colors already loaded in manager.classes,
+        # so Module 2 legend and final map legend are always consistent
+        present_classes = [c for c in scheme_classes if c['ID'] in present_ids]
+
+        # ── 5. Build vis params ───────────────────────────────────────────────
+        ids     = [c['ID']         for c in present_classes]
+        palette = [c['Color Code'] for c in present_classes]
+        labels  = [c['Class Name'] for c in present_classes]
+
+        vis_params = {
+            "bands":       [class_band],
+            "min":         min(ids) if ids else 0,
+            "max":         max(ids) if ids else 1,
+            "palette":     palette,
+            "class_names": labels,
+        }
+
+        return {
+            "final_map":       clipped_map,
+            "present_classes": present_classes,
+            "vis_params":      vis_params,
+            "source":          "prebuilt_bypass",
+            "year_used":       year_used,
+            "scheme":          scheme_name,
+        }
