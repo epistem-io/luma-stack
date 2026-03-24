@@ -1,4 +1,4 @@
-﻿class_id,class_name,tree_pres,water_pres,buil_pres,rule
-1,Forest,1,0,0,none
-2,Built Up,0,0,1,none
-3,Water,0,1,0,none
+﻿class_id,class_name,tree_pres,water_pres,buil_pres,rule,priority
+1,Forest,1,0,0,none,1
+2,Built Up,0,0,1,none,2
+3,Water,0,1,0,none,3
