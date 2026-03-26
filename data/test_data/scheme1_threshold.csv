@@ -1,0 +1,4 @@
+﻿class_id,class_name,tree_pres,rule_tree_pres,water_pres,rule_water_pres,buil_pres,rule_buil_pres,rule_general,priority
+1,Forest,0.6,more than,0,equal to,0,equal to,none,1
+2,Built Up,0,equal to,0,equal to,0.6,more than,none,2
+3,Water,0,equal to,0.9,more than,0,equal to,none,3
