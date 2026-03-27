@@ -113,8 +113,20 @@ class Generate_LULC:
         self._prebuilt_registry = {
             "RESTORE+ Project": {
                 "assets": {
-                    2018: "users/hadicu06/IIASA/RESTORE/classified_maps/class_hardened/with_crowdsourced_data/primary_classification" #PLACEHOLDER ASSET DIRECTORY
-                },
+                    2013: "projects/epistem-485512/assets/Indonesia_LULC_2013_100m",
+                    2014: "projects/epistem-485512/assets/Indonesia_LULC_2014_100m",
+                    2015: "projects/epistem-485512/assets/Indonesia_LULC_2015_100m",
+                    2016: "projects/epistem-485512/assets/Indonesia_LULC_2016_100m",
+                    2017: "projects/epistem-485512/assets/Indonesia_LULC_2017_100m",
+                    2018: "users/hadicu06/IIASA/RESTORE/classified_maps/class_hardened/with_crowdsourced_data/primary_classification", #PLACEHOLDER ASSET DIRECTORY
+                    2019: "projects/epistem-490415/assets/RESTORE/Indonesia_Mosaic_LULC_2019_100m",
+                    2020: "projects/epistem-490415/assets/RESTORE/Indonesia_Mosaic_LULC_2020_100m",
+                    2021: "projects/epistem-490415/assets/RESTORE/Indonesia_Mosaic_LULC_2021_100m",
+                    2022: "projects/epistem-490415/assets/RESTORE/Indonesia_Mosaic_LULC_2022_100m",
+                    2023: "projects/epistem-490415/assets/RESTORE/Indonesia_Mosaic_LULC_2023_100m",
+                    2024: "projects/epistem-485512/assets/Indonesia_LULC_2024_100m",
+                    2025: "users/Restore25/with_crowdsourced_data__primary_classification_2025"   
+                },  
                 "class_band": "classification",
                 "scale": 100,
             }
@@ -536,6 +548,7 @@ class Generate_LULC:
 
         # Load & clip 
         national_map = ee.Image(cfg["assets"][year_used])
+        print("[classify_from_prebuilt] Map resolution (m):", national_map.projection().nominalScale().getInfo())
         clipped_map  = national_map.clip(aoi)
 
         # Detect class IDs present in AOI
