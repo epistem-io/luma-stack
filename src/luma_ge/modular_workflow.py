@@ -1142,3 +1142,111 @@ def compare_det_vs_mc(
 
     plt.show()
 
+import ee
+import pandas as pd
+
+class TrainingDataLabeller:
+    """
+    Labels an ee.FeatureCollection with class_ids according to a
+    pre-defined scheme of rules.
+    """
+
+    def __init__(self, rules_df: pd.DataFrame, scheme_name: str, nodata_value: int = 0):
+        """
+        Parameters
+        ----------
+        rules_df : pd.DataFrame
+            DataFrame with columns: class_id, class_name, rule, priority
+            Rules should be logical expressions already in the 'rule' column.
+        scheme_name : str
+            Name of the scheme for printing/logging purposes.
+        nodata_value : int
+            class_id assigned to features that satisfy no rule.
+        """
+        if rules_df.empty:
+            raise ValueError(f"No rules found for scheme '{scheme_name}'")
+
+        self.rules_df = rules_df.sort_values("priority").reset_index(drop=True)
+        self.scheme_name = scheme_name
+        self.nodata_value = nodata_value
+        print(f"Initialized labeller for '{scheme_name}' "
+              f"({len(self.rules_df)} classes, priority order)")
+
+    @staticmethod
+    def _build_ee_condition(rule_expr: str, feat: ee.Feature) -> ee.Number:
+        """
+        Evaluate a single rule expression against an ee.Feature.
+        Returns ee.Number(1) if satisfied, ee.Number(0) otherwise.
+        Supports AND / OR combinations.
+        """
+        expr = rule_expr.replace("&&", " AND ").replace("||", " OR ")
+
+        def _eval_single(cond: str) -> ee.Number:
+            cond = cond.strip()
+            for op in [">=", "<=", "!=", ">", "<", "=="]:
+                if op in cond:
+                    left, right = cond.split(op, 1)
+                    prop_val = ee.Number(feat.get(left.strip()))
+                    thresh = float(right.strip())
+                    return {
+                        "==": prop_val.eq,
+                        "!=": prop_val.neq,
+                        ">": prop_val.gt,
+                        ">=": prop_val.gte,
+                        "<": prop_val.lt,
+                        "<=": prop_val.lte
+                    }[op](thresh)
+            raise ValueError(f"Cannot parse condition: '{cond}'")
+
+        if " OR " in expr.upper():
+            parts_orig = expr.split(" OR ")
+            result = _eval_single(parts_orig[0])
+            for part in parts_orig[1:]:
+                result = result.max(_eval_single(part))
+            return result.min(ee.Number(1))
+
+        if " AND " in expr.upper():
+            parts_orig = expr.split(" AND ")
+            result = _eval_single(parts_orig[0])
+            for part in parts_orig[1:]:
+                result = result.multiply(_eval_single(part))
+            return result
+
+        return _eval_single(expr)
+
+    def _make_labeller(self):
+        """
+        Returns a function that labels a feature according to all rules.
+        """
+        rules_reversed = self.rules_df.iloc[::-1].reset_index(drop=True)
+        nodata_value = self.nodata_value
+
+        def labeller(feat):
+            feat = ee.Feature(feat)
+            class_id = ee.Number(nodata_value)
+            for _, row in rules_reversed.iterrows():
+                cid = int(row["class_id"])
+                rule_expr = str(row["rule"])
+                condition = self._build_ee_condition(rule_expr, feat)
+                class_id = ee.Number(ee.Algorithms.If(condition.eq(1), cid, class_id))
+            return feat.set({"class_id": class_id})
+
+        return labeller
+
+    def label(self, training_fc: ee.FeatureCollection) -> ee.FeatureCollection:
+        """
+        Map the labeller function over the feature collection.
+        Prints class distribution after labeling.
+        """
+        labeller = self._make_labeller()
+        labeled_fc = training_fc.map(labeller)
+
+        print(f"Labelling complete for '{self.scheme_name}'. Checking distribution...")
+        subset_ids = [self.nodata_value] + sorted(self.rules_df["class_id"].tolist())
+        for cid in subset_ids:
+            count = labeled_fc.filter(ee.Filter.eq("class_id", cid)).size().getInfo()
+            name = "nodata" if cid == self.nodata_value else \
+                   self.rules_df.loc[self.rules_df["class_id"] == cid, "class_name"].values[0]
+            print(f"  class {cid:>2} ({name:<16}): {count:>4} features")
+
+        return labeled_fc
