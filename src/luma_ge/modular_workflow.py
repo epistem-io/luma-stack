@@ -1,410 +1,972 @@
-import pandas as pd
+"""
 
-def load_scheme(csv_path):
-    """
-    Load scheme that automatically turns them into ruleset with threshold + operator columns.
-    """
-    
-    df = pd.read_csv(csv_path)
+Workflow
+--------
+    Step 1 — Load classification scheme
+        rules = load_scheme("scheme1.csv")
+        rules["scheme"] = "scheme1"
 
-    
-    required_cols = ["class_id", "class_name", "rule_general", "priority"]
-    for col in required_cols:
-        if col not in df.columns:
-            raise ValueError(f"Missing required column '{col}' in {csv_path}")
-    
-    rules = []
-    
-    for _, row in df.iterrows():
-        # Find *_pres columns (thresholds) - exclude rule columns
-        pres_cols = [c for c in df.columns if c.endswith("_pres") and not c.startswith("rule_")]
-        
-        # For "none" rules, find the FIRST non-NaN *_pres column as the single condition
-        if str(row["rule_general"]).lower().strip() == "none":
-            single_cond_pres = None
-            for pres_col in pres_cols:
-                if pd.isna(row[pres_col]):
-                    continue
-                
-                # Find the rule column for this primitive
-                primitive_name = pres_col.replace("_pres", "")
-                rule_col = f"rule_{primitive_name}_pres"
-                if rule_col not in df.columns:
-                    continue
-                
-                op_text = str(row[rule_col]).lower().strip()
-                
-                # Skip "equal to 0" conditions — these are exclusions, not the
-                # defining condition. Pick the first non-zero threshold column.
-                thresh = row[pres_col]
-                if op_text == "equal to" and float(thresh) == 0:
-                    continue
-                single_cond_pres = pres_col
-                break
-            
-            if single_cond_pres is None:
-                raise ValueError(f"'none' rule in row {row['class_id']} has no threshold values in *_pres columns")
-            
-            # Build ONLY this one condition
-            primitive_name = single_cond_pres.replace("_pres", "")
-            rule_col = f"rule_{primitive_name}_pres"
-            
-            if rule_col not in df.columns:
-                raise ValueError(f"No matching rule column '{rule_col}' for '{single_cond_pres}' in row {row['class_id']}")
-            
-            op_text = row[rule_col].lower().strip()
-            thresh = row[single_cond_pres]
-            
-            op_map = {
-                "more than": ">", "greater than": ">",
-                "equal to": "==",
-                "less than": "<",
-                "more or equal": ">=", "greater or equal": ">=", "greater or equal to": ">",
-                "less or equal": "<=", "less or equal to": "<="
-            }
-            
-            if op_text not in op_map:
-                raise ValueError(f"Unknown operator '{row[rule_col]}' in row {row['class_id']}")
-            
-            rule_expr = f"{single_cond_pres} {op_map[op_text]} {thresh}"
-        
-        else:  # "and" or "or" - use ALL non-NaN conditions
-            conds = []
-            for pres_col in pres_cols:
-                thresh = row[pres_col]
-                if pd.isna(thresh):
-                    continue
-                
-                primitive_name = pres_col.replace("_pres", "")
-                rule_col = f"rule_{primitive_name}_pres"
-                
-                if rule_col not in df.columns:
-                    raise ValueError(f"No matching rule column '{rule_col}' for '{pres_col}' in row {row['class_id']}")
-                
-                op_text = row[rule_col].lower().strip()
-                thresh = row[pres_col]
-                
-                op_map = {
-                    "more than": ">", "greater than": ">",
-                    "equal to": "==",
-                    "less than": "<",
-                    "more or equal": ">=", "greater or equal": ">=", "greater or equal to": ">",
-                    "less or equal": "<=", "less or equal to": "<="
-                }
-                
-                if op_text not in op_map:
-                    raise ValueError(f"Unknown operator '{row[rule_col]}' in row {row['class_id']}")
-                
-                conds.append(f"{pres_col} {op_map[op_text]} {thresh}")
-            
-            if not conds:
-                raise ValueError(f"No conditions found for row {row['class_id']}")
-            
-            combination_type = str(row["rule_general"]).lower().strip()
-            if combination_type == "and":
-                rule_expr = " AND ".join(conds)
-            elif combination_type == "or":
-                rule_expr = " OR ".join(conds)
-            else:
-                raise ValueError(f"Invalid rule_general '{row['rule_general']}'")
-        
-        rules.append(rule_expr)
-    
-    df["rule"] = rules
-    return df[["class_id", "class_name", "rule", "priority"]]
+    Step 2 — Load reference data
+        data = load_modular_training_data("training_points.shp", aoi=aoi)
 
-import geopandas as gpd
+    Step 3a — Direct labelling pathway 
+        labeller   = TrainingDataLabeller(rules, scheme_name="scheme1")
+        labeled_fc = labeller.label(data["ee_fc"])
+
+    Step 3b — Primitive layer pathway 
+        trainer         = PrimitiveLayerTrainer(image=img, roi=data["ee_fc"])
+        prob_layers     = trainer.train_all_mc()
+        primitive_stack = ee.Image.cat(list(prob_layers.values()))
+        classifier      = RuleSetClassifier(primitive_stack, rules, aoi)
+        mc_results      = classifier.classify_scheme_monte_carlo("scheme1")
+
+    Step 4 — Validate and compare
+        det_map = classifier.classify_scheme_deterministic("scheme1")
+        det_arr = validate_deterministic(det_map, rules, "scheme1", aoi)
+        validate_monte_carlo(mc_results, rules, "scheme1")
+        compare_det_vs_mc(det_arr, mc_results, rules, "scheme1")
+"""
+
+import io
+import logging
+import warnings
+import zipfile
+from typing import Optional
+
 import ee
+import geopandas as gpd
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import rasterio
+import requests
+from matplotlib.gridspec import GridSpec
 from shapely.geometry import shape
 
+# Configure root logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 
-def load_modular_training_data(
-    shp_path,
-    aoi=None,
-):
+
+# ===========================================================================
+# Constants
+# ===========================================================================
+
+# Columns that are never treated as primitive elements
+_NON_PRIMITIVE_COLS = {"LULC_Type", "ID", "geometry", "system:index", "class_id"}
+
+# Operator string → Python symbol mapping (used in load_scheme)
+_OP_MAP = {
+    "more than":           ">",
+    "greater than":        ">",
+    "equal to":            "==",
+    "less than":           "<",
+    "more or equal":       ">=",
+    "greater or equal":    ">=",
+    "greater or equal to": ">=",
+    "less or equal":       "<=",
+    "less or equal to":    "<=",
+}
+
+# Shared colour palette for validation plots (index 0 = nodata)
+_CLASS_PALETTE = [
+    "#888780",  # 0  nodata  — gray
+    "#1D9E75",  # 1          — teal
+    "#378ADD",  # 2          — blue
+    "#D85A30",  # 3          — coral
+    "#BA7517",  # 4          — amber
+    "#7F77DD",  # 5          — purple
+    "#639922",  # 6          — green
+    "#D4537E",  # 7          — pink
+]
+
+# ===========================================================================
+# Step 1b: Setup classifiation ruleset
+# load_scheme() — converts a human-authored CSV into a rule DataFrame
+# ===========================================================================
+
+def load_scheme(csv_path: str) -> pd.DataFrame:
     """
-    Load shapefile with LCML attributes
-    and filter by AOI (EE FeatureCollection).
+    Load a classification scheme CSV and convert it into a rule DataFrame.
+
+    The CSV defines one land cover class per row. Required columns:
+
+        class_id      int     Unique numeric identifier
+        class_name    str     Human-readable label
+        rule_general  str     "none" | "and" | "or"
+        priority      int     Evaluation order (1 = highest priority)
+
+    Plus one pair of columns per primitive element:
+
+        tree_pres          float   Threshold value (e.g. 0.6)
+        rule_tree_pres     str     Plain-English operator (e.g. "more than")
+
+    rule_general behaviour
+    ----------------------
+        "none"  — use only the single most discriminating condition.
+                  Zero-valued ("equal to 0") conditions are exclusions
+                  and are skipped; the first non-zero column is selected.
+        "and"   — join all non-NaN conditions with AND.
+        "or"    — join all non-NaN conditions with OR.
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to the scheme CSV file.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: class_id, class_name, rule, priority
+        Each row contains a fully formed rule expression string, e.g.:
+            'tree_pres > 0.6'
+            'tree_pres > 0.5 AND buil_pres > 0.3'
+
+    Example
+    -------
+    >>> rules = load_scheme("../data/scheme1.csv")
+    >>> rules["scheme"] = "scheme1"
+    >>> print(rules)
     """
+    df = pd.read_csv(csv_path)
 
-    # -------------------------
-    # read shapefile
-    # -------------------------
+    required = ["class_id", "class_name", "rule_general", "priority"]
+    missing  = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in '{csv_path}': {missing}")
 
+    # Primitive columns: end in _pres, not prefixed with rule_
+    pres_cols = [
+        c for c in df.columns
+        if c.endswith("_pres") and not c.startswith("rule_")
+    ]
+
+    def _get_op(op_text, class_id, rule_col):
+        key = op_text.lower().strip()
+        if key not in _OP_MAP:
+            raise ValueError(
+                f"Unknown operator '{op_text}' in column '{rule_col}' "
+                f"for class_id {class_id}. Supported: {list(_OP_MAP.keys())}"
+            )
+        return _OP_MAP[key]
+
+    def _build_condition(pres_col, rule_col, op_text, thresh, class_id):
+        return f"{pres_col} {_get_op(op_text, class_id, rule_col)} {thresh}"
+
+    def _is_exclusion(op_text, thresh):
+        """Zero-valued 'equal to 0' conditions are exclusions, not discriminators."""
+        return op_text.lower().strip() == "equal to" and float(thresh) == 0
+
+    def _build_none_rule(row):
+        """Pick the single defining condition, skipping zero-exclusions."""
+        for pres_col in pres_cols:
+            thresh = row[pres_col]
+            if pd.isna(thresh):
+                continue
+            primitive = pres_col.replace("_pres", "")
+            rule_col  = f"rule_{primitive}_pres"
+            if rule_col not in df.columns:
+                raise ValueError(
+                    f"No operator column '{rule_col}' for '{pres_col}' "
+                    f"in class_id {row['class_id']}."
+                )
+            op_text = str(row[rule_col])
+            if _is_exclusion(op_text, thresh):
+                continue
+            return _build_condition(pres_col, rule_col, op_text, thresh, row["class_id"])
+        raise ValueError(
+            f"'none' rule in class_id {row['class_id']} has no non-zero threshold."
+        )
+
+    def _build_combined_rule(row, combination):
+        """Join all non-NaN, non-exclusion conditions with AND or OR."""
+        conds = []
+        for pres_col in pres_cols:
+            thresh = row[pres_col]
+            if pd.isna(thresh):
+                continue
+
+            primitive = pres_col.replace("_pres", "")
+            rule_col  = f"rule_{primitive}_pres"
+            if rule_col not in df.columns:
+                raise ValueError(
+                    f"No operator column '{rule_col}' for '{pres_col}' "
+                    f"in class_id {row['class_id']}."
+                )
+
+            op_text = str(row[rule_col])
+
+            # Skip zero-exclusions — "equal to 0" means "not present",
+            # which is handled by priority ordering, not explicit AND conditions
+            if _is_exclusion(op_text, thresh):
+                continue
+
+            conds.append(_build_condition(
+                pres_col, rule_col, op_text, thresh, row["class_id"]
+            ))
+
+        if not conds:
+            raise ValueError(
+                f"No non-exclusion conditions for class_id {row['class_id']}. "
+                "Check that at least one *_pres column has a non-zero threshold."
+            )
+
+        joiner = " AND " if combination == "and" else " OR "
+        return joiner.join(conds)
+
+    rules = []
+    for _, row in df.iterrows():
+        combination = str(row["rule_general"]).lower().strip()
+        if combination == "none":
+            rules.append(_build_none_rule(row))
+        elif combination in ("and", "or"):
+            rules.append(_build_combined_rule(row, combination))
+        else:
+            raise ValueError(
+                f"Invalid rule_general '{row['rule_general']}' in "
+                f"class_id {row['class_id']}. Use 'none', 'and', or 'or'."
+            )
+
+    result = df[["class_id", "class_name", "priority"]].copy()
+    result["rule"] = rules
+    return result[["class_id", "class_name", "rule", "priority"]]
+
+
+# ===========================================================================
+# Step 2: Training Data
+# load_modular_training_data() — loads shapefile reference data
+# TrainingDataLabeller         — labels features by scheme rules (direct pathway)
+# ===========================================================================
+
+def load_modular_training_data(shp_path: str, aoi=None) -> dict:
+    """
+    Load a shapefile containing LCML element attributes as reference data.
+
+    Each feature should have binary (0/1) properties for each LCML element
+    (e.g. tree_pres, buil_pres, water_pres) indicating element presence.
+
+    Parameters
+    ----------
+    shp_path : str
+        Path to the shapefile.
+    aoi : ee.FeatureCollection or ee.Geometry, optional
+        If provided, only features intersecting the AOI are retained.
+
+    Returns
+    -------
+    dict with keys:
+        "gdf"     — geopandas GeoDataFrame (filtered to AOI if provided)
+        "ee_fc"   — ee.FeatureCollection of the same features
+        "columns" — list of column names (excluding geometry)
+        "size"    — number of features after filtering
+
+    Example
+    -------
+    >>> data = load_modular_training_data("training_points.shp", aoi=aoi)
+    >>> training_fc = data["ee_fc"]
+    >>> print(data["columns"], data["size"])
+    """
     gdf = gpd.read_file(shp_path)
 
     if gdf.crs is None:
         gdf = gdf.set_crs("EPSG:4326")
-
     gdf = gdf.to_crs("EPSG:4326")
 
-    # -------------------------
-    # AOI filter (EE FeatureCollection)
-    # -------------------------
-
+    # Filter to AOI using shapely geometry intersection
     if aoi is not None:
-
-        # convert EE FeatureCollection → geometry → shapely
-        aoi_geom = aoi.geometry().getInfo()
-
+        aoi_geom  = aoi.geometry().getInfo()
         aoi_shape = shape(aoi_geom)
+        gdf = gdf[gdf.intersects(aoi_shape)].reset_index(drop=True)
 
-        gdf = gdf[gdf.intersects(aoi_shape)]
-
-    # -------------------------
-    # convert to EE FeatureCollection
-    # -------------------------
-
-    features = []
-
-    for _, row in gdf.iterrows():
-
-        geom = ee.Geometry(row.geometry.__geo_interface__)
-
-        props = row.drop("geometry").to_dict()
-
-        features.append(
-            ee.Feature(geom, props)
+    features = [
+        ee.Feature(
+            ee.Geometry(row.geometry.__geo_interface__),
+            row.drop("geometry").to_dict()
         )
-
-    ee_fc = ee.FeatureCollection(features)
-
-    # -------------------------
-    # output
-    # -------------------------
+        for _, row in gdf.iterrows()
+    ]
 
     return {
-        "gdf": gdf,
-        "ee_fc": ee_fc,
+        "gdf":     gdf,
+        "ee_fc":   ee.FeatureCollection(features),
         "columns": list(gdf.columns),
-        "size": len(gdf),
+        "size":    len(gdf),
     }
 
-from .classification import FeatureExtraction
-from .classification import Generate_LULC
+
+class TrainingDataLabeller:
+    """
+    Labels training features with class_ids using a classification scheme.
+
+    This is the direct pathway alternative to the primitive layer approach.
+    Instead of building per-element probability maps, this class evaluates
+    the scheme rules directly against the binary element attributes on each
+    training feature and assigns the matching class_id.
+
+    The resulting labeled ee.FeatureCollection can then be used to train a
+    single direct Random Forest classifier per scheme.
+
+    Parameters
+    ----------
+    rules_df : pd.DataFrame
+        Output of load_scheme() — columns: class_id, class_name, rule, priority.
+    scheme_name : str
+        Used in log output for traceability.
+    nodata_value : int
+        class_id written to features that satisfy no rule. Default 0.
+
+    Example
+    -------
+    >>> labeller   = TrainingDataLabeller(rules_df=scheme1_rules, scheme_name="scheme1")
+    >>> labeled_fc = labeller.label(training_fc)
+    >>> clean_fc   = labeled_fc.filter(ee.Filter.neq("class_id", 0))
+    """
+
+    def __init__(self, rules_df: pd.DataFrame, scheme_name: str,
+                 nodata_value: int = 0):
+        if rules_df.empty:
+            raise ValueError(f"Empty rules_df passed for scheme '{scheme_name}'.")
+
+        self.rules_df     = rules_df.sort_values("priority").reset_index(drop=True)
+        self.scheme_name  = scheme_name
+        self.nodata_value = nodata_value
+
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.info(
+            f"TrainingDataLabeller initialised for '{scheme_name}' — "
+            f"{len(self.rules_df)} classes, evaluated in priority order."
+        )
+
+    # ---------------------------------
+    # Evaluate one rule against a feature
+    # ---------------------------------
+
+    @staticmethod
+    def _evaluate_rule_on_feature(rule_expr: str, feat: ee.Feature) -> ee.Number:
+        """
+        Evaluate a rule string against a single ee.Feature.
+
+        Returns ee.Number(1) if satisfied, ee.Number(0) otherwise.
+        Supports AND / OR combinations and operators: ==  !=  >  >=  <  <=
+
+        Parameters
+        ----------
+        rule_expr : str
+            Rule expression, e.g. 'tree_pres > 0.6 AND buil_pres > 0.3'.
+        feat : ee.Feature
+            Feature whose properties are evaluated.
+        """
+        expr = rule_expr.replace("&&", " AND ").replace("||", " OR ")
+
+        def _single(cond: str) -> ee.Number:
+            cond = cond.strip()
+            for op in [">=", "<=", "!=", ">", "<", "=="]:
+                if op in cond:
+                    left, right = cond.split(op, 1)
+                    val    = ee.Number(feat.get(left.strip()))
+                    thresh = float(right.strip())
+                    return {
+                        "==": val.eq,   "!=": val.neq,
+                        ">":  val.gt,   ">=": val.gte,
+                        "<":  val.lt,   "<=": val.lte,
+                    }[op](thresh)
+            raise ValueError(f"Cannot parse condition: '{cond}'")
+
+        if " OR " in expr.upper():
+            parts  = expr.split(" OR ")
+            result = _single(parts[0])
+            for part in parts[1:]:
+                result = result.max(_single(part))
+            return result.min(ee.Number(1))
+
+        if " AND " in expr.upper():
+            parts  = expr.split(" AND ")
+            result = _single(parts[0])
+            for part in parts[1:]:
+                result = result.multiply(_single(part))
+            return result
+
+        return _single(expr)
+
+    # ---------------------------------
+    # Build the GEE map() function
+    # ---------------------------------
+
+    def _build_labeller_fn(self):
+        """
+        Build a function suitable for ee.FeatureCollection.map().
+
+        Rules are applied from lowest to highest priority (reversed list),
+        building a nested ee.Algorithms.If chain so that priority=1 wins.
+        """
+        rules_reversed = self.rules_df.iloc[::-1].reset_index(drop=True)
+        nodata_value   = self.nodata_value
+
+        def _labeller(feat):
+            feat     = ee.Feature(feat)
+            class_id = ee.Number(nodata_value)
+            for _, row in rules_reversed.iterrows():
+                cid       = int(row["class_id"])
+                rule_expr = str(row["rule"])
+                condition = TrainingDataLabeller._evaluate_rule_on_feature(
+                    rule_expr, feat
+                )
+                class_id = ee.Number(
+                    ee.Algorithms.If(condition.eq(1), cid, class_id)
+                )
+            return feat.set({"class_id": class_id})
+
+        return _labeller
+
+    # ---------------------------------
+    # Public: label the feature collection
+    # ---------------------------------
+
+    def label(self, training_fc: ee.FeatureCollection) -> ee.FeatureCollection:
+        """
+        Apply the scheme rules to label every feature with a class_id.
+
+        Parameters
+        ----------
+        training_fc : ee.FeatureCollection
+            Reference data with element attributes as properties.
+
+        Returns
+        -------
+        ee.FeatureCollection
+            Same features with 'class_id' property added.
+            Filter out nodata before training:
+                labeled_fc.filter(ee.Filter.neq("class_id", 0))
+
+        Example
+        -------
+        >>> labeled_fc = labeller.label(training_fc)
+        >>> print(labeled_fc.first().getInfo())
+        """
+        labeller_fn = self._build_labeller_fn()
+        labeled_fc  = training_fc.map(labeller_fn)
+
+        self.logger.info(f"Labelling complete. Class distribution for '{self.scheme_name}':")
+        all_ids = [self.nodata_value] + sorted(self.rules_df["class_id"].tolist())
+        for cid in all_ids:
+            count = labeled_fc.filter(ee.Filter.eq("class_id", cid)).size().getInfo()
+            name  = (
+                "nodata" if cid == self.nodata_value
+                else self.rules_df.loc[
+                    self.rules_df["class_id"] == cid, "class_name"
+                ].values[0]
+            )
+            self.logger.info(f"  [{cid:>2}] {name:<18}: {count:>4} features")
+
+        return labeled_fc
+
+
+# ===========================================================================
+# Step 3b: Primitive Layer Trainer
+# PrimitiveLayerTrainer — trains one RF per LCML element
+# ===========================================================================
 
 class PrimitiveLayerTrainer:
+    """
+    Trains one Random Forest model per LCML element and generates a
+    primitive layer (ee.Image) for each.
 
-    def __init__(self, image, roi):
+    The primitive datacube produced here is the core reusable asset of
+    the workflow. It encodes per-pixel element presence independently of
+    any classification scheme, allowing multiple schemes to be applied
+    without retraining.
 
-        self.image = image
-        self.roi = roi
+    Two training modes
+    ------------------
+        train_all()    — binary output (0 or 1), deterministic pathway.
+        train_all_mc() — probabilistic output ([0, 1]), MC pathway.
+                         Uses .setOutputMode('PROBABILITY').
 
-        self.primitives = self._get_primitives_from_training()
+    Parameters
+    ----------
+    image : ee.Image
+        Multi-band predictor image (e.g. stacked Landsat composite).
+        All bands are used as RF input features.
+    roi : ee.FeatureCollection
+        Reference data. Each feature must have binary (0/1) properties
+        for each element to be trained.
+    n_trees : int
+        Number of trees per Random Forest. Default 50.
+    scale : int
+        Pixel scale in metres for region sampling. Default 30.
 
+    Example
+    -------
+    >>> trainer         = PrimitiveLayerTrainer(image=stacked_image, roi=training_fc)
+    >>> prob_layers     = trainer.train_all_mc()
+    >>> primitive_stack = ee.Image.cat(list(prob_layers.values()))
+    """
+
+    def __init__(self, image: ee.Image, roi: ee.FeatureCollection,
+                 n_trees: int = 50, scale: int = 30):
+        self.image   = image
+        self.roi     = roi
+        self.n_trees = n_trees
+        self.scale   = scale
+
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+        self.primitives = self._detect_primitives()
+        self.logger.info(f"Detected primitives: {self.primitives}")
 
     # ---------------------------------
-    # detect primitives from attributes
+    # Detect which columns are elements
     # ---------------------------------
 
-    def _get_primitives_from_training(self):
+    def _detect_primitives(self) -> list:
+        """
+        Read property names from the first reference feature and return
+        those not in the exclusion list.
+        """
+        props = self.roi.first().propertyNames().getInfo()
+        return [p for p in props if p not in _NON_PRIMITIVE_COLS]
 
-        props = (
-            self.roi.first()
-            .propertyNames()
-            .getInfo()
+    # ---------------------------------
+    # Clean roi before sampling
+    # ---------------------------------
+
+    def _clean_roi(self) -> ee.FeatureCollection:
+        """Remove system:index to avoid conflicts during sampleRegions."""
+        return self.roi.map(
+            lambda f: f.select(f.propertyNames().remove("system:index"))
         )
 
-        exclude = ["LULC_Type", "ID", "geometry", "system:index"]
-
-        primitives = [
-            p for p in props
-            if p not in exclude
-        ]
-
-        print("Detected primitives:", primitives)
-
-        return primitives
-
-
     # ---------------------------------
-    # train one primitive
+    # Shared RF training logic
     # ---------------------------------
 
-    def train_one(self, primitive):
+    def _train_one(self, primitive: str, output_mode: str) -> ee.Image:
+        """
+        Train a single RF for one primitive and classify the image.
 
-        # remove system:index
-        roi_clean = self.roi.map(
-            lambda f: f.select(
-                f.propertyNames().remove("system:index")
-            )
-        )
+        Parameters
+        ----------
+        primitive : str
+            Element property name (e.g. 'tree_pres').
+        output_mode : str
+            'CLASSIFICATION' for binary output, 'PROBABILITY' for [0,1].
 
+        Returns
+        -------
+        ee.Image
+            Single-band image named after the primitive.
+        """
         sample = self.image.sampleRegions(
-            collection=roi_clean,
+            collection=self._clean_roi(),
             properties=[primitive],
-            scale=30,
-            geometries=False
+            scale=self.scale,
+            geometries=False,
         )
 
-        classifier = ee.Classifier.smileRandomForest(50)
+        classifier = (
+            ee.Classifier.smileRandomForest(self.n_trees)
+            .setOutputMode(output_mode)
+        )
 
         trained = classifier.train(
             features=sample,
             classProperty=primitive,
-            inputProperties=self.image.bandNames()
+            inputProperties=self.image.bandNames(),
         )
 
-        result = self.image.classify(trained)
-
-        return result.rename(primitive)
+        return self.image.classify(trained).rename(primitive)
 
     # ---------------------------------
-    # train all primitives
+    # Deterministic pathway
     # ---------------------------------
 
-    def train_all(self):
+    def train_one(self, primitive: str) -> ee.Image:
+        """
+        Train a single primitive with binary (0/1) output.
 
+        Parameters
+        ----------
+        primitive : str
+            Element property name.
+
+        Returns
+        -------
+        ee.Image
+            Single-band binary image.
+
+        Example
+        -------
+        >>> tree_layer = trainer.train_one("tree_pres")
+        """
+        return self._train_one(primitive, output_mode="CLASSIFICATION")
+
+    def train_all(self) -> dict:
+        """
+        Train all detected primitives with binary output.
+
+        Returns
+        -------
+        dict[str, ee.Image]
+            Keys are primitive names, values are single-band binary ee.Images.
+
+        Example
+        -------
+        >>> binary_layers = trainer.train_all()
+        """
         outputs = {}
-
         for p in self.primitives:
-
-            print("Training:", p)
-
+            self.logger.info(f"Training (deterministic): {p}")
             outputs[p] = self.train_one(p)
-
         return outputs
-    
-        # ---------------------------------
-    # train one primitive using RF classifier with probability output
-    # ---------------------------------
-
-    def train_one_mc(self, primitive):
-
-        # remove system:index
-        roi_clean = self.roi.map(
-            lambda f: f.select(
-                f.propertyNames().remove("system:index") # additional prevention in case system:index is present in the training data, which can cause issues with sampling and classification
-            )
-        )
-
-    # Feature Extraction of each elements
-
-        sample = self.image.sampleRegions(
-            collection=roi_clean,
-            properties=[primitive],
-            scale=30,
-            geometries=False
-        )
-
-    # Classification 
-        classifier = ee.Classifier.smileRandomForest(50)\
-            .setOutputMode('PROBABILITY') #result will be in probability value for monte carlo testing
-
-        trained = classifier.train(
-            features=sample,
-            classProperty=primitive,
-            inputProperties=self.image.bandNames()
-        )
-
-        result = self.image.classify(trained)
-
-        return result.rename(primitive)
 
     # ---------------------------------
-    # train all primitives
+    # Monte Carlo pathway
     # ---------------------------------
 
-    def train_all_mc(self):
+    def train_one_mc(self, primitive: str) -> ee.Image:
+        """
+        Train a single primitive with probabilistic [0, 1] output.
 
+        The output is the fraction of RF trees that voted for class 1
+        (presence) at each pixel — the per-pixel confidence score used
+        by the Monte Carlo simulation.
+
+        Parameters
+        ----------
+        primitive : str
+            Element property name.
+
+        Returns
+        -------
+        ee.Image
+            Single-band image with float values in [0, 1].
+
+        Example
+        -------
+        >>> tree_prob = trainer.train_one_mc("tree_pres")
+        """
+        return self._train_one(primitive, output_mode="PROBABILITY")
+
+    def train_all_mc(self) -> dict:
+        """
+        Train all detected primitives with probabilistic output.
+
+        Returns
+        -------
+        dict[str, ee.Image]
+            Keys are primitive names, values are single-band ee.Images
+            with float values in [0, 1].
+
+        Notes
+        -----
+        Stack into a single image before passing to RuleSetClassifier:
+            primitive_stack = ee.Image.cat(list(outputs.values()))
+
+        Example
+        -------
+        >>> prob_layers     = trainer.train_all_mc()
+        >>> primitive_stack = ee.Image.cat(list(prob_layers.values()))
+        """
         outputs = {}
-
         for p in self.primitives:
-
-            print("Training:", p)
-
+            self.logger.info(f"Training (probabilistic): {p}")
             outputs[p] = self.train_one_mc(p)
-
         return outputs
-    
-import ee
-import io
-import zipfile
-import rasterio
-import numpy as np
-import pandas as pd
-import requests
-import warnings
-from typing import Optional
 
+
+# ===========================================================================
+# Step 4: Rule Set Classifier
+# RuleSetClassifier — applies scheme rules to produce a land cover map
+# ===========================================================================
 
 class RuleSetClassifier:
     """
-    Classify an EE primitive image using CSV-defined rules.
-    Supports multiple schemes and rule-based methods.
+    Classifies a primitive datacube using CSV-defined rules.
+
+    Supports two classification methods:
+
+        Deterministic — applies rules as hard thresholds on the GEE server.
+                        No uncertainty output. Fast.
+
+        Monte Carlo   — downloads probabilistic primitive arrays locally,
+                        samples binary realisations per iteration, passes
+                        them through the same ruleset, and aggregates to
+                        produce a mode map, per-pixel entropy, and class
+                        probability surfaces.
+
+    Both methods use the same rules_df so results are directly comparable.
+
+    Parameters
+    ----------
+    primitive_image : ee.Image
+        Stack of primitive layers. Deterministic: binary bands.
+        Monte Carlo: probabilistic bands in [0, 1] from train_all_mc().
+    rules_df : pd.DataFrame
+        Output of load_scheme() with a 'scheme' column added by the caller:
+            rules_df["scheme"] = "scheme1"
+    aoi : ee.FeatureCollection or ee.Geometry
+        Area of interest for clipping results.
+
+    Example
+    -------
+    >>> classifier = RuleSetClassifier(primitive_stack, rules, aoi)
+    >>> det_map    = classifier.classify_scheme_deterministic("scheme1")
+    >>> mc_results = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
     """
 
     def __init__(self, primitive_image: ee.Image, rules_df: pd.DataFrame, aoi):
-        """
-        Args:
-            primitive_image (ee.Image): Stack of primitive layers.
-            rules_df (pd.DataFrame): Rules table with columns:
-                                     class_id, class_name, rule, scheme
-            aoi (ee.FeatureCollection or ee.Geometry): Area of interest for clipping
-        """
         self.primitive_image = primitive_image
-        self.df = rules_df
+        self.df  = rules_df
         self.aoi = aoi
 
-    # -------------------------------------------------------------------------
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    # ---------------------------------
     # Deterministic classification
-    # -------------------------------------------------------------------------
+    # ---------------------------------
 
     def classify_scheme_deterministic(self, scheme_name: str) -> ee.Image:
-        subset = self.df[self.df["scheme"] == scheme_name]
-        if subset.empty:
-            raise ValueError(f"No rules found for scheme '{scheme_name}'")
+        """
+        Classify using hard threshold rules on the GEE server.
 
-        aoi_geom = self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
-        result = ee.Image(0).rename("class_id").toFloat()
+        Rules are applied in priority order. Pixels satisfying no rule
+        receive class_id = 0 (nodata).
 
-        band_names = self.primitive_image.bandNames().getInfo()
-        band_dict = {b: self.primitive_image.select(b) for b in band_names}
+        Parameters
+        ----------
+        scheme_name : str
+            Must match the 'scheme' column in rules_df.
+
+        Returns
+        -------
+        ee.Image
+            Single-band image named 'class_id', clipped to AOI.
+
+        Example
+        -------
+        >>> det_map = classifier.classify_scheme_deterministic("scheme1")
+        """
+        subset   = self._get_subset(scheme_name)
+        aoi_geom = self._resolve_geometry()
+        result   = ee.Image(0).rename("class_id").toFloat()
+        band_dict = {b: self.primitive_image.select(b)
+                     for b in self.primitive_image.bandNames().getInfo()}
 
         for _, row in subset.iterrows():
-            class_id = float(row["class_id"])
+            class_id  = float(row["class_id"])
             rule_expr = row["rule"].replace("AND", "&&").replace("OR", "||")
             try:
-                mask = ee.Image().expression(rule_expr, band_dict).eq(1)
+                mask   = ee.Image().expression(rule_expr, band_dict).eq(1)
                 result = result.where(mask, class_id)
-            except Exception as e:
-                print(f"Skipping class_id {class_id} due to EE expression error: {e}")
+            except Exception as exc:
+                self.logger.warning(f"Skipping class_id {class_id}: {exc}")
 
         return result.clip(aoi_geom)
 
-    # -------------------------------------------------------------------------
-
     def classify_all_schemes(self) -> dict:
         """
-        Run deterministic classification for all unique schemes in rules_df.
-        Returns a dictionary of {scheme_name: ee.Image}.
+        Run deterministic classification for every scheme in rules_df.
+
+        Returns
+        -------
+        dict[str, ee.Image]
+
+        Example
+        -------
+        >>> maps = classifier.classify_all_schemes()
         """
         results = {}
-        for s in self.df["scheme"].unique():
-            print(f"Classifying scheme: {s}")
-            results[s] = self.classify_scheme_deterministic(s)
+        for scheme in self.df["scheme"].unique():
+            self.logger.info(f"Classifying (deterministic): {scheme}")
+            results[scheme] = self.classify_scheme_deterministic(scheme)
         return results
 
-    # -------------------------------------------------------------------------
-    # Monte Carlo classification (probabilistic primitives)
-    # -------------------------------------------------------------------------
+    # ---------------------------------
+    # Monte Carlo classification
+    # ---------------------------------
+
+    def classify_scheme_monte_carlo(
+        self,
+        scheme_name: str,
+        n_iterations: int = 300,
+        nodata_value: float = 0.0,
+        seed: Optional[int] = 42,
+        scale: int = 30,
+    ) -> dict:
+        """
+        Classify using repeated Bernoulli sampling from probabilistic primitives.
+
+        In each iteration:
+            1. Each pixel's probability p is sampled as Bernoulli(p) → 0 or 1.
+            2. The binary values are passed through the deterministic ruleset.
+            3. The class assignment is recorded.
+
+        After all iterations the pixel counts are aggregated to produce:
+            - mode_map    : most frequently assigned class per pixel
+            - entropy_map : Shannon entropy of the class distribution (nats)
+            - class_probs : fraction of iterations each class won per pixel
+
+        High entropy = the simulation disagreed often = genuinely uncertain pixel.
+
+        Parameters
+        ----------
+        scheme_name : str
+            Must match the 'scheme' column in rules_df.
+        n_iterations : int
+            Number of MC draws. 200–500 is typically sufficient.
+        nodata_value : float
+            Class ID for pixels that match no rule in a given iteration.
+        seed : int or None
+            Random seed for reproducibility.
+        scale : int
+            Pixel scale in metres for the primitive array download.
+
+        Returns
+        -------
+        dict with keys:
+            "mode_map"    — (H, W) int array
+            "entropy_map" — (H, W) float array (nats)
+            "class_probs" — dict[class_id -> (H, W) float array]
+            "n_iterations"— int
+
+        Example
+        -------
+        >>> results     = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
+        >>> mode_map    = results["mode_map"]
+        >>> entropy_map = results["entropy_map"]
+        """
+        subset = self._get_subset(scheme_name)
+
+        # Download primitive arrays once — all MC iterations use the same arrays
+        self.logger.info(f"Downloading primitive arrays for '{scheme_name}'...")
+        band_arrays = self._download_band_arrays(scale)
+        self._validate_probability_range(band_arrays)
+
+        H, W = next(iter(band_arrays.values())).shape
+
+        # Set up class tracking
+        all_class_ids = sorted(subset["class_id"].unique().tolist())
+        if nodata_value not in all_class_ids:
+            all_class_ids = [nodata_value] + all_class_ids
+
+        class_id_to_idx = {cid: i for i, cid in enumerate(all_class_ids)}
+        counts = np.zeros((len(all_class_ids), H, W), dtype=np.int32)
+        rng    = np.random.default_rng(seed)
+
+        # Monte Carlo loop
+        self.logger.info(f"Running {n_iterations} Monte Carlo iterations...")
+        for _ in range(n_iterations):
+            binary_bands     = self._sample_bernoulli(band_arrays, rng, H, W)
+            iteration_result = self._apply_ruleset(subset, binary_bands, H, W, nodata_value)
+            for cid, idx in class_id_to_idx.items():
+                counts[idx] += (iteration_result == cid).astype(np.int32)
+
+        return self._aggregate(counts, all_class_ids, class_id_to_idx, n_iterations)
+
+    # ---------------------------------
+    # Internal helpers
+    # ---------------------------------
+
+    def _get_subset(self, scheme_name: str) -> pd.DataFrame:
+        """Return rules for one scheme sorted by priority then class_id."""
+        subset = self.df[self.df["scheme"] == scheme_name].copy()
+        if subset.empty:
+            raise ValueError(f"No rules found for scheme '{scheme_name}'.")
+        return subset.sort_values(["priority", "class_id"]).reset_index(drop=True)
+
+    def _resolve_geometry(self):
+        """Return ee.Geometry regardless of whether AOI is FC or Geometry."""
+        return self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
+
+    def _download_band_arrays(self, scale: int) -> dict:
+        """
+        Download all primitive bands as numpy arrays via getDownloadURL.
+
+        Handles both single multi-band GeoTIFF and ZIP of single-band
+        GeoTIFFs (GEE returns different formats depending on band count).
+
+        Returns dict[band_name -> (H, W) float32 array].
+        """
+        aoi_geom   = self._resolve_geometry()
+        band_names = self.primitive_image.bandNames().getInfo()
+
+        self.logger.info(f"  Fetching {len(band_names)} bands at {scale}m resolution...")
+
+        url = self.primitive_image.getDownloadURL({
+            "bands":  band_names,
+            "region": aoi_geom,
+            "scale":  scale,
+            "format": "GEO_TIFF",
+            "crs":    "EPSG:4326",
+        })
+
+        response = requests.get(url, stream=True, timeout=300)
+        response.raise_for_status()
+        raw = response.content
+
+        band_arrays = {}
+
+        if raw[:4] == b"PK\x03\x04":
+            # ZIP of individual single-band GeoTIFFs
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
+                for band_name, tif_name in zip(band_names, tif_names):
+                    with zf.open(tif_name) as f:
+                        with rasterio.open(io.BytesIO(f.read())) as src:
+                            band_arrays[band_name] = src.read(1).astype(np.float32)
+        else:
+            # Single multi-band GeoTIFF
+            with rasterio.open(io.BytesIO(raw)) as src:
+                for i, band_name in enumerate(band_names, start=1):
+                    band_arrays[band_name] = src.read(i).astype(np.float32)
+
+        h, w = next(iter(band_arrays.values())).shape
+        self.logger.info(f"  Downloaded: {h} x {w} px ({h * w:,} pixels per band)")
+        return band_arrays
+
+    def _validate_probability_range(self, band_arrays: dict):
+        """Raise if any band has values outside [0, 1]."""
+        for name, arr in band_arrays.items():
+            if arr.min() < 0 or arr.max() > 1:
+                raise ValueError(
+                    f"Band '{name}' has values outside [0, 1] "
+                    f"(min={arr.min():.4f}, max={arr.max():.4f}). "
+                    "Ensure primitives were trained with .setOutputMode('PROBABILITY')."
+                )
 
     @staticmethod
-    def _evaluate_rule_numpy(
-        rule_expr: str,
-        band_arrays: dict,
-    ) -> np.ndarray:
+    def _sample_bernoulli(band_arrays: dict, rng: np.random.Generator,
+                          H: int, W: int) -> dict:
         """
-        Evaluate a GEE-style boolean expression over named numpy arrays.
-        Supports: &&  ||  AND  OR  ==  !=  >=  <=  >  <  numeric literals.
-        Returns a boolean 2-D array.
+        Sample one binary realisation from each probabilistic primitive.
+
+        A pixel with p=0.94 becomes 1 in ~94% of iterations.
+        A pixel with p=0.53 fluctuates nearly equally between 0 and 1.
+        """
+        return {
+            name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
+            for name, prob_arr in band_arrays.items()
+        }
+
+    @staticmethod
+    def _evaluate_rule_numpy(rule_expr: str, band_arrays: dict) -> np.ndarray:
+        """
+        Evaluate a rule expression over 2-D numpy arrays.
+
+        Translates GEE-style operators (AND, OR, &&, ||) to numpy equivalents
+        and evaluates using eval() with band arrays as local variables.
+
+        Returns a boolean (H, W) array.
         """
         expr = (
             rule_expr
-            .replace("&&", " & ")
-            .replace("||", " | ")
+            .replace("&&",  " & ")
+            .replace("||",  " | ")
             .replace("AND", " & ")
-            .replace("OR", " | ")
+            .replace("OR",  " | ")
         )
         local_vars = {name: arr.astype(float) for name, arr in band_arrays.items()}
         try:
@@ -413,233 +975,59 @@ class RuleSetClassifier:
         except Exception as exc:
             raise ValueError(f"Cannot evaluate rule '{rule_expr}': {exc}") from exc
 
-    # -------------------------------------------------------------------------
-
-    def _get_band_arrays(self, scale: int = 30) -> dict:
+    def _apply_ruleset(self, subset: pd.DataFrame, binary_bands: dict,
+                       H: int, W: int, nodata_value: float) -> np.ndarray:
         """
-        Pull all primitive bands from the EE image as numpy arrays using
-        getDownloadURL. Works correctly with shapefile-derived AOIs loaded
-        via geemap.shp_to_ee() (ee.FeatureCollection or ee.Geometry).
- 
-        The image is exported as a multi-band GeoTIFF zip, then read back
-        with rasterio. Band order in the file matches bandNames() order.
- 
-        Returns dict[band_name -> (H, W) float32 array].
+        Apply all rules in priority order to the binary band arrays.
+
+        Rules are applied sequentially — each rule overwrites earlier ones
+        for matching pixels. Since rules are sorted by priority ascending,
+        the highest-priority class (priority=1) is applied last and wins.
         """
-        # Resolve geometry — works for both ee.FeatureCollection and ee.Geometry
-        aoi_geom = self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
-        band_names = self.primitive_image.bandNames().getInfo()
- 
-        print(f"  Fetching {len(band_names)} bands via getDownloadURL "
-              f"(scale={scale}m)...")
- 
-        url = self.primitive_image.getDownloadURL({
-            "bands":  band_names,
-            "region": aoi_geom,
-            "scale":  scale,
-            "format": "GEO_TIFF",
-            "crs":    "EPSG:4326",
-        })
- 
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()
- 
-        raw = response.content
- 
-        band_arrays = {}
- 
-        # GEE returns either a raw GeoTIFF (single band) or a ZIP of per-band
-        # GeoTIFFs depending on the number of bands requested.
-        if raw[:4] == b"PK\x03\x04":
-            # --- ZIP of individual single-band GeoTIFFs ----------------------
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
-                if len(tif_names) != len(band_names):
-                    raise ValueError(
-                        f"Expected {len(band_names)} GeoTIFFs in ZIP, "
-                        f"got {len(tif_names)}: {tif_names}"
-                    )
-                for band_name, tif_name in zip(band_names, tif_names):
-                    with zf.open(tif_name) as f:
-                        with rasterio.open(io.BytesIO(f.read())) as src:
-                            band_arrays[band_name] = src.read(1).astype(np.float32)
-        else:
-            # --- Single multi-band GeoTIFF -----------------------------------
-            with rasterio.open(io.BytesIO(raw)) as src:
-                if src.count != len(band_names):
-                    raise ValueError(
-                        f"Expected {len(band_names)} bands in GeoTIFF, "
-                        f"got {src.count}."
-                    )
-                for i, band_name in enumerate(band_names, start=1):
-                    band_arrays[band_name] = src.read(i).astype(np.float32)
- 
-        shapes = {n: a.shape for n, a in band_arrays.items()}
-        unique_shapes = set(shapes.values())
-        if len(unique_shapes) > 1:
-            raise ValueError(f"Band arrays have inconsistent shapes: {shapes}")
- 
-        h, w = next(iter(shapes.values()))
-        print(f"  Downloaded arrays: {h} x {w} px  "
-              f"({h * w:,} pixels per band)")
- 
-        return band_arrays
+        result = np.full((H, W), nodata_value, dtype=float)
+        for _, row in subset.iterrows():
+            class_id  = float(row["class_id"])
+            rule_expr = str(row["rule"])
+            try:
+                mask = self._evaluate_rule_numpy(rule_expr, binary_bands)
+                result[mask] = class_id
+            except ValueError as exc:
+                warnings.warn(str(exc), stacklevel=2)
+        return result
 
-    # -------------------------------------------------------------------------
+    @staticmethod
+    def _aggregate(counts: np.ndarray, all_class_ids: list,
+                   class_id_to_idx: dict, n_iterations: int) -> dict:
+        """Convert raw iteration counts into mode map, entropy map, class probs."""
+        idx_to_class = np.array(all_class_ids, dtype=float)
+        mode_map     = idx_to_class[np.argmax(counts, axis=0)].astype(int)
 
-    def classify_scheme_monte_carlo(
-        self,
-        scheme_name: str,
-        n_iterations: int = 200,
-        nodata_value: float = 0.0,
-        seed: Optional[int] = 42,
-        scale: int = 30,
-    ) -> dict:
-        """
-        Monte Carlo LULC classification from probabilistic primitive layers.
+        probs = counts.astype(float) / n_iterations
 
-        Each primitive band contains per-pixel probabilities in [0, 1] as
-        produced by GEE's smileRandomForest with .setOutputMode('PROBABILITY').
-        In each iteration, every pixel is binarised by sampling Bernoulli(p),
-        and the resulting binary primitives are passed through the deterministic
-        ruleset — propagating per-pixel uncertainty into the final class map.
-
-        Parameters
-        ----------
-        scheme_name : str
-            Which classification scheme to use (must exist in self.df).
-        n_iterations : int
-            Number of Monte Carlo draws (200–500 is usually sufficient).
-        nodata_value : float
-            Class ID written to pixels that match no rule in a given iteration.
-        seed : int or None
-            Random seed for reproducibility.
-        scale : int
-            Pixel scale in metres used when pulling arrays from GEE.
-
-        Returns
-        -------
-        dict with keys:
-            'mode_map'    – (H, W) int array  : most-frequent class_id per pixel.
-            'entropy_map' – (H, W) float array: Shannon entropy (nats); high
-                            values indicate low confidence / high disagreement.
-            'class_probs' – dict[class_id -> (H, W) float array]: fraction of
-                            iterations each class was assigned per pixel.
-            'n_iterations'– int: number of iterations run.
-        """
-        subset = self.df[self.df["scheme"] == scheme_name].copy()
-        if subset.empty:
-            raise ValueError(f"No rules found for scheme '{scheme_name}'")
-
-        subset = subset.sort_values(["priority", "class_id"]).reset_index(drop=True)
-
-        # --- Pull probabilistic primitive arrays from GEE (once) --------------
-        print(f"Pulling primitive arrays from GEE for scheme '{scheme_name}'...")
-        band_arrays = self._get_band_arrays(scale=scale)
-
-        # Validate that all bands are probability values in [0, 1]
-        for band_name, arr in band_arrays.items():
-            if arr.min() < 0 or arr.max() > 1:
-                raise ValueError(
-                    f"Band '{band_name}' contains values outside [0, 1]. "
-                    "Ensure primitives are trained with .setOutputMode('PROBABILITY')."
-                )
-
-        sample_band = next(iter(band_arrays.values()))
-        H, W = sample_band.shape
-
-        all_class_ids = sorted(subset["class_id"].unique().tolist())
-        if nodata_value not in all_class_ids:
-            all_class_ids = [nodata_value] + all_class_ids
-
-        class_id_to_idx = {cid: i for i, cid in enumerate(all_class_ids)}
-        n_classes = len(all_class_ids)
-        counts = np.zeros((n_classes, H, W), dtype=np.int32)
-
-        rng = np.random.default_rng(seed)
-
-        print(f"Running {n_iterations} Monte Carlo iterations...")
-        for i in range(n_iterations):
-
-            # --- 1. Sample binary realisations from each probabilistic primitive
-            #
-            #   p = 0.94  ->  almost always 1   (confident tree pixel)
-            #   p = 0.53  ->  nearly coin flip  (uncertain pixel)
-            #   p = 0.07  ->  almost always 0   (confident non-tree pixel)
-            #
-            binary_bands = {
-                band_name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
-                for band_name, prob_arr in band_arrays.items()
-            }
-
-            # --- 2. Apply deterministic ruleset to sampled binary primitives ---
-            iteration_result = np.full((H, W), nodata_value, dtype=float)
-
-            for _, row in subset.iterrows():
-                class_id = float(row["class_id"])
-                try:
-                    mask = self._evaluate_rule_numpy(row["rule"], binary_bands)
-                    iteration_result[mask] = class_id
-                except ValueError as exc:
-                    warnings.warn(str(exc), stacklevel=2)
-
-            # --- 3. Accumulate per-class pixel counts --------------------------
-            for cid, idx in class_id_to_idx.items():
-                counts[idx] += (iteration_result == cid).astype(np.int32)
-
-        # -----------------------------------------------------------------------
-        # Aggregate across iterations
-        # -----------------------------------------------------------------------
-
-        # Mode map: class with the highest iteration count per pixel
-        best_idx = np.argmax(counts, axis=0)
-        idx_to_class_id = np.array(all_class_ids, dtype=float)
-        mode_map = idx_to_class_id[best_idx].astype(int)
-
-        # Empirical class probabilities  p_c = count_c / n_iterations
-        probs = counts.astype(float) / n_iterations  # (n_classes, H, W)
-
-        # Shannon entropy  H = -sum(p * ln(p)),  convention: 0 * ln(0) = 0
+        # Shannon entropy: H = -sum(p * ln(p)),  0*ln(0) = 0 by convention
         with np.errstate(divide="ignore", invalid="ignore"):
             log_probs = np.where(probs > 0, np.log(probs), 0.0)
-        entropy_map = -np.sum(probs * log_probs, axis=0)  # (H, W)
+        entropy_map = -np.sum(probs * log_probs, axis=0)
 
         class_probs = {cid: probs[idx] for cid, idx in class_id_to_idx.items()}
 
         return {
-            "mode_map": mode_map,
-            "entropy_map": entropy_map,
-            "class_probs": class_probs,
+            "mode_map":     mode_map,
+            "entropy_map":  entropy_map,
+            "class_probs":  class_probs,
             "n_iterations": n_iterations,
         }
-    
-"""
-Validation for deterministic LULC classification.
-Pulls the ee.Image result as a numpy array and produces
-the same console summary + plots as validate_monte_carlo(),
-so both approaches can be compared side by side.
-"""
-
-import io
-import zipfile
-import requests
-import numpy as np
-import pandas as pd
-import rasterio
-import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
 
 
-# ---------------------------------------------------------------------------
-# Helper: pull a single-band ee.Image to numpy
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Post Step 4: Validation
+# validate_deterministic() — download and summarise a deterministic result
+# validate_monte_carlo()   — summarise and plot an MC result
+# compare_det_vs_mc()      — side-by-side comparison
+# ===========================================================================
 
 def _ee_image_to_numpy(ee_image, aoi, scale: int = 30) -> np.ndarray:
-    """
-    Download a single-band ee.Image clipped to aoi as a numpy array.
-    Works with ee.FeatureCollection or ee.Geometry AOIs (e.g. from
-    geemap.shp_to_ee).
-    """
+    """Download a single-band ee.Image as a (H, W) float32 numpy array."""
     aoi_geom = aoi.geometry() if hasattr(aoi, "geometry") else aoi
 
     url = ee_image.getDownloadURL({
@@ -665,10 +1053,6 @@ def _ee_image_to_numpy(ee_image, aoi, scale: int = 30) -> np.ndarray:
             return src.read(1).astype(np.float32)
 
 
-# ---------------------------------------------------------------------------
-# Main validation function
-# ---------------------------------------------------------------------------
-
 def validate_deterministic(
     det_ee_image,
     rules_df: pd.DataFrame,
@@ -676,132 +1060,109 @@ def validate_deterministic(
     aoi,
     scale: int = 30,
     scheme_label: str = "",
-):
+) -> np.ndarray:
     """
-    Validation for a deterministic classification result.
-    Produces the same console summary and plots as validate_monte_carlo()
-    so the two approaches can be directly compared.
+    Download and validate a deterministic classification result.
+
+    Produces a console summary in the same format as validate_monte_carlo()
+    so results are directly comparable. Also shows a class map and area
+    bar chart.
 
     Parameters
     ----------
     det_ee_image : ee.Image
-        Output of classify_scheme_deterministic() — single band 'class_id'.
+        Output of RuleSetClassifier.classify_scheme_deterministic().
     rules_df : pd.DataFrame
-        Rules table used for classification (to get class names).
+        Rules table (must contain 'scheme' column).
     scheme_name : str
         Scheme key in rules_df.
     aoi : ee.FeatureCollection or ee.Geometry
-        Area of interest — same object passed to RuleSetClassifier.
     scale : int
-        Pixel scale in metres for downloading the result.
+        Pixel scale in metres.
     scheme_label : str
         Display label for plot titles.
 
     Returns
     -------
-    class_map : np.ndarray
-        (H, W) int array of class IDs, matching mode_map shape from MC.
-    """
-    label  = scheme_label or scheme_name
-    subset = rules_df[rules_df["scheme"] == scheme_name].copy()
-    id_to_name  = dict(zip(subset["class_id"], subset["class_name"]))
-    class_ids   = sorted(subset["class_id"].unique().tolist())
+    np.ndarray
+        (H, W) int array of class IDs — same shape as MC mode_map.
 
-    # --- Pull ee.Image to numpy ---------------------------------------------
-    print(f"Downloading deterministic result for '{label}'...")
-    class_map = _ee_image_to_numpy(det_ee_image, aoi, scale=scale).astype(int)
-    H, W = class_map.shape
+    Example
+    -------
+    >>> det_arr = validate_deterministic(det_map, rules, "scheme1", aoi)
+    """
+    logger     = logging.getLogger("validate_deterministic")
+    label      = scheme_label or scheme_name
+    subset     = rules_df[rules_df["scheme"] == scheme_name].copy()
+    id_to_name = dict(zip(subset["class_id"], subset["class_name"]))
+    class_ids  = sorted(subset["class_id"].unique().tolist())
+
+    logger.info(f"Downloading deterministic result for '{label}'...")
+    class_map    = _ee_image_to_numpy(det_ee_image, aoi, scale).astype(int)
+    H, W         = class_map.shape
     total_pixels = class_map.size
 
-    # --- Console summary ----------------------------------------------------
+    # Console summary
     print(f"\n{'='*55}")
     print(f"  Validation — {label}  (deterministic)")
     print(f"{'='*55}")
-    print(f"  Spatial extent  : {H} x {W} px")
-    print(f"  Entropy         : 0.0000 nats  (no uncertainty — deterministic)")
-    print(f"\n  Per-class area share (class map):")
+    print(f"  Spatial extent : {H} x {W} px")
+    print(f"  Entropy        : 0.0000 nats  (deterministic — no uncertainty)")
+    print(f"\n  Per-class area share:")
 
     area_shares = {}
     for cid in [0] + class_ids:
-        area_pct = 100 * (class_map == cid).sum() / total_pixels
-        area_shares[cid] = area_pct
+        pct  = 100 * (class_map == cid).sum() / total_pixels
         name = id_to_name.get(cid, f"class {cid}")
-        print(f"    [{int(cid):>2}] {name:<20}  area={area_pct:5.1f}%")
-
+        area_shares[cid] = pct
+        print(f"    [{int(cid):>2}] {name:<20}  area={pct:5.1f}%")
     print(f"{'='*55}\n")
 
-    # --- Figure: class map + per-class area bar chart -----------------------
-    n_cols = 2
+    # Figure: class map + area bar chart
     fig = plt.figure(figsize=(12, 5), constrained_layout=True)
-    fig.suptitle(f"Deterministic validation — {label}", fontsize=13, fontweight="500")
-    gs = GridSpec(1, n_cols, figure=fig)
+    fig.suptitle(f"Deterministic — {label}", fontsize=13, fontweight="500")
+    gs = GridSpec(1, 2, figure=fig)
 
-    # Panel 1: spatial class map
-    base_palette = [
-        "#888780",  # 0 nodata   — gray
-        "#1D9E75",  # 1          — teal
-        "#378ADD",  # 2          — blue
-        "#D85A30",  # 3          — coral
-        "#BA7517",  # 4          — amber
-        "#7F77DD",  # 5          — purple
-        "#639922",  # 6          — green
-    ]
-    all_ids  = [0] + class_ids
-    cmap     = plt.cm.colors.ListedColormap(
-        [base_palette[i % len(base_palette)] for i in range(len(all_ids))]
+    all_ids     = [0] + class_ids
+    cmap        = mcolors.ListedColormap(
+        [_CLASS_PALETTE[i % len(_CLASS_PALETTE)] for i in range(len(all_ids))]
     )
-    bounds   = [i - 0.5 for i in range(len(all_ids) + 1)]
-    norm     = plt.cm.colors.BoundaryNorm(bounds, cmap.N)
-
-    # Remap class IDs to contiguous indices for imshow
+    bounds      = [i - 0.5 for i in range(len(all_ids) + 1)]
+    norm        = mcolors.BoundaryNorm(bounds, cmap.N)
     display_map = np.zeros_like(class_map)
     for idx, cid in enumerate(all_ids):
         display_map[class_map == cid] = idx
 
     ax_map = fig.add_subplot(gs[0, 0])
-    im = ax_map.imshow(display_map, cmap=cmap, norm=norm, interpolation="nearest")
-    cbar = plt.colorbar(im, ax=ax_map, ticks=range(len(all_ids)),
-                        fraction=0.046, pad=0.04)
+    im     = ax_map.imshow(display_map, cmap=cmap, norm=norm, interpolation="nearest")
+    cbar   = plt.colorbar(im, ax=ax_map, ticks=range(len(all_ids)),
+                          fraction=0.046, pad=0.04)
     cbar.set_ticklabels(
-        [f"[{int(cid)}] {id_to_name.get(cid, 'nodata')}" for cid in all_ids]
+        [f"[{int(c)}] {id_to_name.get(c, 'nodata')}" for c in all_ids]
     )
-    ax_map.set_title("Class map", fontsize=11)
+    ax_map.set_title("Class map")
     ax_map.axis("off")
 
-    # Panel 2: area bar chart (only named classes, skip nodata=0)
-    ax_bar = fig.add_subplot(gs[0, 1])
-    named_ids   = [cid for cid in class_ids if area_shares.get(cid, 0) > 0]
-    named_names = [id_to_name.get(cid, f"class {cid}") for cid in named_ids]
-    named_areas = [area_shares[cid] for cid in named_ids]
-    bar_colors  = [base_palette[(i + 1) % len(base_palette)]
-                   for i, cid in enumerate(class_ids)
-                   if area_shares.get(cid, 0) > 0]
+    ax_bar      = fig.add_subplot(gs[0, 1])
+    named_ids   = [c for c in class_ids if area_shares.get(c, 0) > 0]
+    named_names = [id_to_name.get(c, f"class {c}") for c in named_ids]
+    named_areas = [area_shares[c] for c in named_ids]
+    bar_colours = [_CLASS_PALETTE[(i + 1) % len(_CLASS_PALETTE)]
+                   for i in range(len(named_ids))]
 
-    bars = ax_bar.barh(named_names, named_areas, color=bar_colors,
+    bars = ax_bar.barh(named_names, named_areas, color=bar_colours,
                        edgecolor="none", height=0.5)
-    ax_bar.set_xlabel("Area share (%)", fontsize=11)
-    ax_bar.set_title("Per-class area share", fontsize=11)
+    for bar, pct in zip(bars, named_areas):
+        ax_bar.text(bar.get_width() + 1,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{pct:.1f}%", va="center", fontsize=9)
+    ax_bar.set_xlabel("Area share (%)")
+    ax_bar.set_title("Per-class area share")
     ax_bar.set_xlim(0, 100)
 
-    for bar, pct in zip(bars, named_areas):
-        ax_bar.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
-                    f"{pct:.1f}%", va="center", fontsize=9)
-
     plt.show()
-
     return class_map
 
-"""
-Implementation: Monte Carlo LULC classification
-with validation checks and geemap visualization.
-"""
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.gridspec import GridSpec
-
-# ===========================================================================
-# VALIDATION
-# ===========================================================================
 
 def validate_monte_carlo(
     results: dict,
@@ -810,246 +1171,132 @@ def validate_monte_carlo(
     entropy_threshold: float = 0.5,
     scheme_label: str = "",
 ):
+    """
+    Summarise and visualise a Monte Carlo classification result.
 
+    Produces a console summary and four types of plot:
+        - Entropy distribution histogram
+        - Entropy spatial map (with high-uncertainty overlay)
+        - Mode map
+        - Per-class probability histograms
+
+    Parameters
+    ----------
+    results : dict
+        Output of RuleSetClassifier.classify_scheme_monte_carlo().
+    rules_df : pd.DataFrame
+        Rules table (must contain 'scheme' column).
+    scheme_name : str
+        Scheme key in rules_df.
+    entropy_threshold : float
+        Pixels above this value (nats) are flagged as high-uncertainty.
+        A principled choice is ln(n_classes) / 2.
+    scheme_label : str
+        Display label for titles.
+
+    Example
+    -------
+    >>> validate_monte_carlo(mc_results, rules, "scheme1", entropy_threshold=0.5)
+    """
+    label       = scheme_label or scheme_name
     mode_map    = results["mode_map"]
     entropy_map = results["entropy_map"]
     class_probs = results["class_probs"]
     n_iter      = results["n_iterations"]
 
-    subset = rules_df[rules_df["scheme"] == scheme_name].copy()
+    subset     = rules_df[rules_df["scheme"] == scheme_name].copy()
     id_to_name = dict(zip(subset["class_id"], subset["class_name"]))
+    n_classes  = len(class_probs)
 
-    label = scheme_label or scheme_name
-    n_classes = len(class_probs)
-
-    # -----------------------------------------------------------------------
-    # Console summary
-    # -----------------------------------------------------------------------
-    total_pixels = mode_map.size
+    total_pixels    = mode_map.size
     high_unc_pixels = (entropy_map > entropy_threshold).sum()
-    high_unc_pct = 100 * high_unc_pixels / total_pixels
+    high_unc_pct    = 100 * high_unc_pixels / total_pixels
 
+    # Console summary
     print(f"\n{'='*55}")
     print(f"  Validation — {label}  ({n_iter} iterations)")
     print(f"{'='*55}")
-    print(f"  Spatial extent  : {mode_map.shape[0]} x {mode_map.shape[1]} px")
-    print(f"  Entropy range   : {entropy_map.min():.4f} – {entropy_map.max():.4f} nats")
-    print(f"  Mean entropy    : {entropy_map.mean():.4f} nats")
-    print(f"  High-uncertainty pixels (entropy > {entropy_threshold}): "
-          f"{high_unc_pixels:,}  ({high_unc_pct:.1f}%)")
-
+    print(f"  Spatial extent   : {mode_map.shape[0]} x {mode_map.shape[1]} px")
+    print(f"  Entropy range    : {entropy_map.min():.4f} – {entropy_map.max():.4f} nats")
+    print(f"  Mean entropy     : {entropy_map.mean():.4f} nats")
+    print(f"  High-uncertainty : {high_unc_pixels:,} px  "
+          f"({high_unc_pct:.1f}%,  threshold={entropy_threshold})")
     print(f"\n  Per-class area share (mode map):")
     for cid, prob_map in class_probs.items():
-        area_pct = 100 * (mode_map == cid).sum() / total_pixels
+        area_pct  = 100 * (mode_map == cid).sum() / total_pixels
         mean_conf = prob_map.mean()
-        name = id_to_name.get(cid, f"class {cid}")
+        name      = id_to_name.get(cid, f"class {cid}")
         print(f"    [{int(cid):>2}] {name:<20}  "
               f"area={area_pct:5.1f}%   mean prob={mean_conf:.3f}")
     print(f"{'='*55}\n")
 
-    class_entropy = {}
-    for cid, prob_map in class_probs.items():
-        arr = prob_map.ravel()
-        # Shannon entropy per pixel: -p*log(p) - (1-p)*log(1-p)
-        # Avoid log(0) by adding epsilon
-        eps = 1e-10
-        pixel_entropy = -(arr * np.log(arr + eps) + (1 - arr) * np.log(1 - arr + eps))
-        # Mean entropy for pixels where class probability > 0 (ignore empty areas)
-        mask = arr > 0
-        if np.any(mask):
-            class_entropy[cid] = pixel_entropy[mask].mean()
-        else:
-            class_entropy[cid] = 0.0
-
-    print(f"\n  Per-class area share and entropy (mode map):")
-    for cid, prob_map in class_probs.items():
-        area_pct = 100 * (mode_map == cid).sum() / total_pixels
-        mean_conf = prob_map.mean()
-        mean_ent = class_entropy[cid]
-        name = id_to_name.get(cid, f"class {cid}")
-        print(f"    [{int(cid):>2}] {name:<20}  "
-            f"area={area_pct:5.1f}%   mean prob={mean_conf:.3f}   mean entropy={mean_ent:.3f}")
-
-    # -----------------------------------------------------------------------
-    # Figure layout
-    # row 0: hist | entropy | mode
-    # rows 1+: histograms
-    # -----------------------------------------------------------------------
-
+    # Figure layout: [entropy hist | entropy map | mode map] + per-class hists
     n_cols = max(3, min(n_classes, 4))
     n_rows = 2 + (n_classes - 1) // n_cols
-
-    fig = plt.figure(figsize=(5 * n_cols, 4 * n_rows), constrained_layout=True)
+    fig    = plt.figure(figsize=(5 * n_cols, 4 * n_rows), constrained_layout=True)
     fig.suptitle(f"Monte Carlo validation — {label}", fontsize=13, fontweight="500")
     gs = GridSpec(n_rows, n_cols, figure=fig)
 
-    # -----------------------------------------------------------------------
-    # Row 0 — entropy histogram
-    # -----------------------------------------------------------------------
-
+    # Row 0a: entropy distribution histogram
     ax_hist = fig.add_subplot(gs[0, 0])
-
-    ax_hist.hist(
-        entropy_map.ravel(),
-        bins=60,
-        color="#5DCAA5",
-        edgecolor="none",
-        alpha=0.85,
-    )
-
-    ax_hist.axvline(
-        entropy_threshold,
-        color="#D85A30",
-        linewidth=1.5,
-        linestyle="--",
-        label=f"threshold = {entropy_threshold}",
-    )
-
-    ax_hist.axvline(
-        entropy_map.mean(),
-        color="#7F77DD",
-        linewidth=1.5,
-        linestyle="-",
-        label=f"mean = {entropy_map.mean():.3f}",
-    )
-
+    ax_hist.hist(entropy_map.ravel(), bins=60, color="#5DCAA5",
+                 edgecolor="none", alpha=0.85)
+    ax_hist.axvline(entropy_threshold, color="#D85A30", linewidth=1.5,
+                    linestyle="--", label=f"threshold={entropy_threshold}")
+    ax_hist.axvline(entropy_map.mean(), color="#7F77DD", linewidth=1.5,
+                    label=f"mean={entropy_map.mean():.3f}")
     ax_hist.set_title("Entropy distribution")
+    ax_hist.set_xlabel("Shannon entropy (nats)")
     ax_hist.legend(fontsize=9)
 
-    # -----------------------------------------------------------------------
-    # Row 0 — entropy map
-    # -----------------------------------------------------------------------
+    # Row 0b: entropy spatial map with high-uncertainty overlay
+    ax_emap = fig.add_subplot(gs[0, 1])
+    emap    = ax_emap.imshow(entropy_map, cmap="YlOrRd", vmin=0,
+                             vmax=entropy_map.max())
+    plt.colorbar(emap, ax=ax_emap, fraction=0.046, pad=0.04, label="nats")
+    overlay = np.where(entropy_map > entropy_threshold, 1.0, np.nan)
+    ax_emap.imshow(overlay, cmap="cool", alpha=0.4, vmin=0, vmax=1)
+    ax_emap.set_title(f"Entropy map  ({high_unc_pct:.1f}% high-unc, cyan)")
+    ax_emap.axis("off")
 
-    ax_map = fig.add_subplot(gs[0, 1])
-
-    emap = ax_map.imshow(
-        entropy_map,
-        cmap="YlOrRd",
-        vmin=0,
-        vmax=entropy_map.max(),
+    # Row 0c: mode map
+    class_ids  = sorted(id_to_name.keys())
+    id_to_idx  = {cid: i for i, cid in enumerate(class_ids)}
+    mode_idx   = np.vectorize(lambda x: id_to_idx.get(x, -1))(mode_map)
+    colours    = plt.cm.tab20(np.linspace(0, 1, len(class_ids)))
+    cmap_mode  = mcolors.ListedColormap(colours)
+    norm_mode  = mcolors.BoundaryNorm(
+        np.arange(len(class_ids) + 1) - 0.5, len(class_ids)
     )
-
-    plt.colorbar(
-        emap,
-        ax=ax_map,
-        fraction=0.046,
-        pad=0.04,
-        label="entropy (nats)",
-    )
-
-    high_unc_mask = np.where(entropy_map > entropy_threshold, 1.0, np.nan)
-
-    ax_map.imshow(
-        high_unc_mask,
-        cmap="cool",
-        alpha=0.4,
-        vmin=0,
-        vmax=1,
-    )
-
-    ax_map.set_title(
-        f"Entropy map ({high_unc_pct:.1f}% high-unc)"
-    )
-
-    ax_map.axis("off")
-
-    # -----------------------------------------------------------------------
-    # Row 0 — mode map
-    # -----------------------------------------------------------------------
-
     ax_mode = fig.add_subplot(gs[0, 2])
-
-    class_ids = sorted(id_to_name.keys())
-
-    colors = plt.cm.tab20(np.linspace(0, 1, len(class_ids)))
-    cmap = mcolors.ListedColormap(colors)
-
-    norm = mcolors.BoundaryNorm(
-        boundaries=np.arange(len(class_ids) + 1) - 0.5,
-        ncolors=len(class_ids),
-    )
-
-    # remap class ids → index
-    id_to_idx = {cid: i for i, cid in enumerate(class_ids)}
-
-    mode_idx = np.vectorize(lambda x: id_to_idx.get(x, -1))(mode_map)
-
-    im = ax_mode.imshow(
-        mode_idx,
-        cmap=cmap,
-        norm=norm,
-    )
-
+    ax_mode.imshow(mode_idx, cmap=cmap_mode, norm=norm_mode)
     ax_mode.set_title("Mode map")
     ax_mode.axis("off")
-
-    # legend
     handles = [
-        plt.Line2D(
-            [0],
-            [0],
-            marker="s",
-            color=colors[i],
-            linestyle="",
-            markersize=8,
-            label=id_to_name[cid],
-        )
+        plt.Line2D([0], [0], marker="s", color=colours[i],
+                   linestyle="", markersize=8, label=id_to_name[cid])
         for i, cid in enumerate(class_ids)
     ]
+    ax_mode.legend(handles=handles, bbox_to_anchor=(1.05, 1),
+                   loc="upper left", fontsize=8)
 
-    ax_mode.legend(
-        handles=handles,
-        bbox_to_anchor=(1.05, 1),
-        loc="upper left",
-        fontsize=8,
-    )
-
-    # -----------------------------------------------------------------------
-    # Per-class histograms
-    # -----------------------------------------------------------------------
-
-    class_items = [
-        (cid, prob_map)
-        for cid, prob_map in class_probs.items()
-        if cid != 0.0
-    ]
-
+    # Rows 1+: per-class probability histograms
+    class_items = [(cid, p) for cid, p in class_probs.items() if cid != 0.0]
     for i, (cid, prob_map) in enumerate(class_items):
-
         row = 1 + i // n_cols
         col = i % n_cols
-
-        ax = fig.add_subplot(gs[row, col])
-
-        name = id_to_name.get(cid, f"class {cid}")
-
-        ax.hist(
-            prob_map.ravel(),
-            bins=50,
-            color="#378ADD",
-            edgecolor="none",
-            alpha=0.85,
-        )
-
-        ax.axvline(
-            0.5,
-            color="#E24B4A",
-            linestyle="--",
-        )
-
-        ax.axvline(
-            prob_map.mean(),
-            color="#BA7517",
-        )
-
-        ax.set_title(f"[{int(cid)}] {name}")
+        ax  = fig.add_subplot(gs[row, col])
+        ax.hist(prob_map.ravel(), bins=50, color="#378ADD",
+                edgecolor="none", alpha=0.85)
+        ax.axvline(0.5, color="#E24B4A", linestyle="--", label="p=0.5")
+        ax.axvline(prob_map.mean(), color="#BA7517",
+                   label=f"mean={prob_map.mean():.3f}")
+        ax.set_title(f"[{int(cid)}] {id_to_name.get(cid, f'class {cid}')}")
+        ax.set_xlabel("P(class assigned)")
+        ax.legend(fontsize=8)
 
     plt.show()
 
-
-# ---------------------------------------------------------------------------
-# Side-by-side comparison helper
-# ---------------------------------------------------------------------------
 
 def compare_det_vs_mc(
     det_class_map: np.ndarray,
@@ -1059,21 +1306,29 @@ def compare_det_vs_mc(
     scheme_label: str = "",
 ):
     """
-    Print a side-by-side area share comparison and compute pixel-level
-    agreement between the deterministic map and the MC mode map.
+    Compare a deterministic class map against the MC mode map.
+
+    Prints a side-by-side area share table and shows three panels:
+        - Deterministic class map
+        - MC mode map
+        - Disagreement map coloured by MC entropy
 
     Parameters
     ----------
     det_class_map : np.ndarray
-        Output of validate_deterministic() — (H, W) int array.
+        Return value of validate_deterministic() — (H, W) int array.
     mc_results : dict
-        Output of classify_scheme_monte_carlo().
+        Return value of RuleSetClassifier.classify_scheme_monte_carlo().
     rules_df : pd.DataFrame
-        Rules table (for class names).
+        Rules table (must contain 'scheme' column).
     scheme_name : str
         Scheme key in rules_df.
     scheme_label : str
-        Display label.
+        Display label for titles.
+
+    Example
+    -------
+    >>> compare_det_vs_mc(det_arr, mc_results, rules, "scheme1")
     """
     label      = scheme_label or scheme_name
     subset     = rules_df[rules_df["scheme"] == scheme_name].copy()
@@ -1084,169 +1339,145 @@ def compare_det_vs_mc(
     entropy_map = mc_results["entropy_map"]
     total       = det_class_map.size
 
-    # Overall pixel agreement
     agreement     = (det_class_map == mode_map).sum()
     agreement_pct = 100 * agreement / total
+    disagree_pct  = 100 - agreement_pct
 
+    # Console summary
     print(f"\n{'='*55}")
     print(f"  Deterministic vs MC — {label}")
     print(f"{'='*55}")
-    print(f"  Overall pixel agreement : {agreement:,} / {total:,}  "
-          f"({agreement_pct:.1f}%)")
-    print(f"  Mean MC entropy         : {entropy_map.mean():.4f} nats")
-    print(f"\n  {'Class':<22}  {'Det area':>9}  {'MC area':>9}  {'Δ':>7}")
-    print(f"  {'-'*52}")
-
+    print(f"  Pixel agreement : {agreement:,} / {total:,}  ({agreement_pct:.1f}%)")
+    print(f"  Mean MC entropy : {entropy_map.mean():.4f} nats")
+    print(f"\n  {'Class':<22}  {'Det':>8}  {'MC':>8}  {'Δ':>7}")
+    print(f"  {'-'*50}")
     for cid in class_ids:
-        name     = id_to_name.get(cid, f"class {cid}")
-        det_pct  = 100 * (det_class_map == cid).sum() / total
-        mc_pct   = 100 * (mode_map == cid).sum() / total
-        delta    = mc_pct - det_pct
-        sign     = "+" if delta >= 0 else ""
+        name    = id_to_name.get(cid, f"class {cid}")
+        det_pct = 100 * (det_class_map == cid).sum() / total
+        mc_pct  = 100 * (mode_map == cid).sum() / total
+        delta   = mc_pct - det_pct
+        sign    = "+" if delta >= 0 else ""
         print(f"  [{int(cid):>2}] {name:<18}  "
-              f"{det_pct:>8.1f}%  {mc_pct:>8.1f}%  {sign}{delta:>5.1f}%")
-
+              f"{det_pct:>7.1f}%  {mc_pct:>7.1f}%  {sign}{delta:>5.1f}%")
     print(f"{'='*55}\n")
 
-    # --- Disagreement map ---------------------------------------------------
-    disagree_mask = (det_class_map != mode_map).astype(float)
-    disagree_pct  = 100 * disagree_mask.mean()
-
+    # Three-panel figure
     fig, axes = plt.subplots(1, 3, figsize=(15, 4), constrained_layout=True)
-    fig.suptitle(f"Deterministic vs MC comparison — {label}",
-                 fontsize=13, fontweight="500")
+    fig.suptitle(f"Deterministic vs MC — {label}", fontsize=13, fontweight="500")
 
-    # Deterministic class map
     axes[0].imshow(det_class_map, cmap="tab10", interpolation="nearest")
-    axes[0].set_title("Deterministic", fontsize=11)
+    axes[0].set_title("Deterministic")
     axes[0].axis("off")
 
-    # MC mode map
     axes[1].imshow(mode_map, cmap="tab10", interpolation="nearest")
-    axes[1].set_title("MC mode map", fontsize=11)
+    axes[1].set_title("MC mode map")
     axes[1].axis("off")
 
-    # Disagreement map — white=agree, red=disagree
-    # Overlay MC entropy as intensity so high-entropy disagreements stand out
-    disagree_display = np.where(disagree_mask == 1, entropy_map, 0)
-    im = axes[2].imshow(disagree_display, cmap="YlOrRd",
-                        vmin=0, vmax=entropy_map.max(),
-                        interpolation="nearest")
-    plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04,
-                 label="MC entropy (nats)")
+    # Disagreement map: only show entropy where the two methods disagree
+    disagree_display = np.where(det_class_map != mode_map, entropy_map, 0)
+    im = axes[2].imshow(disagree_display, cmap="YlOrRd", vmin=0,
+                        vmax=entropy_map.max(), interpolation="nearest")
+    plt.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04, label="MC entropy (nats)")
     axes[2].set_title(
-        f"Disagreement pixels ({disagree_pct:.1f}%)\ncoloured by MC entropy",
-        fontsize=11
+        f"Disagreement ({disagree_pct:.1f}% of pixels)\ncoloured by MC entropy"
     )
     axes[2].axis("off")
 
     plt.show()
 
-import ee
-import pandas as pd
-
-class TrainingDataLabeller:
+def compare_rf_vs_mc(
+    rf_class_map: np.ndarray,
+    mc_results: dict,
+    rules_df: pd.DataFrame,
+    scheme_name: str,
+    scheme_label: str = "",
+):
     """
-    Labels an ee.FeatureCollection with class_ids according to a
-    pre-defined scheme of rules.
+    Compare a Random Forest classification map against the MC mode map.
+
+    Outputs ONLY statistics (no plots), focusing on disagreement behaviour.
+
+    Parameters
+    ----------
+    rf_class_map : np.ndarray
+        Classified map from Random Forest (e.g. classified_step3a).
+    mc_results : dict
+        Output from classify_scheme_monte_carlo().
+    rules_df : pd.DataFrame
+        Rules table with 'scheme', 'class_id', 'class_name'.
+    scheme_name : str
+        Scheme key.
+    scheme_label : str
+        Optional display name.
     """
 
-    def __init__(self, rules_df: pd.DataFrame, scheme_name: str, nodata_value: int = 0):
-        """
-        Parameters
-        ----------
-        rules_df : pd.DataFrame
-            DataFrame with columns: class_id, class_name, rule, priority
-            Rules should be logical expressions already in the 'rule' column.
-        scheme_name : str
-            Name of the scheme for printing/logging purposes.
-        nodata_value : int
-            class_id assigned to features that satisfy no rule.
-        """
-        if rules_df.empty:
-            raise ValueError(f"No rules found for scheme '{scheme_name}'")
+    label      = scheme_label or scheme_name
+    subset     = rules_df[rules_df["scheme"] == scheme_name].copy()
+    id_to_name = dict(zip(subset["class_id"], subset["class_name"]))
+    class_ids  = sorted(subset["class_id"].unique().tolist())
 
-        self.rules_df = rules_df.sort_values("priority").reset_index(drop=True)
-        self.scheme_name = scheme_name
-        self.nodata_value = nodata_value
-        print(f"Initialized labeller for '{scheme_name}' "
-              f"({len(self.rules_df)} classes, priority order)")
+    mode_map    = mc_results["mode_map"]
+    entropy_map = mc_results["entropy_map"]
 
-    @staticmethod
-    def _build_ee_condition(rule_expr: str, feat: ee.Feature) -> ee.Number:
-        """
-        Evaluate a single rule expression against an ee.Feature.
-        Returns ee.Number(1) if satisfied, ee.Number(0) otherwise.
-        Supports AND / OR combinations.
-        """
-        expr = rule_expr.replace("&&", " AND ").replace("||", " OR ")
+    total = rf_class_map.size
 
-        def _eval_single(cond: str) -> ee.Number:
-            cond = cond.strip()
-            for op in [">=", "<=", "!=", ">", "<", "=="]:
-                if op in cond:
-                    left, right = cond.split(op, 1)
-                    prop_val = ee.Number(feat.get(left.strip()))
-                    thresh = float(right.strip())
-                    return {
-                        "==": prop_val.eq,
-                        "!=": prop_val.neq,
-                        ">": prop_val.gt,
-                        ">=": prop_val.gte,
-                        "<": prop_val.lt,
-                        "<=": prop_val.lte
-                    }[op](thresh)
-            raise ValueError(f"Cannot parse condition: '{cond}'")
+    # --- Agreement stats ---
+    agreement     = (rf_class_map == mode_map).sum()
+    agreement_pct = 100 * agreement / total
+    disagree_mask = rf_class_map != mode_map
+    disagree_pct  = 100 - agreement_pct
 
-        if " OR " in expr.upper():
-            parts_orig = expr.split(" OR ")
-            result = _eval_single(parts_orig[0])
-            for part in parts_orig[1:]:
-                result = result.max(_eval_single(part))
-            return result.min(ee.Number(1))
+    # --- Entropy stats ONLY where disagreement happens ---
+    disagreement_entropy = entropy_map[disagree_mask]
 
-        if " AND " in expr.upper():
-            parts_orig = expr.split(" AND ")
-            result = _eval_single(parts_orig[0])
-            for part in parts_orig[1:]:
-                result = result.multiply(_eval_single(part))
-            return result
+    mean_entropy_disagree = disagreement_entropy.mean() if disagreement_entropy.size else 0
+    p90_entropy_disagree  = np.percentile(disagreement_entropy, 90) if disagreement_entropy.size else 0
 
-        return _eval_single(expr)
+    # --- Console output ---
+    print(f"\n{'='*60}")
+    print(f"  RF vs MC Comparison — {label}")
+    print(f"{'='*60}")
+    print(f"  Pixel agreement       : {agreement:,} / {total:,} ({agreement_pct:.1f}%)")
+    print(f"  Pixel disagreement    : {disagree_pct:.1f}%")
 
-    def _make_labeller(self):
-        """
-        Returns a function that labels a feature according to all rules.
-        """
-        rules_reversed = self.rules_df.iloc[::-1].reset_index(drop=True)
-        nodata_value = self.nodata_value
+    print("\n  --- Entropy where disagreement occurs ---")
+    print(f"  Mean entropy          : {mean_entropy_disagree:.4f} nats")
+    print(f"  90th percentile       : {p90_entropy_disagree:.4f} nats")
 
-        def labeller(feat):
-            feat = ee.Feature(feat)
-            class_id = ee.Number(nodata_value)
-            for _, row in rules_reversed.iterrows():
-                cid = int(row["class_id"])
-                rule_expr = str(row["rule"])
-                condition = self._build_ee_condition(rule_expr, feat)
-                class_id = ee.Number(ee.Algorithms.If(condition.eq(1), cid, class_id))
-            return feat.set({"class_id": class_id})
+    # --- Per-class disagreement ---
+    print(f"\n  {'Class':<22} {'RF%':>7} {'MC%':>7} {'Disagree%':>10}")
+    print(f"  {'-'*55}")
 
-        return labeller
+    for cid in class_ids:
+        name = id_to_name.get(cid, f"class {cid}")
 
-    def label(self, training_fc: ee.FeatureCollection) -> ee.FeatureCollection:
-        """
-        Map the labeller function over the feature collection.
-        Prints class distribution after labeling.
-        """
-        labeller = self._make_labeller()
-        labeled_fc = training_fc.map(labeller)
+        rf_mask = rf_class_map == cid
+        mc_mask = mode_map == cid
 
-        print(f"Labelling complete for '{self.scheme_name}'. Checking distribution...")
-        subset_ids = [self.nodata_value] + sorted(self.rules_df["class_id"].tolist())
-        for cid in subset_ids:
-            count = labeled_fc.filter(ee.Filter.eq("class_id", cid)).size().getInfo()
-            name = "nodata" if cid == self.nodata_value else \
-                   self.rules_df.loc[self.rules_df["class_id"] == cid, "class_name"].values[0]
-            print(f"  class {cid:>2} ({name:<16}): {count:>4} features")
+        rf_pct = 100 * rf_mask.sum() / total
+        mc_pct = 100 * mc_mask.sum() / total
 
-        return labeled_fc
+        # disagreement involving this class (either side)
+        class_disagree = ((rf_class_map == cid) | (mode_map == cid)) & disagree_mask
+        class_disagree_pct = 100 * class_disagree.sum() / total
+
+        print(f"  [{int(cid):>2}] {name:<18} "
+              f"{rf_pct:>6.1f}% {mc_pct:>6.1f}% {class_disagree_pct:>9.1f}%")
+
+    # --- Confusion insight ---
+    print(f"\n  --- Top Confusions (RF → MC) ---")
+    print(f"  {'RF class':<20} {'MC class':<20} {'Pixels':>10}")
+
+    from collections import Counter
+
+    confusion_pairs = Counter(
+        zip(rf_class_map[disagree_mask].ravel(),
+            mode_map[disagree_mask].ravel())
+    )
+
+    for (rf_c, mc_c), count in confusion_pairs.most_common(10):
+        rf_name = id_to_name.get(rf_c, str(rf_c))
+        mc_name = id_to_name.get(mc_c, str(mc_c))
+        print(f"  {rf_name:<20} → {mc_name:<20} {count:>10}")
+
+    print(f"{'='*60}\n")
