@@ -533,3 +533,45 @@ class LULC_Scheme_Manager:
         color_col = find_column(["color", "colorcode", "warna", "colour", "hex", "palette"])
         
         return id_col, name_col, color_col 
+    
+    def store_classes_of_interest(
+        self,
+        scheme_name: str,
+        classes_of_interest: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Store and validate selected classes of interest from the current classification scheme.
+
+        Parameters
+        ----------
+        scheme_name : str
+            Name of the classification scheme.
+        classes_of_interest : List[int]
+            List of class IDs selected by the user.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing scheme name and validated selected classes.
+        """
+
+        if not self.classes:
+            raise ValueError("No classes are currently loaded in the scheme.")
+
+        # Get valid IDs from current classes
+        valid_ids = [c["ID"] for c in self.classes]
+
+        # Validate selection
+        invalid_ids = [cid for cid in classes_of_interest if cid not in valid_ids]
+        if invalid_ids:
+            raise ValueError(
+                f"Selected class ID(s) not found in the classification scheme: {invalid_ids}"
+            )
+
+        # Store metadata
+        selected_classes = {
+            "scheme_name": scheme_name,
+            "classes_of_interest": classes_of_interest
+        }
+
+        return selected_classes
