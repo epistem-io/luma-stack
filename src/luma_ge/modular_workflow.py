@@ -1,4 +1,6 @@
 """
+Modular land cover map generation from LCML-structured reference data.
+Supports multiple classification schemes from a single training dataset.
 
 Workflow
 --------
@@ -83,8 +85,9 @@ _CLASS_PALETTE = [
     "#D4537E",  # 7          — pink
 ]
 
+
 # ===========================================================================
-# Step 1b: Setup classifiation ruleset
+# Step 1: Load classification scheme
 # load_scheme() — converts a human-authored CSV into a rule DataFrame
 # ===========================================================================
 
@@ -182,13 +185,12 @@ def load_scheme(csv_path: str) -> pd.DataFrame:
         )
 
     def _build_combined_rule(row, combination):
-        """Join all non-NaN, non-exclusion conditions with AND or OR."""
+        """Join all non-NaN conditions with AND or OR."""
         conds = []
         for pres_col in pres_cols:
             thresh = row[pres_col]
             if pd.isna(thresh):
                 continue
-
             primitive = pres_col.replace("_pres", "")
             rule_col  = f"rule_{primitive}_pres"
             if rule_col not in df.columns:
@@ -196,24 +198,11 @@ def load_scheme(csv_path: str) -> pd.DataFrame:
                     f"No operator column '{rule_col}' for '{pres_col}' "
                     f"in class_id {row['class_id']}."
                 )
-
-            op_text = str(row[rule_col])
-
-            # Skip zero-exclusions — "equal to 0" means "not present",
-            # which is handled by priority ordering, not explicit AND conditions
-            if _is_exclusion(op_text, thresh):
-                continue
-
             conds.append(_build_condition(
-                pres_col, rule_col, op_text, thresh, row["class_id"]
+                pres_col, rule_col, str(row[rule_col]), thresh, row["class_id"]
             ))
-
         if not conds:
-            raise ValueError(
-                f"No non-exclusion conditions for class_id {row['class_id']}. "
-                "Check that at least one *_pres column has a non-zero threshold."
-            )
-
+            raise ValueError(f"No conditions for class_id {row['class_id']}.")
         joiner = " AND " if combination == "and" else " OR "
         return joiner.join(conds)
 
@@ -238,7 +227,7 @@ def load_scheme(csv_path: str) -> pd.DataFrame:
 # ===========================================================================
 # Step 2: Training Data
 # load_modular_training_data() — loads shapefile reference data
-# TrainingDataLabeller         — labels features by scheme rules (direct pathway)
+# TrainingDataLabeller         — labels features by scheme rules (for Step 3b)
 # ===========================================================================
 
 def load_modular_training_data(shp_path: str, aoi=None) -> dict:
@@ -294,6 +283,333 @@ def load_modular_training_data(shp_path: str, aoi=None) -> dict:
         "ee_fc":   ee.FeatureCollection(features),
         "columns": list(gdf.columns),
         "size":    len(gdf),
+    }
+
+
+# ===========================================================================
+# Get external sources of training data information 
+# load_element_mapping()   — reads the element→primitive→GEE mapping CSV
+# enrich_training_data()   — samples external GEE datasets at training points
+#                            and fills missing primitive columns
+# ===========================================================================
+
+def load_element_mapping(mapping_csv_path: str) -> pd.DataFrame:
+    """
+    Load the element mapping CSV that defines how LCML elements translate
+    into primitive layer columns and which external GEE dataset provides
+    the values for each.
+
+    This CSV is the bridge between the LCML element taxonomy and the
+    primitive layer names used by load_scheme() and PrimitiveLayerTrainer.
+    It lets you extend the training data with values from external sources
+    (e.g. tree canopy cover from GFCC, water occurrence from JRC) without
+    manually editing each training point.
+
+    Expected CSV columns
+    --------------------
+    element_block   str   LCML block name (e.g. "tree", "waterBody")
+    element_name    str   LCML element name (e.g. "elementPresenceType")
+    primitive_col   str   Column name in training data (e.g. "tree_pres")
+    value_type      str   "binary" | "continuous"
+    gee_dataset     str   GEE image asset path (e.g. "NASA/MEASURES/GFCC/TC/v3")
+    band_name       str   Band to sample from the GEE image
+    scale           int   Sampling scale in metres
+    transform       str   Post-sampling transform: "none" | "divide_100" |
+                          "divide_max" | "log10"
+    threshold_type  str   How the value is used: "binary" | "continuous"
+    notes           str   Optional description (ignored by code)
+
+    Parameters
+    ----------
+    mapping_csv_path : str
+        Path to the element mapping CSV.
+
+    Returns
+    -------
+    pd.DataFrame
+        Validated mapping table ready for use in enrich_training_data().
+
+    Example
+    -------
+    >>> mapping = load_element_mapping("element_mapping.csv")
+    >>> print(mapping[["element_block", "primitive_col", "gee_dataset"]])
+    """
+    import logging
+    import pandas as pd
+
+    logger = logging.getLogger("load_element_mapping")
+
+    df = pd.read_csv(mapping_csv_path)
+
+    # --- minimal required structure ---
+    required = ["element_block", "element_name"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns in '{mapping_csv_path}': {missing}"
+        )
+
+    # Ensure primitive_col exists (can be empty)
+    if "primitive_col" not in df.columns:
+        df["primitive_col"] = ""
+
+    # Normalize primitive_col (treat NaN as empty string)
+    df["primitive_col"] = df["primitive_col"].fillna("").astype(str).str.strip()
+
+    # Split active vs inactive rows
+    active = df["primitive_col"] != ""
+    df_active = df[active]
+
+    # --- validation only for active rows ---
+    required_active = [
+        "value_type", "gee_dataset", "band_name", "scale", "transform"
+    ]
+    missing_active = [c for c in required_active if c not in df.columns]
+    if missing_active:
+        raise ValueError(
+            f"Missing required columns for active mappings: {missing_active}"
+        )
+
+    valid_transforms = {"none", "divide_100", "divide_max", "log10"}
+
+    invalid = df_active[
+        ~df_active["transform"].isin(valid_transforms)
+    ]["transform"].dropna().unique()
+
+    if len(invalid) > 0:
+        raise ValueError(
+            f"Unknown transform values in active rows: {list(invalid)}. "
+            f"Supported: {valid_transforms}"
+        )
+
+    # Optional: enforce value_type only for active rows
+    valid_value_types = {"binary", "continuous"}
+    invalid_vt = df_active[
+        ~df_active["value_type"].isin(valid_value_types)
+    ]["value_type"].dropna().unique()
+
+    if len(invalid_vt) > 0:
+        raise ValueError(
+            f"Unknown value_type values in active rows: {list(invalid_vt)}. "
+            f"Supported: {valid_value_types}"
+        )
+
+    logger.info(
+        f"Loaded element mapping: {len(df)} rows "
+        f"({active.sum()} active, {(~active).sum()} inactive), "
+        f"{df_active['primitive_col'].nunique()} primitive columns."
+    )
+
+    return df
+
+
+def enrich_training_data(
+    gdf: gpd.GeoDataFrame,
+    mapping: pd.DataFrame,
+    binary_threshold: float = 0.1,
+    overwrite_existing: bool = False,
+    scale_override: Optional[int] = None,
+) -> dict:
+    """
+    Enrich training data by sampling external GEE datasets at each training
+    point and filling the corresponding primitive columns.
+
+    For each row in the element mapping table, the function:
+        1. Loads the specified GEE image and selects the target band.
+        2. Applies the specified transform (e.g. divide_100 for percentage bands).
+        3. Samples the value at each training point geometry.
+        4. For binary primitives: converts to 0/1 using binary_threshold.
+           For continuous primitives: writes the raw transformed value.
+        5. Writes the result into the primitive_col column of the GeoDataFrame.
+
+    Columns that already have values are skipped unless overwrite_existing=True,
+    so you can safely call this on partially-filled training data.
+
+    Parameters
+    ----------
+    gdf : gpd.GeoDataFrame
+        Training data GeoDataFrame from load_modular_training_data().
+        Must have a valid geometry column and CRS set to EPSG:4326.
+    mapping : pd.DataFrame
+        Output of load_element_mapping().
+    binary_threshold : float
+        Transformed values above this threshold are assigned 1 (present),
+        at or below are assigned 0 (absent). Default 0.1 — equivalent to
+        10% cover for datasets like tree canopy or water occurrence.
+        Only applied to rows where value_type = "binary".
+    overwrite_existing : bool
+        If True, re-sample and overwrite columns that already have values.
+        If False (default), skip columns that are already populated.
+    scale_override : int or None
+        If provided, overrides the scale in the mapping table for all
+        datasets. Useful for quick testing at coarser resolution.
+
+    Returns
+    -------
+    dict with keys:
+        "gdf"          — enriched GeoDataFrame with new/updated columns
+        "ee_fc"        — ee.FeatureCollection of the enriched features
+        "columns"      — list of all column names
+        "size"         — number of features
+        "enriched"     — list of primitive_col names that were filled
+        "skipped"      — list of primitive_col names that were skipped
+        "failed"       — list of (primitive_col, error_message) tuples
+
+    Example
+    -------
+    >>> mapping = load_element_mapping("element_mapping.csv")
+    >>> data    = load_modular_training_data("training_points.shp", aoi=aoi)
+    >>> result  = enrich_training_data(data["gdf"], mapping)
+    >>> print("Enriched columns:", result["enriched"])
+    >>> training_fc = result["ee_fc"]
+    """
+    logger = logging.getLogger("enrich_training_data")
+
+    gdf = gdf.copy()
+    if gdf.crs is None:
+        gdf = gdf.set_crs("EPSG:4326")
+    gdf = gdf.to_crs("EPSG:4326")
+
+    enriched_cols = []
+    skipped_cols  = []
+    failed_cols   = []
+
+    for _, map_row in mapping.iterrows():
+        prim_col    = map_row["primitive_col"]
+        gee_dataset = map_row["gee_dataset"]
+        band_name   = map_row["band_name"]
+        scale       = scale_override or int(map_row["scale"])
+        transform   = str(map_row["transform"]).lower().strip()
+        value_type  = str(map_row["value_type"]).lower().strip()
+        block       = map_row["element_block"]
+        element     = map_row["element_name"]
+
+        # Skip if column already has values and overwrite is off
+        if prim_col in gdf.columns and not overwrite_existing:
+            existing_valid = gdf[prim_col].notna().sum()
+            if existing_valid > 0:
+                logger.info(
+                    f"  Skipping '{prim_col}' — {existing_valid} values "
+                    "already present (set overwrite_existing=True to refill)."
+                )
+                skipped_cols.append(prim_col)
+                continue
+
+        logger.info(
+            f"  Enriching '{prim_col}'  ←  [{block}.{element}]  "
+            f"from {gee_dataset} / {band_name}  (scale={scale}m)"
+        )
+
+        try:
+            # Load image and select band
+            image = ee.Image(gee_dataset).select(band_name)
+
+            # Build ee.FeatureCollection of training point geometries
+            ee_points = ee.FeatureCollection([
+                ee.Feature(
+                    ee.Geometry.Point([row.geometry.x, row.geometry.y]),
+                    {"_row_idx": int(idx)}
+                )
+                for idx, row in gdf.iterrows()
+            ])
+
+            # Sample image at each point
+            sampled = image.sampleRegions(
+                collection=ee_points,
+                properties=["_row_idx"],
+                scale=scale,
+                geometries=False,
+            )
+
+            # Pull results to Python
+            features = sampled.getInfo()["features"]
+
+            # Build row_idx → sampled_value lookup
+            value_lookup = {}
+            for feat in features:
+                props = feat["properties"]
+                idx   = int(props["_row_idx"])
+                val   = props.get(band_name, None)
+                if val is not None:
+                    value_lookup[idx] = float(val)
+
+            if len(value_lookup) == 0:
+                raise ValueError(
+                    f"No values returned from {gee_dataset}/{band_name}. "
+                    "Check that the dataset covers your AOI and date range."
+                )
+
+            logger.info(
+                f"    Sampled {len(value_lookup)} / {len(gdf)} points "
+                f"({100*len(value_lookup)/len(gdf):.0f}% coverage)."
+            )
+
+            # Apply transform
+            def _apply_transform(v: float) -> float:
+                if transform == "divide_100":
+                    return v / 100.0
+                if transform == "divide_max":
+                    max_val = max(value_lookup.values())
+                    return v / max_val if max_val > 0 else 0.0
+                if transform == "log10":
+                    return float(np.log10(v + 1e-6))
+                return v  # "none"
+
+            transformed = {
+                idx: _apply_transform(v)
+                for idx, v in value_lookup.items()
+            }
+
+            # Write values into GeoDataFrame
+            if prim_col not in gdf.columns:
+                gdf[prim_col] = np.nan
+
+            for idx, val in transformed.items():
+                if value_type == "binary":
+                    gdf.at[idx, prim_col] = 1 if val > binary_threshold else 0
+                else:
+                    gdf.at[idx, prim_col] = round(val, 4)
+
+            # Fill any points where the dataset had no coverage with 0
+            no_coverage = [i for i in gdf.index if i not in value_lookup]
+            if no_coverage:
+                logger.warning(
+                    f"    {len(no_coverage)} points had no coverage in "
+                    f"{gee_dataset} — filled with 0."
+                )
+                gdf.loc[no_coverage, prim_col] = 0
+
+            enriched_cols.append(prim_col)
+
+        except Exception as exc:
+            logger.error(f"  Failed to enrich '{prim_col}': {exc}")
+            failed_cols.append((prim_col, str(exc)))
+
+    # Convert enriched GeoDataFrame back to ee.FeatureCollection
+    features_ee = [
+        ee.Feature(
+            ee.Geometry(row.geometry.__geo_interface__),
+            row.drop("geometry").to_dict()
+        )
+        for _, row in gdf.iterrows()
+    ]
+    ee_fc = ee.FeatureCollection(features_ee)
+
+    logger.info(
+        f"Enrichment complete — "
+        f"{len(enriched_cols)} filled, "
+        f"{len(skipped_cols)} skipped, "
+        f"{len(failed_cols)} failed."
+    )
+
+    return {
+        "gdf":      gdf,
+        "ee_fc":    ee_fc,
+        "columns":  list(gdf.columns),
+        "size":     len(gdf),
+        "enriched": enriched_cols,
+        "skipped":  skipped_cols,
+        "failed":   failed_cols,
     }
 
 
@@ -1020,7 +1336,464 @@ class RuleSetClassifier:
 
 
 # ===========================================================================
-# Post Step 4: Validation
+# Module 4b: Hierarchical Dichotomous Key Classifier
+# load_hierarchical_scheme()       — loads the tree-structured scheme CSV
+# HierarchicalRuleSetClassifier    — evaluates primitives in a fixed order:
+#                                    vegetation presence → veg properties
+#                                    (cover, height, phenology) →
+#                                    non-veg (bare, built, water)
+# ===========================================================================
+
+def load_hierarchical_scheme(csv_path: str) -> pd.DataFrame:
+    """
+    Load a hierarchical (dichotomous key) classification scheme CSV.
+
+    Unlike load_scheme() which defines flat per-class rules, this function
+    loads a tree-structured scheme where each row is a decision node.
+    Nodes are evaluated in a fixed primitive-first order:
+
+        L1  vegetation check  — tree_pres / shrub_pres
+        L2a veg sub-keys      — tree_cover, vegetation_height, phenology
+        L2b non-veg sub-keys  — bare_pres, builtup_pres, water_pres
+        leaf                  — assigns final class_id
+
+    Expected CSV columns
+    --------------------
+    node_id     int    Unique identifier for this node.
+    parent_id   int    ID of parent node. Leave blank / NaN for root nodes.
+    primitive   str    Primitive band name to evaluate at this node
+                       (e.g. 'tree_pres', 'tree_cover', 'water_pres').
+    operator    str    Comparison operator: '>=' | '>' | '<=' | '<' | '=='
+    threshold   float  Threshold value for the comparison.
+    class_id    int    Assigned class ID if this is a leaf node. NaN for splits.
+    class_name  str    Human-readable class label (leaf nodes only).
+    node_type   str    'split' — evaluates primitive and branches.
+                       'leaf'  — assigns class_id, no further branching.
+    priority    int    Evaluation order within the same parent level.
+                       Lower number = evaluated first.
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to the hierarchical scheme CSV.
+
+    Returns
+    -------
+    pd.DataFrame
+        Validated node table ready for HierarchicalRuleSetClassifier.
+
+    Example
+    -------
+    >>> tree = load_hierarchical_scheme("scheme_hierarchical.csv")
+    >>> classifier = HierarchicalRuleSetClassifier(primitive_stack, tree, aoi)
+    """
+    logger = logging.getLogger("load_hierarchical_scheme")
+
+    df = pd.read_csv(csv_path)
+
+    required = ["node_id", "primitive", "operator", "threshold", "node_type", "priority"]
+    missing  = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns in '{csv_path}': {missing}"
+        )
+
+    valid_ops   = {">", ">=", "<", "<=", "==", "!="}
+    invalid_ops = df[~df["operator"].isin(valid_ops)]["operator"].unique()
+    if len(invalid_ops) > 0:
+        raise ValueError(
+            f"Unknown operators: {list(invalid_ops)}. Supported: {valid_ops}"
+        )
+
+    # parent_id NaN → root node
+    if "parent_id" not in df.columns:
+        df["parent_id"] = np.nan
+
+    leaf_rows = df[df["node_type"] == "leaf"]
+    missing_class = leaf_rows[leaf_rows["class_id"].isna()]
+    if len(missing_class) > 0:
+        raise ValueError(
+            f"Leaf nodes missing class_id: node_ids "
+            f"{missing_class['node_id'].tolist()}"
+        )
+
+    logger.info(
+        f"Loaded hierarchical scheme: {len(df)} nodes "
+        f"({(df['node_type']=='split').sum()} splits, "
+        f"{(df['node_type']=='leaf').sum()} leaves)"
+    )
+    return df.sort_values(["parent_id", "priority"]).reset_index(drop=True)
+
+
+class HierarchicalRuleSetClassifier:
+    """
+    Classifies a primitive datacube using a hierarchical dichotomous key.
+
+    The key difference from RuleSetClassifier is the evaluation logic:
+    instead of applying a flat priority-ordered list of class rules,
+    this classifier traverses a decision tree where each node tests ONE
+    primitive. The order of primitive evaluation is fixed by the tree
+    structure — vegetation is always checked before cover, cover before
+    height, non-veg before built/water/bare.
+
+    This directly mirrors the LCML dichotomous key structure and avoids
+    the reachability problem (where compound AND classes were structurally
+    unreachable in the flat ruleset).
+
+    Supports both deterministic and Monte Carlo classification. The MC
+    method propagates uncertainty through the tree by sampling Bernoulli(p)
+    at each primitive node per iteration — so entropy accumulates from
+    every decision in the path, not just the final class assignment.
+
+    Parameters
+    ----------
+    primitive_image : ee.Image
+        Stack of probabilistic primitive layers in [0, 1].
+    scheme_df : pd.DataFrame
+        Output of load_hierarchical_scheme().
+    aoi : ee.FeatureCollection or ee.Geometry
+        Area of interest for clipping results.
+
+    Example
+    -------
+    >>> tree  = load_hierarchical_scheme("scheme_hierarchical.csv")
+    >>> clf   = HierarchicalRuleSetClassifier(primitive_stack, tree, aoi)
+    >>> det   = clf.classify_deterministic()
+    >>> mc    = clf.classify_monte_carlo(n_iterations=300)
+    """
+
+    def __init__(self, primitive_image: ee.Image,
+                 scheme_df: pd.DataFrame, aoi):
+        self.primitive_image = primitive_image
+        self.scheme_df       = scheme_df
+        self.aoi             = aoi
+        self.logger          = logging.getLogger(self.__class__.__name__)
+
+    # ---------------------------------
+    # Internal: tree traversal (numpy)
+    # ---------------------------------
+
+    def _traverse_tree_numpy(
+        self,
+        band_arrays: dict,
+        H: int,
+        W: int,
+        nodata_value: float = 0.0,
+    ) -> np.ndarray:
+        """
+        Traverse the decision tree pixel-by-pixel using numpy arrays.
+
+        Each pixel starts unassigned. At each node, the node's primitive
+        is evaluated for all currently-unassigned pixels. Pixels that
+        satisfy the condition either receive a class (leaf) or continue
+        to child nodes (split). Pixels that fail a condition fall through
+        to sibling nodes at the same level, then to the next level.
+
+        The traversal is breadth-first within each parent, respecting
+        the priority column for sibling ordering.
+
+        Parameters
+        ----------
+        band_arrays : dict[str, np.ndarray]
+            Binary (0/1) sampled primitive arrays for one MC iteration,
+            or threshold-applied continuous arrays for deterministic use.
+        H, W : int
+            Spatial dimensions.
+        nodata_value : float
+            Assigned to pixels that reach no leaf node.
+
+        Returns
+        -------
+        np.ndarray
+            (H, W) array of class_id values.
+        """
+        result    = np.full((H, W), nodata_value, dtype=float)
+        # unresolved mask: True = pixel not yet assigned a class
+        unresolved = np.ones((H, W), dtype=bool)
+
+        def _eval_node(row, mask: np.ndarray) -> np.ndarray:
+            """Return boolean mask of pixels satisfying this node's condition."""
+            prim   = row["primitive"]
+            op     = row["operator"]
+            thresh = float(row["threshold"])
+
+            if prim not in band_arrays:
+                self.logger.warning(
+                    f"Primitive '{prim}' not in band_arrays — "
+                    "node treated as always-false."
+                )
+                return np.zeros_like(mask)
+
+            arr = band_arrays[prim].astype(float)
+            ops = {
+                ">":  arr >  thresh,
+                ">=": arr >= thresh,
+                "<":  arr <  thresh,
+                "<=": arr <= thresh,
+                "==": arr == thresh,
+                "!=": arr != thresh,
+            }
+            return mask & ops[op]
+
+        def _process_level(parent_id, active_mask: np.ndarray):
+            """
+            Recursively process all nodes whose parent_id matches.
+            Pixels are claimed by the first node (in priority order)
+            whose condition fires. Unclaimed pixels move to the next
+            sibling, then fall through as unresolved.
+            """
+            if not active_mask.any():
+                return
+
+            if pd.isna(parent_id):
+                children = self.scheme_df[self.scheme_df["parent_id"].isna()]
+            else:
+                children = self.scheme_df[
+                    self.scheme_df["parent_id"].apply(
+                        lambda x: (not pd.isna(x)) and (int(x) == int(parent_id))
+                    )
+                ]
+
+            children = children.sort_values("priority")
+            remaining = active_mask.copy()
+
+            for _, node in children.iterrows():
+                if not remaining.any():
+                    break
+
+                fires = _eval_node(node, remaining)
+
+                if node["node_type"] == "leaf":
+                    # Assign class to all pixels where this leaf fires
+                    result[fires] = float(node["class_id"])
+                    remaining[fires] = False
+
+                elif node["node_type"] == "split":
+                    # Recurse into children for pixels where this split fires
+                    _process_level(int(node["node_id"]), fires)
+                    # Pixels processed by children are no longer remaining
+                    # (they were resolved inside the recursion or left unresolved)
+                    remaining[fires] = False
+
+        _process_level(np.nan, unresolved)
+        return result
+
+    # ---------------------------------
+    # Deterministic classification
+    # ---------------------------------
+
+    def classify_deterministic(self, scale: int = 30) -> dict:
+        """
+        Classify using the decision tree with hard thresholds.
+
+        Downloads the primitive stack, applies each node's threshold
+        deterministically (value >= threshold → 1, else → 0), and
+        traverses the tree. Returns a numpy array and an ee.Image.
+
+        Parameters
+        ----------
+        scale : int
+            Pixel scale in metres for downloading primitive arrays.
+
+        Returns
+        -------
+        dict with keys:
+            'class_map'  — (H, W) int array of class IDs
+            'ee_image'   — ee.Image of the result clipped to AOI
+
+        Example
+        -------
+        >>> result = clf.classify_deterministic()
+        >>> print(result["class_map"].shape)
+        """
+        self.logger.info("Hierarchical deterministic classification...")
+        band_arrays = self._download_band_arrays(scale)
+        H, W        = next(iter(band_arrays.values())).shape
+
+        # For deterministic: binarise at the node threshold
+        # (each node evaluates the raw probability against its own threshold)
+        class_map = self._traverse_tree_numpy(band_arrays, H, W)
+
+        ee_image = self._numpy_to_ee_image(class_map)
+        self.logger.info("Deterministic classification complete.")
+
+        return {
+            "class_map": class_map.astype(int),
+            "ee_image":  ee_image,
+        }
+
+    # ---------------------------------
+    # Monte Carlo classification
+    # ---------------------------------
+
+    def classify_monte_carlo(
+        self,
+        n_iterations:  int   = 300,
+        nodata_value:  float = 0.0,
+        seed:          Optional[int] = 42,
+        scale:         int   = 30,
+    ) -> dict:
+        """
+        Classify using repeated Bernoulli sampling through the decision tree.
+
+        In each iteration, each primitive probability p is sampled as
+        Bernoulli(p) → 0 or 1 at every pixel. The sampled binary values
+        are passed through the decision tree. Uncertainty accumulates at
+        every branching node in the path, not just the final class —
+        a pixel that is uncertain at the vegetation/non-vegetation split
+        will show high entropy even if the sub-tree it falls into is
+        completely decisive.
+
+        Parameters
+        ----------
+        n_iterations : int
+            Number of Monte Carlo draws.
+        nodata_value : float
+            Assigned to pixels reaching no leaf in a given iteration.
+        seed : int or None
+            Random seed for reproducibility.
+        scale : int
+            Pixel scale in metres.
+
+        Returns
+        -------
+        dict with keys:
+            'mode_map'    — (H, W) int array of most-frequent class
+            'entropy_map' — (H, W) float array (nats)
+            'class_probs' — dict[class_id -> (H, W) float array]
+            'n_iterations'— int
+
+        Example
+        -------
+        >>> mc = clf.classify_monte_carlo(n_iterations=300)
+        >>> print(mc["entropy_map"].mean())
+        """
+        self.logger.info(
+            f"Hierarchical Monte Carlo classification — {n_iterations} iterations..."
+        )
+        band_arrays = self._download_band_arrays(scale)
+        self._validate_probability_range(band_arrays)
+        H, W = next(iter(band_arrays.values())).shape
+
+        leaf_nodes    = self.scheme_df[self.scheme_df["node_type"] == "leaf"]
+        all_class_ids = sorted(leaf_nodes["class_id"].dropna().unique().tolist())
+        if nodata_value not in all_class_ids:
+            all_class_ids = [nodata_value] + all_class_ids
+
+        class_id_to_idx = {cid: i for i, cid in enumerate(all_class_ids)}
+        counts = np.zeros((len(all_class_ids), H, W), dtype=np.int32)
+        rng    = np.random.default_rng(seed)
+
+        for _ in range(n_iterations):
+            # Sample binary realisations from probabilistic primitives
+            binary_bands = {
+                name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
+                for name, prob_arr in band_arrays.items()
+            }
+            # Traverse the decision tree with this iteration's binary values
+            iter_result = self._traverse_tree_numpy(
+                binary_bands, H, W, nodata_value
+            )
+            for cid, idx in class_id_to_idx.items():
+                counts[idx] += (iter_result == cid).astype(np.int32)
+
+        # Aggregate
+        idx_to_class = np.array(all_class_ids, dtype=float)
+        mode_map     = idx_to_class[np.argmax(counts, axis=0)].astype(int)
+        probs        = counts.astype(float) / n_iterations
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_probs = np.where(probs > 0, np.log(probs), 0.0)
+        entropy_map = -np.sum(probs * log_probs, axis=0)
+        class_probs = {cid: probs[idx] for cid, idx in class_id_to_idx.items()}
+
+        self.logger.info("Monte Carlo classification complete.")
+        return {
+            "mode_map":     mode_map,
+            "entropy_map":  entropy_map,
+            "class_probs":  class_probs,
+            "n_iterations": n_iterations,
+        }
+
+    # ---------------------------------
+    # Internal helpers
+    # ---------------------------------
+
+    def _resolve_geometry(self):
+        return self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
+
+    def _download_band_arrays(self, scale: int) -> dict:
+        """Download all primitive bands as numpy float32 arrays."""
+        aoi_geom   = self._resolve_geometry()
+        band_names = self.primitive_image.bandNames().getInfo()
+        self.logger.info(f"  Fetching {len(band_names)} bands at {scale}m...")
+
+        url = self.primitive_image.getDownloadURL({
+            "bands":  band_names,
+            "region": aoi_geom,
+            "scale":  scale,
+            "format": "GEO_TIFF",
+            "crs":    "EPSG:4326",
+        })
+        response = requests.get(url, stream=True, timeout=300)
+        response.raise_for_status()
+        raw = response.content
+
+        band_arrays = {}
+        if raw[:4] == b"PK\x03\x04":
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
+                for band_name, tif_name in zip(band_names, tif_names):
+                    with zf.open(tif_name) as f:
+                        with rasterio.open(io.BytesIO(f.read())) as src:
+                            band_arrays[band_name] = src.read(1).astype(np.float32)
+        else:
+            with rasterio.open(io.BytesIO(raw)) as src:
+                for i, band_name in enumerate(band_names, start=1):
+                    band_arrays[band_name] = src.read(i).astype(np.float32)
+
+        h, w = next(iter(band_arrays.values())).shape
+        self.logger.info(f"  Downloaded: {h} x {w} px ({h*w:,} pixels per band)")
+        return band_arrays
+
+    def _validate_probability_range(self, band_arrays: dict):
+        for name, arr in band_arrays.items():
+            if arr.min() < 0 or arr.max() > 1:
+                raise ValueError(
+                    f"Band '{name}' outside [0,1] — use .setOutputMode('PROBABILITY')."
+                )
+
+    def _numpy_to_ee_image(self, class_map: np.ndarray) -> ee.Image:
+        """Upload a numpy class map back to GEE as an ee.Image."""
+        aoi_geom = self._resolve_geometry()
+        H, W     = class_map.shape
+        flat     = class_map.flatten().tolist()
+        return (
+            ee.Image(ee.Array(flat).reshape([H, W]))
+            .rename("class_id")
+            .clip(aoi_geom)
+        )
+
+    def summary(self) -> None:
+        """Print the decision tree structure for inspection."""
+        print("\nDecision tree structure:")
+        print(f"{'node_id':>8} {'parent':>8} {'priority':>8}  "
+              f"{'type':<8} {'primitive':<20} {'op':>4} {'thresh':>8}  class")
+        print("-" * 76)
+        for _, row in self.scheme_df.iterrows():
+            pid   = int(row["parent_id"]) if not pd.isna(row["parent_id"]) else "root"
+            cname = row.get("class_name", "") if row["node_type"] == "leaf" else ""
+            cid   = int(row["class_id"])  if not pd.isna(row.get("class_id")) else ""
+            print(
+                f"{int(row['node_id']):>8} {str(pid):>8} {int(row['priority']):>8}  "
+                f"{row['node_type']:<8} {row['primitive']:<20} "
+                f"{row['operator']:>4} {float(row['threshold']):>8.2f}  "
+                f"{cid} {cname}"
+            )
+
+
+# ===========================================================================
+# Module 5: Validation
 # validate_deterministic() — download and summarise a deterministic result
 # validate_monte_carlo()   — summarise and plot an MC result
 # compare_det_vs_mc()      — side-by-side comparison
@@ -1384,100 +2157,3 @@ def compare_det_vs_mc(
     axes[2].axis("off")
 
     plt.show()
-
-def compare_rf_vs_mc(
-    rf_class_map: np.ndarray,
-    mc_results: dict,
-    rules_df: pd.DataFrame,
-    scheme_name: str,
-    scheme_label: str = "",
-):
-    """
-    Compare a Random Forest classification map against the MC mode map.
-
-    Outputs ONLY statistics (no plots), focusing on disagreement behaviour.
-
-    Parameters
-    ----------
-    rf_class_map : np.ndarray
-        Classified map from Random Forest (e.g. classified_step3a).
-    mc_results : dict
-        Output from classify_scheme_monte_carlo().
-    rules_df : pd.DataFrame
-        Rules table with 'scheme', 'class_id', 'class_name'.
-    scheme_name : str
-        Scheme key.
-    scheme_label : str
-        Optional display name.
-    """
-
-    label      = scheme_label or scheme_name
-    subset     = rules_df[rules_df["scheme"] == scheme_name].copy()
-    id_to_name = dict(zip(subset["class_id"], subset["class_name"]))
-    class_ids  = sorted(subset["class_id"].unique().tolist())
-
-    mode_map    = mc_results["mode_map"]
-    entropy_map = mc_results["entropy_map"]
-
-    total = rf_class_map.size
-
-    # --- Agreement stats ---
-    agreement     = (rf_class_map == mode_map).sum()
-    agreement_pct = 100 * agreement / total
-    disagree_mask = rf_class_map != mode_map
-    disagree_pct  = 100 - agreement_pct
-
-    # --- Entropy stats ONLY where disagreement happens ---
-    disagreement_entropy = entropy_map[disagree_mask]
-
-    mean_entropy_disagree = disagreement_entropy.mean() if disagreement_entropy.size else 0
-    p90_entropy_disagree  = np.percentile(disagreement_entropy, 90) if disagreement_entropy.size else 0
-
-    # --- Console output ---
-    print(f"\n{'='*60}")
-    print(f"  RF vs MC Comparison — {label}")
-    print(f"{'='*60}")
-    print(f"  Pixel agreement       : {agreement:,} / {total:,} ({agreement_pct:.1f}%)")
-    print(f"  Pixel disagreement    : {disagree_pct:.1f}%")
-
-    print("\n  --- Entropy where disagreement occurs ---")
-    print(f"  Mean entropy          : {mean_entropy_disagree:.4f} nats")
-    print(f"  90th percentile       : {p90_entropy_disagree:.4f} nats")
-
-    # --- Per-class disagreement ---
-    print(f"\n  {'Class':<22} {'RF%':>7} {'MC%':>7} {'Disagree%':>10}")
-    print(f"  {'-'*55}")
-
-    for cid in class_ids:
-        name = id_to_name.get(cid, f"class {cid}")
-
-        rf_mask = rf_class_map == cid
-        mc_mask = mode_map == cid
-
-        rf_pct = 100 * rf_mask.sum() / total
-        mc_pct = 100 * mc_mask.sum() / total
-
-        # disagreement involving this class (either side)
-        class_disagree = ((rf_class_map == cid) | (mode_map == cid)) & disagree_mask
-        class_disagree_pct = 100 * class_disagree.sum() / total
-
-        print(f"  [{int(cid):>2}] {name:<18} "
-              f"{rf_pct:>6.1f}% {mc_pct:>6.1f}% {class_disagree_pct:>9.1f}%")
-
-    # --- Confusion insight ---
-    print(f"\n  --- Top Confusions (RF → MC) ---")
-    print(f"  {'RF class':<20} {'MC class':<20} {'Pixels':>10}")
-
-    from collections import Counter
-
-    confusion_pairs = Counter(
-        zip(rf_class_map[disagree_mask].ravel(),
-            mode_map[disagree_mask].ravel())
-    )
-
-    for (rf_c, mc_c), count in confusion_pairs.most_common(10):
-        rf_name = id_to_name.get(rf_c, str(rf_c))
-        mc_name = id_to_name.get(mc_c, str(mc_c))
-        print(f"  {rf_name:<20} → {mc_name:<20} {count:>10}")
-
-    print(f"{'='*60}\n")
