@@ -3,7 +3,6 @@ Module 7: Thematic Accuracy Assessment
 
 Provides core functionality for assessing thematic accuracy of land cover
 classification maps using an indpendent reference data. Adapted from AcATaMa QGIS Plugins (https://github.com/SMByC/AcATaMa)
-
 """
 from scipy import stats
 import numpy as np
@@ -263,11 +262,16 @@ class SampleSizeCalculator:
         class_values = list(samples_per_class.keys())
         class_points = list(samples_per_class.values())
 
+        # Resolve band name as a Python string before passing to EE
+        band_names = classification_map.bandNames().getInfo()
+        if not band_names:
+            raise ValueError("classification_map has no bands")
+        class_band = 'classification' if 'classification' in band_names else band_names[0]
+
         # Generate stratified samples using Earth Engine
         samples = classification_map.stratifiedSample(
             numPoints=sum(class_points),
-            classBand='classification' if 'classification' in classification_map.bandNames().getInfo()
-                      else classification_map.bandNames().get(0),
+            classBand=class_band,
             region=geometry,
             scale=scale,
             classValues=class_values,
@@ -336,37 +340,7 @@ class SampleSizeCalculator:
             zip_buffer.seek(0)
             return zip_buffer.read()
 
-# Backward compatibility wrappers
-def get_pixel_counts_per_class(classification_map: ee.Image, class_ids: List[int], 
-                                geometry: ee.Geometry, max_retries: int = 3, 
-                                initial_backoff: float = 1.0) -> Dict[int, int]:
-    return SampleSizeCalculator().get_pixel_counts_per_class(
-        classification_map, class_ids, geometry, max_retries, initial_backoff
-    )
 
-def validate_sample_size_inputs(expected_accuracies: Dict[int, float], 
-                                standard_error: float) -> Tuple[bool, List[str]]:
-    return SampleSizeCalculator.validate_inputs(expected_accuracies, standard_error)
-
-def calculate_stratified_sample_size(pixel_counts: Dict[int, int], 
-                                     expected_accuracies: Dict[int, float], 
-                                     standard_error: float) -> Dict[str, Any]:
-    return SampleSizeCalculator.calculate_stratified_sample_size(
-        pixel_counts, expected_accuracies, standard_error
-    )
-
-def generate_stratified_samples(classification_map: ee.Image,
-                                samples_per_class: Dict[int, int],
-                                geometry: ee.Geometry,
-                                scale: int = 30,
-                                seed: int = 42) -> ee.FeatureCollection:
-    return SampleSizeCalculator().generate_stratified_samples(
-        classification_map, samples_per_class, geometry, scale, seed
-    )
-
-def export_samples_to_shapefile(samples: ee.FeatureCollection,
-                                filename: str = "validation_samples") -> bytes:
-    return SampleSizeCalculator().export_samples_to_shapefile(samples, filename)
 
 #error flagging
 #function to flag validation data as correct or incorrect
@@ -418,8 +392,9 @@ class ValidationPointClassifier:
         result_gdf['actual_class'] = result_gdf[class_property].astype(int)
         result_gdf['predicted_class'] = result_gdf[predicted_property].astype(int)
         result_gdf['is_correct'] = result_gdf['predicted_class'] == result_gdf['actual_class']
-        result_gdf['error_type'] = result_gdf['is_correct'].apply(
-            lambda x: 'correct' if x else 'commission'
+        result_gdf['error_type'] = result_gdf.apply(
+            lambda row: 'correct' if row['is_correct'] else 'incorrect',
+            axis=1
         )
         
         return result_gdf
@@ -484,18 +459,7 @@ class ValidationPointClassifier:
         </div>
         """.strip()
 
-def classify_validation_points(validation_gdf, accuracy_results: Dict[str, Any],
-                               class_property: str = 'CLASS_ID',
-                               predicted_property: str = 'classification') -> Any:
-    return ValidationPointClassifier.classify_validation_points(
-        validation_gdf, accuracy_results, class_property, predicted_property
-    )
 
-def generate_popup_html(predicted_class: int, actual_class: int,
-                       coordinates: tuple, class_names: dict = None) -> str:
-    return ValidationPointClassifier.generate_popup_html(
-        predicted_class, actual_class, coordinates, class_names
-    )
 
 #Thematic Accuracy Assessment
 #core function to execute the accuracy assessment
@@ -734,6 +698,7 @@ class Thematic_Accuracy_Assessment:
             logger.error(error_msg)
             return False, {"error": error_msg}
     
+    @staticmethod
     @staticmethod
     def format_accuracy_summary(results: Dict[str, Any]) -> Dict[str, str]:
         """Format accuracy results for display.
