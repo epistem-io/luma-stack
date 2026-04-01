@@ -1,12 +1,73 @@
 import ee
 from datetime import datetime
 import logging
+from typing import Union
 from .ee_config import ensure_ee_initialized
 import geopandas as gpd
 from shapely.geometry import shape
 from typing import List, Optional
-# Do not initialize Earth Engine at import time. Initialize when an instance is created.
 
+def parse_date_input(date_input: Union[int, str], is_start: bool = True) -> str:
+    """
+    Parse date input to YYYY-MM-DD format.
+
+    Accepts either a year (int or 4-digit string) or a full date string.
+    For year inputs, returns Jan 1 for start dates or Dec 31 for end dates.
+
+    Parameters
+    ----------
+    date_input : int or str
+        Year (e.g., 2020 or "2020") or full date (e.g., "2020-06-15")
+    is_start : bool, default=True
+        If True and input is a year, return January 1.
+        If False and input is a year, return December 31.
+
+    Returns
+    -------
+    str
+        Date in YYYY-MM-DD format
+
+    Raises
+    ------
+    ValueError
+        If date_input is not int, str, or valid format
+
+    Examples
+    --------
+    >>> parse_date_input(2020, is_start=True)
+    '2020-01-01'
+    >>> parse_date_input(2020, is_start=False)
+    '2020-12-31'
+    >>> parse_date_input("2020-06-15")
+    '2020-06-15'
+    >>> parse_date_input("2020", is_start=False)
+    '2020-12-31'
+    """
+    if isinstance(date_input, int):
+        return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
+    elif isinstance(date_input, str):
+        if len(date_input) == 4 and date_input.isdigit():
+            return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
+        else:
+            # Validate full date format (basic check)
+            if len(date_input) == 10 and date_input[4] == '-' and date_input[7] == '-':
+                return date_input
+            else:
+                raise ValueError(
+                    f"Invalid date format: {date_input}. Expected YYYY or YYYY-MM-DD"
+                )
+    else:
+        raise ValueError(f"Date must be int or str, got {type(date_input)}")
+
+#MODULE-LEVEL CONSTANTS
+#Maximum number of images to retrieve from Earth Engine, prevents computation timeout errors for large collections
+MAX_COLLECTION_SIZE = 250
+#Default pixel scale for Landsat imagery (meters), Landsat 4-9: 30m, Landsat 1-3 MSS: 60m
+DEFAULT_COVERAGE_SCALE = 30
+#Maximum pixels for reduce operations. Prevents memory errors on large area computations
+DEFAULT_MAX_PIXELS = 1e9
+#Tile scale for large area computations, Higher values = faster but less accurate
+DEFAULT_TILE_SCALE = 4
 #Configure root for global functions
 logging.basicConfig(
     level=logging.INFO,
@@ -248,79 +309,95 @@ class GEE_Asset_Manager:
         except Exception as e:
             logger.error(f"Unexpected error converting to GeoDataFrame: {e}")
             return None
-
-# Module 1: Cloudless Image Mosaic
 ## System Response 1.2: Search and Filter Imagery
 class Reflectance_Data:
     """Class for fetching and pre-processing Landsat image collection from Google Earth Engine API."""
     #Define the optical datasets. The band reflectances used is from Collection 2 Surface Reflectancce Data
+    #more sensor can be added here
     OPTICAL_DATASETS = {
         'L1_RAW': {
             'collection': 'LANDSAT/LM01/C02/T1',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_raw',
             'sensor': 'L1',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 1 Multispectral Scanner Raw Collection'
         },
         'L2_RAW': {
             'collection': 'LANDSAT/LM02/C02/T1',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_raw',
             'sensor': 'L2',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 2 Multispectral Scanner Raw Collection'            
         },
         'L3_RAW':{
             'collection': 'LANDSAT/LM03/C02/T1',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_raw',
             'sensor': 'L3',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 3 Multispectral Scanner Raw Collection'
         },
         'L4_SR': {
             'collection': 'LANDSAT/LT04/C02/T1_L2',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_sr',
             'sensor': 'L4',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 4 Thematic Mapper Surface Reflectance Collection',           
         },
         'L5_SR': {
             'collection': 'LANDSAT/LT05/C02/T1_L2',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_sr',
             'sensor': 'L5',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 5 Thematic Mapper Surface Reflectance Collection',
         },
         'L7_SR': {
             'collection': 'LANDSAT/LE07/C02/T1_L2', 
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_sr',
             'sensor': 'L7',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 7 Enhance Thematic Mapper + Surface Reflectance'
         },
         'L8_SR': {
             'collection': 'LANDSAT/LC08/C02/T1_L2',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_sr',
             'sensor': 'L8',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 8 Operational Land Imager Surface Reflectance'
         },
         'L9_SR': {
             'collection': 'LANDSAT/LC09/C02/T1_L2',
+            'satellite_family': 'landsat',
             'cloud_property': 'CLOUD_COVER_LAND', 
             'type': 'landsat_sr',
             'sensor': 'L9',
+            'stats_properties': ['CLOUD_COVER_LAND', 'system:time_start', 'system:index', 'WRS_PATH', 'WRS_ROW'],
             'description': 'Landsat 9 Operational Land Imager-2 Surface Reflectance'
         }
     }
     #Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
     #The TOA data provide consistent result and contain minimum missing pixel data
-    #Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are not included
+    #Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are excluded
     THERMAL_DATASETS = {
         'L4_TOA': {
             'collection': 'LANDSAT/LT04/C02/T1_TOA',
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_toa',
             'sensor': 'L4',
+            'thermal_band': 'B6',
             'description': 'Landsat 4 Top-of-atmosphere reflectance',            
         },
         'L5_TOA': {
@@ -328,6 +405,7 @@ class Reflectance_Data:
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_toa',
             'sensor': 'L5',
+            'thermal_band': 'B6',
             'description': 'Landsat 5 Top-of-atmosphere reflectance',
         },
         'L7_TOA': {
@@ -335,6 +413,7 @@ class Reflectance_Data:
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_toa',
             'sensor': 'L7',
+            'thermal_band': 'B6_VCID_2',
             'description': 'Landsat 7 Top-of-atmosphere reflectance',
         },
         'L8_TOA': {
@@ -342,6 +421,7 @@ class Reflectance_Data:
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_toa',
             'sensor': 'L8',
+            'thermal_band': 'B10',
             'description': 'Landsat 8 Top-of-atmosphere reflectance'  
         },
         'L9_TOA': {
@@ -349,6 +429,7 @@ class Reflectance_Data:
             'cloud_property': 'CLOUD_COVER_LAND',
             'type': 'landsat_toa',
             'sensor': 'L9',
+            'thermal_band': 'B10',
             'description': 'Landsat 9 Top-of-atmosphere reflectance'      
         }
     }
@@ -365,7 +446,7 @@ class Reflectance_Data:
         self.logger.setLevel(log_level)
 
         self.logger.info("ReflectanceData initialized.")
-    
+    #check thermal capability of the dataset. Only Landsat 4-9 have thermal bands, and they are only available in the TOA collection, not the SR collection. 
     def has_thermal_capability(self, optical_data):
         """
         Check if a given optical dataset has corresponding thermal bands.
@@ -541,34 +622,14 @@ class Reflectance_Data:
         >>> # With AOI cloud filtering
         >>> collection, stats = get_landsat.get_multispectral_data(aoi, 2020, 2023, 'L8_SR', cloud_cover=30)
         """
-        #Helper function so that the user only input year or specific date range
-        def parse_year_or_date(date_input, is_start=True):
-            if isinstance(date_input, int):  # User gave integer year like 2024
-                return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
-            elif isinstance(date_input, str):
-                if len(date_input) == 4 and date_input.isdigit():
-                    return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
-                else:
-                    return date_input  # Already full date
-            else:
-                raise ValueError("Date must be either YYYY or YYYY-MM-DD format")
-        # Parse inputs (handles both year and full date)
-        start_date = parse_year_or_date(start_date, is_start=True)
-        end_date   = parse_year_or_date(end_date, is_start=False)
+        #Parse inputs (handles both year and full date)
+        start_date = parse_date_input(start_date, is_start=True)
+        end_date   = parse_date_input(end_date, is_start=False)
 
         if optical_data not in self.OPTICAL_DATASETS:
             raise ValueError(f"optical_data must be one of: {list(self.OPTICAL_DATASETS.keys())}")
 
         config = self.OPTICAL_DATASETS[optical_data]
-
-        # Warn if using legacy Landsat 1-3 data
-        if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
-            self.logger.warning(
-                f"WARNING: You are using {config['description']}"
-                f"Data avaliability and coverage for Landsat 1-3 (1972 - 1984) is very limited in some locations."
-                f"Consider using Landsat 4-9 for better data coverage."
-                f"Moreover, Landsat 1-3 data are DN values, representing scaled, calibrated at-sensor radiance. Further pre-processing are required. "
-            )
 
         #Use verbose to import detailed logging information
         if verbose:
@@ -591,8 +652,8 @@ class Reflectance_Data:
 
         #Collection after cloud cover filter
         collection = initial_collection.filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
-        #Limit to 250 scenes to avoid Earth Engine computation limits
-        collection = collection.limit(250)
+        #Limit to MAX_COLLECTION_SIZE scenes to avoid Earth Engine computation limits
+        collection = collection.limit(MAX_COLLECTION_SIZE)
         filtered_stats = stats_object.get_collection_statistics(collection, compute_detailed_stats)
         #Computing image statistics
         if verbose and compute_detailed_stats:
@@ -671,35 +732,12 @@ class Reflectance_Data:
         >>> # With AOI cloud filtering
         >>> collection, stats = get_landsat.get_thermal_data(aoi, 2020, 2023, 'L8_TOA', cloud_cover=30)
         """
-        #Helper function to parse the date so that the user only input year 
-        def parse_year_or_date(date_input, is_start=True):
-            if isinstance(date_input, int):  # User gave integer year like 2024
-                return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
-            elif isinstance(date_input, str):
-                if len(date_input) == 4 and date_input.isdigit():
-                    return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
-                else:
-                    return date_input  # Already full date
-            else:
-                raise ValueError("Date must be either YYYY or YYYY-MM-DD format")
         # Parse inputs (handles both year and full date)
-        start_date = parse_year_or_date(start_date, is_start=True)
-        end_date   = parse_year_or_date(end_date, is_start=False)
+        start_date = parse_date_input(start_date, is_start=True)
+        end_date   = parse_date_input(end_date, is_start=False)
         #Helper function to rename the bands
         def rename_thermal_band(img):
-            sensor = config['sensor']
-            thermal_band_map = {
-                'L4': ['B6'],
-                'L5': ['B6'],
-                'L7': ['B6_VCID_2'],
-                'L8': ['B10'],
-                'L9': ['B10']
-            }
-            band_names = thermal_band_map.get(sensor, [])
-            if len(band_names) == 1:
-                return img.select(band_names).rename(['THERMAL'])
-            else:
-                return img
+            return img.select([thermal_band]).rename(['THERMAL'])
         #The core function for thermal bnd
         if thermal_data not in self.THERMAL_DATASETS:
                 raise ValueError(f"thermal_data must be one of: {list(self.THERMAL_DATASETS.keys())}")
@@ -707,14 +745,7 @@ class Reflectance_Data:
         config = self.THERMAL_DATASETS[thermal_data]
         #Decide which thermal band to select
         sensor = config['sensor']
-        if sensor in ['L4', 'L5']:
-            thermal_band = 'B6'
-        elif sensor == 'L7':
-            thermal_band = 'B6_VCID_2'
-        elif sensor in ['L8', 'L9']:
-            thermal_band = 'B10'
-        else:
-            raise ValueError(f"Unsupported sensor type: {sensor}")
+        thermal_band = config['thermal_band']
         stats = Reflectance_Stats()
         #Logging
         if verbose:
@@ -734,8 +765,8 @@ class Reflectance_Data:
             self.logger.info(f"Date range of available images: {initial_stats['date_range']}")
         #Apply cloud cover filter
         collection = initial_collection.filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
-        #Limit to 250 scenes to avoid Earth Engine computation limits
-        collection = collection.limit(250)
+        #Limit to MAX_COLLECTION_SIZE scenes to avoid Earth Engine computation limits
+        collection = collection.limit(MAX_COLLECTION_SIZE)
         filtered_stats = stats.get_collection_statistics(collection, compute_detailed_stats)
         if verbose and compute_detailed_stats:
             if filtered_stats.get('total_images', 0) > 0:
@@ -765,7 +796,7 @@ class Reflectance_Data:
         }
 class Reflectance_Stats:
     """
-    Class for fetching image collection statistics from Reflectance_Data class
+    Class for fetching image collection statistics
     """
     def __init__(self, log_level=logging.INFO):
         """
@@ -779,7 +810,8 @@ class Reflectance_Stats:
         self.logger.setLevel(log_level)
 
         self.logger.info("Reflectance Stats initialized.")
-    def get_collection_statistics(self, collection, compute_stats=True, print_report=False):
+    def get_collection_statistics(self, collection, compute_stats=True, print_report=False,
+                                   dataset_key=None, stats_properties=None):
         """
         Get comprehensive statistics about an Earth Engine image collection retrival.
 
@@ -795,6 +827,15 @@ class Reflectance_Stats:
         print_report : bool, optional
             If True the function will print formatted report of collection retrival
             (default: False).
+        dataset_key : str, optional
+            Dataset key (e.g. 'L8_SR') used to look up ``stats_properties`` from
+            ``Reflectance_Data.OPTICAL_DATASETS``.  When provided, the method
+            uses the sensor-specific property list from the config.
+        stats_properties : list of str, optional
+            Explicit list of metadata properties to aggregate.  Takes precedence
+            over ``dataset_key`` when both are supplied.  When neither is given,
+            falls back to the standard Landsat property set for backward
+            compatibility.
 
         Returns
         -------
@@ -806,7 +847,6 @@ class Reflectance_Stats:
             - 'total_images'
             - 'date_range'
             - 'cloud_cover' (dict with min/max/mean/values)
-            - 'aoi_cloud_cover' (dict with min/max/mean/values, if available)
             - 'path_row_tiles'
             - 'unique_tiles'
             - 'individual_dates'
@@ -817,34 +857,59 @@ class Reflectance_Stats:
         >>> stats = Reflectance_Stats().get_collection_statistics(collection, compute_stats=True)
         >>> print(stats['total_images'], stats['date_range'])
         """
-        #Get the number of image used 
+        # Resolve the list of properties to aggregate in a single batched call.
+        # Priority: explicit stats_properties > dataset_key lookup > hardcoded fallback
+        if stats_properties is not None:
+            props = stats_properties
+        elif dataset_key is not None:
+            config = Reflectance_Data.OPTICAL_DATASETS.get(dataset_key, {})
+            props = config.get('stats_properties', [
+                'CLOUD_COVER_LAND', 'system:time_start', 'system:index',
+                'WRS_PATH', 'WRS_ROW'
+            ])
+        else:
+            # Backward-compatible default: standard Landsat properties
+            props = ['CLOUD_COVER_LAND', 'system:time_start', 'system:index',
+                     'WRS_PATH', 'WRS_ROW']
+
         try:
             size = collection.size()
             if compute_stats:
-                total_images = size.getInfo() #Client side operation, produce number of image collection
+                total_images = size.getInfo()
                 if total_images > 0:
-                    #Get the cloud cover percentage, and image aqcusition date
-                    cloud_values = collection.aggregate_array('CLOUD_COVER_LAND').getInfo()
-                    dates = collection.aggregate_array('system:time_start').getInfo()
-                    dates_readable = [datetime.fromtimestamp(d/1000).strftime('%Y-%m-%d') for d in dates]
-                    date_range = f"{min(dates_readable)} to {max(dates_readable)}"
-                    #add lines to identify collection ID
-                    scene_id = collection.aggregate_array('system:index').getInfo()
-                    date_range = f"{min(dates_readable)} to {max(dates_readable)}"
-                    #Get information regarding image's WRS path and row
-                    try:
-                        first_img = collection.first()
-                        has_path_row = first_img.propertyNames().contains('WRS_PATH').getInfo()
-                        if has_path_row:
-                            paths = collection.aggregate_array('WRS_PATH').getInfo()
-                            rows = collection.aggregate_array('WRS_ROW').getInfo()
-                            path_rows = list(set(zip(paths, rows)))
-                            path_rows.sort()
-                        else:
-                            path_rows = []
-                    except Exception:
+                    #Improve API calls, reducing from 5 to 1 by using aggregate_array for all properties at once
+                    agg_dict = {prop: collection.aggregate_array(prop) for prop in props}
+                    aggregated = ee.Dictionary(agg_dict).getInfo()
+
+                    #Unpack with safe defaults (empty list if a property is missing)
+                    raw = {prop: aggregated.get(prop, []) for prop in props}
+
+                    #Derive the fields expected by the rest of the codebase
+                    cloud_prop = next(
+                        (p for p in props if 'cloud' in p.lower()), None
+                    )
+                    cloud_values = raw.get(cloud_prop, []) if cloud_prop else []
+
+                    dates_raw = raw.get('system:time_start', [])
+                    dates_readable = [
+                        datetime.fromtimestamp(d / 1000).strftime('%Y-%m-%d')
+                        for d in dates_raw
+                    ] if dates_raw else []
+                    date_range = (
+                        f"{min(dates_readable)} to {max(dates_readable)}"
+                        if dates_readable else "No date information"
+                    )
+
+                    scene_id = raw.get('system:index', [])
+
+                    # Build path/row pairs when both properties are present
+                    paths = raw.get('WRS_PATH', [])
+                    rows = raw.get('WRS_ROW', [])
+                    if paths and rows:
+                        path_rows = sorted(set(zip(paths, rows)))
+                    else:
                         path_rows = []
-                    #Image collections information 
+
                     stats = {
                         'total_images': total_images,
                         'date_range': date_range,
@@ -869,7 +934,7 @@ class Reflectance_Stats:
                         'path_row_tiles': [],
                         'unique_tiles': 0,
                         'individual_dates': [],
-                        'Scene_ids':[]
+                        'Scene_ids': []
                     }
                     if print_report:
                         print("="*60)
@@ -979,7 +1044,7 @@ class final_Image:
         self.logger.setLevel(log_level)
         self.logger.info("final_Image creation initialized.")
     #Function to calculate data coverage (pixel validity) within AOI
-    def calculate_data_coverage(self, composite_image, aoi, scale=30, max_pixels=1e9, verbose=True):
+    def calculate_data_coverage(self, composite_image, aoi, scale=DEFAULT_COVERAGE_SCALE, max_pixels=DEFAULT_MAX_PIXELS, verbose=True):
         """
         Calculate data coverage (valid pixels) percentage within AOI for temporal aggregation composite image.
         This shows how much an AOI has valid data after compositing.
@@ -1031,13 +1096,13 @@ class final_Image:
         #Total area in AOI
         total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
             bestEffort=True,
-            tileScale=4
+            tileScale=DEFAULT_TILE_SCALE
         )
         #Valid (unmasked) area
         valid_area_img = valid_mask.multiply(pixel_area).rename('valid_area')
         valid_area = valid_area_img.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
             bestEffort=True,
-            tileScale=4
+            tileScale=DEFAULT_TILE_SCALE
         )
         #Calculate coverage percentage
         total = ee.Number(total_area.get('area')).max(1)  # Avoid division by zero
@@ -1047,11 +1112,21 @@ class final_Image:
         # Clamp between 0-100 (make sure its 0 - 100)
         coverage_percent = coverage_percent.max(0).min(100)
         gap_percent = gap_percent.max(0).min(100)
-        #Get values (pull from server)
-        total_val = total.getInfo()
-        valid_val = valid.getInfo()
-        coverage_val = coverage_percent.getInfo()
-        gap_val = gap_percent.getInfo()
+        
+        # OPTIMIZATION: Batch all computations into a single API call
+        # Instead of 4 separate getInfo() calls, combine into one dictionary
+        results = ee.Dictionary({
+            'total': total,
+            'valid': valid,
+            'coverage_percent': coverage_percent,
+            'gap_percent': gap_percent
+        }).getInfo()
+        
+        # Extract values from the single API response
+        total_val = results['total']
+        valid_val = results['valid']
+        coverage_val = results['coverage_percent']
+        gap_val = results['gap_percent']
         #Convert to km²
         total_km2 = total_val / 1e6
         valid_km2 = valid_val / 1e6
