@@ -1368,3 +1368,124 @@ class final_Image:
             return composite, coverage_stats
         else:
             return composite
+#Class helper for managing visualization parameters and band combinations originally
+class Vis_Params:
+    """
+    Manages band combination presets and visualization parameters for Landsat composites.
+    """
+    #Preset band combinations with default visualization parameters.
+    BAND_COMBINATIONS = {
+        "True Color (RGB)": {
+            'bands': ['RED', 'GREEN', 'BLUE'],
+            'min': 0.0,
+            'max': 0.3,
+            'gamma': 1.4
+        },
+        "False Color Infrared (NIR/Red/Green)": {
+            'bands': ['NIR', 'RED', 'GREEN'],
+            'min': 0.0,
+            'max': 0.4,
+            'gamma': 1.1
+        },
+        "Short-wave Infrared (SWIR2/NIR/RED)": {
+            'bands': ['SWIR2', 'NIR', 'RED'],
+            'min': 0.0,
+            'max': 0.4,
+            'gamma': 1.2
+        },
+        "Land/Water (NIR/SWIR1/RED)": {
+            'bands': ['NIR', 'SWIR1', 'RED'],
+            'min': 0.0,
+            'max': 0.4,
+            'gamma': [0.95, 1.1, 1.0]
+        },
+        "Buat kombinasi saluran": {
+            'bands': ['RED', 'GREEN', 'BLUE'],
+            'min': 0.0,
+            'max': 0.4,
+            'gamma': 1.0
+        }
+    }
+
+    #Default thermal visualization parameters.
+    THERMAL_VIS = {
+        'min': 286,
+        'max': 300,
+        'gamma': 0.4
+    }
+    #class method since it interact with class level variables (band combinations)
+    @classmethod
+    def get_combination_names(cls):
+        """Return the list of available preset combination names.
+
+        Returns
+        -------
+        list[str]
+            Ordered list of preset names.
+        """
+        return list(cls.BAND_COMBINATIONS.keys())
+
+    @classmethod
+    def get_vis_params(cls, combination_name: str) -> dict:
+        """Return a copy of the visualization parameters for a given preset.
+
+        Parameters
+        ----------
+        combination_name : str
+            One of the keys in :attr:`BAND_COMBINATIONS`.
+
+        Returns
+        -------
+        dict
+            Visualization parameters with keys ``bands``, ``min``, ``max``, ``gamma``.
+
+        Raises
+        ------
+        KeyError
+            If ``combination_name`` is not a recognised preset.
+        """
+        if combination_name not in cls.BAND_COMBINATIONS:
+            raise KeyError(
+                f"Unknown combination '{combination_name}'. "
+                f"Available: {cls.get_combination_names()}"
+            )
+        return cls.BAND_COMBINATIONS[combination_name].copy()
+    #static method since it does not interact with class level variables and is a utility function for building custom visualization parameters
+    @staticmethod
+    def build_custom_vis_params(
+        bands: list,
+        min_val: float = 0.0,
+        max_val: float = 0.4,
+        gamma=1.0
+    ) -> dict:
+        """Build a visualization parameter dict for a custom band selection.
+
+        Parameters
+        ----------
+        bands : list[str]
+            1 or 3 band names (grayscale or RGB).
+        min_val : float
+            Minimum display value.
+        max_val : float
+            Maximum display value.
+        gamma : float or list[float]
+            Single gamma or per-channel list for RGB.
+
+        Returns
+        -------
+        dict
+            Visualization parameters ready for ``geemap.addLayer``.
+
+        Raises
+        ------
+        ValueError
+            If ``bands`` does not contain 1 or 3 entries.
+        """
+        if len(bands) not in (1, 3):
+            raise ValueError("bands must contain exactly 1 (grayscale) or 3 (RGB) entries")
+        return {
+            'bands': bands,
+            'min': min_val,
+            'max': max_val,
+            'gamma': gamma
+        }
