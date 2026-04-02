@@ -7,6 +7,7 @@ import geopandas as gpd
 from shapely.geometry import shape
 from typing import List, Optional
 
+#input date pasring function, used by data retrieval functions to allow flexible date input (year or full date)
 def parse_date_input(date_input: Union[int, str], is_start: bool = True) -> str:
     """
     Parse date input to YYYY-MM-DD format.
@@ -1039,14 +1040,13 @@ class final_Image:
         Initialize the final_Image object and set up a class-specific logger.
         """
         ensure_ee_initialized()
-        
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(log_level)
         self.logger.info("final_Image creation initialized.")
-    #Function to calculate data coverage (pixel validity) within AOI
+    #Function to calculate data coverage (pixel validity) within AOI, serve as alternative to calculate cloud cover within AOI
     def calculate_data_coverage(self, composite_image, aoi, scale=DEFAULT_COVERAGE_SCALE, max_pixels=DEFAULT_MAX_PIXELS, verbose=True):
         """
-        Calculate data coverage (valid pixels) percentage within AOI for temporal aggregation composite image.
+        Calculate data coverage (valid pixels) percentage within AOI.
         This shows how much an AOI has valid data after compositing.
         
         Parameters
@@ -1087,62 +1087,86 @@ class final_Image:
         if verbose:
             self.logger.info("Calculating data coverage within AOI...")
         
-        #Create a mask of valid (non-masked) pixels
-        #Use the first band to check for valid data (all bands should have same mask)
-        first_band = composite_image.select(0)
-        valid_mask = first_band.mask()
-        #Calculate pixel area
-        pixel_area = ee.Image.pixelArea()
-        #Total area in AOI
-        total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
-            bestEffort=True,
-            tileScale=DEFAULT_TILE_SCALE
-        )
-        #Valid (unmasked) area
-        valid_area_img = valid_mask.multiply(pixel_area).rename('valid_area')
-        valid_area = valid_area_img.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
-            bestEffort=True,
-            tileScale=DEFAULT_TILE_SCALE
-        )
-        #Calculate coverage percentage
-        total = ee.Number(total_area.get('area')).max(1)  # Avoid division by zero
-        valid = ee.Number(valid_area.get('valid_area')).max(0)  # Default to 0 if null
-        coverage_percent = valid.multiply(100).divide(total)
-        gap_percent = ee.Number(100).subtract(coverage_percent)
-        # Clamp between 0-100 (make sure its 0 - 100)
-        coverage_percent = coverage_percent.max(0).min(100)
-        gap_percent = gap_percent.max(0).min(100)
-        
-        # OPTIMIZATION: Batch all computations into a single API call
-        # Instead of 4 separate getInfo() calls, combine into one dictionary
-        results = ee.Dictionary({
-            'total': total,
-            'valid': valid,
-            'coverage_percent': coverage_percent,
-            'gap_percent': gap_percent
-        }).getInfo()
-        
-        # Extract values from the single API response
-        total_val = results['total']
-        valid_val = results['valid']
-        coverage_val = results['coverage_percent']
-        gap_val = results['gap_percent']
-        #Convert to km²
-        total_km2 = total_val / 1e6
-        valid_km2 = valid_val / 1e6
-        gap_km2 = (total_val - valid_val) / 1e6
-        #Data logging if needed
-        if verbose:
-            self.logger.info(f"Data coverage: {coverage_val:.1f}% ({valid_km2:.2f} km² of {total_km2:.2f} km²)")
-            self.logger.info(f"Data gaps: {gap_val:.1f}% ({gap_km2:.2f} km²)")
-        return {
-            'data_coverage_percent': round(coverage_val, 2),
-            'data_gap_percent': round(gap_val, 2),
-            'total_area_km2': round(total_km2, 2),
-            'valid_area_km2': round(valid_km2, 2),
-            'gap_area_km2': round(gap_km2, 2)
-        }
+        try:
+            #Create a mask of valid (non-masked) pixels
+            #Use the first band to check for valid data (all bands should have same mask)
+            first_band = composite_image.select(0)
+            valid_mask = first_band.mask()
+            #Calculate pixel area
+            pixel_area = ee.Image.pixelArea()
+            #Total area in AOI
+            total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
+                bestEffort=True,
+                tileScale=DEFAULT_TILE_SCALE
+            )
+            #Valid (unmasked) area
+            valid_area_img = valid_mask.multiply(pixel_area).rename('valid_area')
+            valid_area = valid_area_img.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
+                bestEffort=True,
+                tileScale=DEFAULT_TILE_SCALE
+            )
+            #Optimize API Calls
+            area_results = ee.Dictionary({
+                'area': total_area.get('area'),
+                'valid_area': valid_area.get('valid_area')
+            }).getInfo()
+
+            total_val = area_results.get('area')
+            valid_val = area_results.get('valid_area')
+
+            #Null valid area handling: default to 0 and warn
+            if valid_val is None:
+                self.logger.warning("No valid pixels found in AOI - setting to 0")
+                valid_val = 0
+
+            #Calculate coverage percentage (client-side)
+            total_val = max(total_val, 1)  # Avoid division by zero
+            coverage_val = (valid_val / total_val) * 100
+            gap_val = 100 - coverage_val
+            #Make sure the value 0-100
+            coverage_val = max(0, min(100, coverage_val))
+            gap_val = max(0, min(100, gap_val))
+            #Convert to km²
+            total_km2 = total_val / 1e6
+            valid_km2 = valid_val / 1e6
+            gap_km2 = (total_val - valid_val) / 1e6
+            #Data logging if needed
+            if verbose:
+                self.logger.info(f"Data coverage: {coverage_val:.1f}% ({valid_km2:.2f} km² of {total_km2:.2f} km²)")
+                self.logger.info(f"Data gaps: {gap_val:.1f}% ({gap_km2:.2f} km²)")
+            return {
+                'data_coverage_percent': round(coverage_val, 2),
+                'data_gap_percent': round(gap_val, 2),
+                'total_area_km2': round(total_km2, 2),
+                'valid_area_km2': round(valid_km2, 2),
+                'gap_area_km2': round(gap_km2, 2)
+            }
+
+        except ee.EEException as e:
+            error_msg = str(e).lower()
+            if 'timeout' in error_msg or 'deadline' in error_msg:
+                self.logger.error(
+                    f"Coverage calculation timed out (scale={scale}m): {e}"
+                )
+                raise TimeoutError(
+                    f"Coverage calculation timed out. Try using a larger scale "
+                    f"(current: {scale}m) or smaller AOI."
+                ) from e
+            else:
+                self.logger.error(
+                    f"Earth Engine error during coverage calculation: {e}"
+                )
+                raise RuntimeError(
+                    f"Earth Engine error during coverage calculation: {e}"
+                ) from e
+
+        except Exception as e:
+            self.logger.error(
+                f"Unexpected error in calculate_data_coverage(): {e}"
+            )
+            raise
     #Quality mosaic for stacking multiple scene and then clip them. This procedure stacked all of the imagery regardless of the pixel value
+    #if not used in the future, this function should be removed
     def get_quality_mosaic(self, collection, aoi, quality_band='NDVI', 
                           calculate_coverage=False, coverage_scale=30, verbose=True):
         """
