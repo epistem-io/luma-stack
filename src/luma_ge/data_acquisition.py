@@ -1268,7 +1268,6 @@ class final_Image:
         collection : ee.ImageCollection. Filtered image collection from Reflectance_Data
         aoi :  ee.FeatureCollection. Area of interest for clipping
         reducer : str or ee.Reducer. Reduction method: 'median', 'mean', 'min', 'max', 'percentile_'
-        add_band_stats : bool, If True, add additional bands with stdDev and count (default: False)
         calculate_coverage : bool. If True, calculate data coverage within AOI (default: False)
             Note: This triggers a client-side computation and may be slow for large areas
         coverage_scale : int. Pixel scale in meters for coverage calculation (default: 30m)
@@ -1278,20 +1277,29 @@ class final_Image:
             
         Returns
         -------
-        tuple : (ee.Image, dict) if calculate_coverage=True, else ee.Image
-            - Composite image clipped to AOI with original band names (NIR, RED, etc.)
-            - Coverage statistics dict (only if calculate_coverage=True)
+        dict
+            Always returns a dictionary with keys:
+            - 'image' : ee.Image
+                Composite image clipped to AOI with original band names (NIR, RED, etc.)
+            - 'metadata' : dict
+                Dictionary with composite_start_date, composite_end_date,
+                composite_count, composite_reducer
+            - 'coverage' : dict or None
+                Coverage statistics if calculate_coverage=True, else None
             
         Example
         -------
         >>> data_fetcher = Reflectance_Data()
         >>> collection, stats = data_fetcher.get_optical_data(aoi, 2020, 2020, 'L8_SR')
         >>> image_processor = final_Image()
-        >>> composite = image_processor.get_temporal_composite(collection, aoi, reducer='median')
+        >>> result = image_processor.get_temporal_composite(collection, aoi, reducer='median')
+        >>> composite = result['image']
         >>> # With coverage calculation
-        >>> composite, coverage = image_processor.get_temporal_composite(
+        >>> result = image_processor.get_temporal_composite(
         ...     collection, aoi, reducer='median', calculate_coverage=True
         ... )
+        >>> composite = result['image']
+        >>> coverage = result['coverage']
         """
         #Make sure that AOi is feature collection
         if isinstance(aoi, ee.FeatureCollection):
@@ -1360,14 +1368,26 @@ class final_Image:
             end_date_str = end_date.getInfo()
             self.logger.info(f"Composite created from {start_date_str} to {end_date_str}")
         
+        # Build metadata dict
+        metadata = {
+            'composite_start_date': start_date,
+            'composite_end_date': end_date,
+            'composite_count': size_server,
+            'composite_reducer': str(reducer)
+        }
+        
         # Calculate data coverage if requested
+        coverage_stats = None
         if calculate_coverage:
             coverage_stats = self.calculate_data_coverage(
                 composite, aoi, scale=coverage_scale, verbose=verbose
             )
-            return composite, coverage_stats
-        else:
-            return composite
+        
+        return {
+            'image': composite,
+            'metadata': metadata,
+            'coverage': coverage_stats
+        }
 #Class helper for managing visualization parameters and band combinations originally
 class Vis_Params:
     """
