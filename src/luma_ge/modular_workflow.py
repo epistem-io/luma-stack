@@ -223,6 +223,85 @@ def load_scheme(csv_path: str) -> pd.DataFrame:
     result["rule"] = rules
     return result[["class_id", "class_name", "rule", "priority"]]
 
+def load_hierarchical_scheme(csv_path: str) -> pd.DataFrame:
+    """
+    Load a hierarchical (dichotomous key) classification scheme CSV.
+
+    Unlike load_scheme() which defines flat per-class rules, this function
+    loads a tree-structured scheme where each row is a decision node.
+    Nodes are evaluated in a fixed primitive-first order:
+
+        L1  vegetation check  — tree_pres / shrub_pres
+        L2a veg sub-keys      — tree_cover, vegetation_height, phenology
+        L2b non-veg sub-keys  — bare_pres, builtup_pres, water_pres
+        leaf                  — assigns final class_id
+
+    Expected CSV columns
+    --------------------
+    node_id     int    Unique identifier for this node.
+    parent_id   int    ID of parent node. Leave blank / NaN for root nodes.
+    primitive   str    Primitive band name to evaluate at this node
+                       (e.g. 'tree_pres', 'tree_cover', 'water_pres').
+    operator    str    Comparison operator: '>=' | '>' | '<=' | '<' | '=='
+    threshold   float  Threshold value for the comparison.
+    class_id    int    Assigned class ID if this is a leaf node. NaN for splits.
+    class_name  str    Human-readable class label (leaf nodes only).
+    node_type   str    'split' — evaluates primitive and branches.
+                       'leaf'  — assigns class_id, no further branching.
+    priority    int    Evaluation order within the same parent level.
+                       Lower number = evaluated first.
+
+    Parameters
+    ----------
+    csv_path : str
+        Path to the hierarchical scheme CSV.
+
+    Returns
+    -------
+    pd.DataFrame
+        Validated node table ready for HierarchicalRuleSetClassifier.
+
+    Example
+    -------
+    >>> tree = load_hierarchical_scheme("scheme_hierarchical.csv")
+    >>> classifier = HierarchicalRuleSetClassifier(primitive_stack, tree, aoi)
+    """
+    logger = logging.getLogger("load_hierarchical_scheme")
+
+    df = pd.read_csv(csv_path)
+
+    required = ["node_id", "primitive", "operator", "threshold", "node_type", "priority"]
+    missing  = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            f"Missing required columns in '{csv_path}': {missing}"
+        )
+
+    valid_ops   = {">", ">=", "<", "<=", "==", "!="}
+    invalid_ops = df[~df["operator"].isin(valid_ops)]["operator"].unique()
+    if len(invalid_ops) > 0:
+        raise ValueError(
+            f"Unknown operators: {list(invalid_ops)}. Supported: {valid_ops}"
+        )
+
+    # parent_id NaN → root node
+    if "parent_id" not in df.columns:
+        df["parent_id"] = np.nan
+
+    leaf_rows = df[df["node_type"] == "leaf"]
+    missing_class = leaf_rows[leaf_rows["class_id"].isna()]
+    if len(missing_class) > 0:
+        raise ValueError(
+            f"Leaf nodes missing class_id: node_ids "
+            f"{missing_class['node_id'].tolist()}"
+        )
+
+    logger.info(
+        f"Loaded hierarchical scheme: {len(df)} nodes "
+        f"({(df['node_type']=='split').sum()} splits, "
+        f"{(df['node_type']=='leaf').sum()} leaves)"
+    )
+    return df.sort_values(["parent_id", "priority"]).reset_index(drop=True)
 
 # ===========================================================================
 # Step 2: Training Data
@@ -270,6 +349,9 @@ def load_modular_training_data(shp_path: str, aoi=None) -> dict:
         aoi_shape = shape(aoi_geom)
         gdf = gdf[gdf.intersects(aoi_shape)].reset_index(drop=True)
 
+    # Handle NaNs: fill with 0 (assumes missing values mean absence of element)
+    gdf = gdf.fillna(0)
+    
     features = [
         ee.Feature(
             ee.Geometry(row.geometry.__geo_interface__),
@@ -292,24 +374,25 @@ def load_modular_training_data(shp_path: str, aoi=None) -> dict:
 # enrich_training_data()   — samples external GEE datasets at training points
 #                            and fills missing primitive columns
 # ===========================================================================
-
 def load_element_mapping(mapping_csv_path: str) -> pd.DataFrame:
     """
     Load the element mapping CSV that defines how LCML elements translate
     into primitive layer columns and which external GEE dataset provides
     the values for each.
-
+ 
     This CSV is the bridge between the LCML element taxonomy and the
     primitive layer names used by load_scheme() and PrimitiveLayerTrainer.
     It lets you extend the training data with values from external sources
     (e.g. tree canopy cover from GFCC, water occurrence from JRC) without
     manually editing each training point.
-
+ 
     Expected CSV columns
     --------------------
     element_block   str   LCML block name (e.g. "tree", "waterBody")
     element_name    str   LCML element name (e.g. "elementPresenceType")
-    primitive_col   str   Column name in training data (e.g. "tree_pres")
+    primitive_col   str   Column name in training data (e.g. "tree_pres").
+                          Leave blank or NaN to mark a row as not yet mapped
+                          — these rows are skipped silently.
     value_type      str   "binary" | "continuous"
     gee_dataset     str   GEE image asset path (e.g. "NASA/MEASURES/GFCC/TC/v3")
     band_name       str   Band to sample from the GEE image
@@ -318,90 +401,110 @@ def load_element_mapping(mapping_csv_path: str) -> pd.DataFrame:
                           "divide_max" | "log10"
     threshold_type  str   How the value is used: "binary" | "continuous"
     notes           str   Optional description (ignored by code)
-
+ 
+    Deduplication rules
+    -------------------
+    When the same primitive_col appears in more than one row (i.e. two
+    different LCML elements map to the same primitive), the function keeps
+    only the row that is fully specified across all required columns.
+    If multiple fully-specified rows share the same primitive_col, the
+    first one in file order is kept and the rest are dropped with a warning.
+    This allows the CSV to list the same primitive_col under different
+    LCML blocks for documentation purposes — only the complete definition
+    is used for enrichment.
+ 
     Parameters
     ----------
     mapping_csv_path : str
         Path to the element mapping CSV.
-
+ 
     Returns
     -------
     pd.DataFrame
-        Validated mapping table ready for use in enrich_training_data().
-
+        Validated, deduplicated mapping table ready for enrich_training_data().
+        Rows with no primitive_col are excluded.
+ 
     Example
     -------
     >>> mapping = load_element_mapping("element_mapping.csv")
     >>> print(mapping[["element_block", "primitive_col", "gee_dataset"]])
     """
-    import logging
-    import pandas as pd
-
+   
     logger = logging.getLogger("load_element_mapping")
 
     df = pd.read_csv(mapping_csv_path)
 
-    # --- minimal required structure ---
-    required = ["element_block", "element_name"]
+    required = [
+        "element_block", "element_name", "primitive_col",
+        "value_type", "gee_dataset", "band_name", "scale", "transform",
+    ]
+
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(
             f"Missing required columns in '{mapping_csv_path}': {missing}"
         )
 
-    # Ensure primitive_col exists (can be empty)
-    if "primitive_col" not in df.columns:
-        df["primitive_col"] = ""
+    n_raw = len(df)
 
-    # Normalize primitive_col (treat NaN as empty string)
-    df["primitive_col"] = df["primitive_col"].fillna("").astype(str).str.strip()
-
-    # Split active vs inactive rows
-    active = df["primitive_col"] != ""
-    df_active = df[active]
-
-    # --- validation only for active rows ---
-    required_active = [
-        "value_type", "gee_dataset", "band_name", "scale", "transform"
-    ]
-    missing_active = [c for c in required_active if c not in df.columns]
-    if missing_active:
-        raise ValueError(
-            f"Missing required columns for active mappings: {missing_active}"
+    # ---------------------------------
+    # Rule 1: skip rows with ANY missing required field
+    # ---------------------------------
+    def _is_row_complete(row: pd.Series) -> bool:
+        return all(
+            not pd.isna(row[c]) and str(row[c]).strip() != ""
+            for c in required
         )
 
-    valid_transforms = {"none", "divide_100", "divide_max", "log10"}
+    complete_mask = df.apply(_is_row_complete, axis=1)
+    incomplete_df = df[~complete_mask]
 
-    invalid = df_active[
-        ~df_active["transform"].isin(valid_transforms)
-    ]["transform"].dropna().unique()
+    if len(incomplete_df) > 0:
+        for _, row in incomplete_df.iterrows():
+            logger.info(
+                f"  Skipping [{row.get('element_block', '?')}.{row.get('element_name', '?')}] — "
+                f"incomplete mapping definition."
+            )
 
-    if len(invalid) > 0:
-        raise ValueError(
-            f"Unknown transform values in active rows: {list(invalid)}. "
-            f"Supported: {valid_transforms}"
-        )
+    df = df[complete_mask].reset_index(drop=True)
 
-    # Optional: enforce value_type only for active rows
-    valid_value_types = {"binary", "continuous"}
-    invalid_vt = df_active[
-        ~df_active["value_type"].isin(valid_value_types)
-    ]["value_type"].dropna().unique()
+    # ---------------------------------
+    # Rule 2: deduplicate by primitive_col
+    # ---------------------------------
+    duplicated_prims = df[df.duplicated("primitive_col", keep=False)]["primitive_col"].unique()
 
-    if len(invalid_vt) > 0:
-        raise ValueError(
-            f"Unknown value_type values in active rows: {list(invalid_vt)}. "
-            f"Supported: {valid_value_types}"
-        )
+    rows_to_drop = []
 
+    for prim in duplicated_prims:
+        group = df[df["primitive_col"] == prim]
+
+        if len(group) > 1:
+            keep_row = group.iloc[0]
+            extra = group.iloc[1:]
+
+            for _, row in extra.iterrows():
+                logger.warning(
+                    f"  Duplicate primitive_col '{prim}': keeping "
+                    f"[{keep_row['element_block']}.{keep_row['element_name']}], "
+                    f"dropping [{row['element_block']}.{row['element_name']}]."
+                )
+                rows_to_drop.append(row.name)
+
+    if rows_to_drop:
+        df = df.drop(index=rows_to_drop).reset_index(drop=True)
+
+    # ---------------------------------
+    # Final logging
+    # ---------------------------------
+    n_final = len(df)
     logger.info(
-        f"Loaded element mapping: {len(df)} rows "
-        f"({active.sum()} active, {(~active).sum()} inactive), "
-        f"{df_active['primitive_col'].nunique()} primitive columns."
+        f"Element mapping loaded: {n_final} active entries "
+        f"({n_raw - n_final} dropped) across "
+        f"{df['element_block'].nunique()} LCML blocks, "
+        f"{df['primitive_col'].nunique()} primitive columns."
     )
 
     return df
-
 
 def enrich_training_data(
     gdf: gpd.GeoDataFrame,
@@ -411,140 +514,147 @@ def enrich_training_data(
     scale_override: Optional[int] = None,
 ) -> dict:
     """
-    Enrich training data by sampling external GEE datasets at each training
-    point and filling the corresponding primitive columns.
-
-    For each row in the element mapping table, the function:
-        1. Loads the specified GEE image and selects the target band.
-        2. Applies the specified transform (e.g. divide_100 for percentage bands).
-        3. Samples the value at each training point geometry.
-        4. For binary primitives: converts to 0/1 using binary_threshold.
-           For continuous primitives: writes the raw transformed value.
-        5. Writes the result into the primitive_col column of the GeoDataFrame.
-
-    Columns that already have values are skipped unless overwrite_existing=True,
-    so you can safely call this on partially-filled training data.
-
-    Parameters
-    ----------
-    gdf : gpd.GeoDataFrame
-        Training data GeoDataFrame from load_modular_training_data().
-        Must have a valid geometry column and CRS set to EPSG:4326.
-    mapping : pd.DataFrame
-        Output of load_element_mapping().
-    binary_threshold : float
-        Transformed values above this threshold are assigned 1 (present),
-        at or below are assigned 0 (absent). Default 0.1 — equivalent to
-        10% cover for datasets like tree canopy or water occurrence.
-        Only applied to rows where value_type = "binary".
-    overwrite_existing : bool
-        If True, re-sample and overwrite columns that already have values.
-        If False (default), skip columns that are already populated.
-    scale_override : int or None
-        If provided, overrides the scale in the mapping table for all
-        datasets. Useful for quick testing at coarser resolution.
-
-    Returns
-    -------
-    dict with keys:
-        "gdf"          — enriched GeoDataFrame with new/updated columns
-        "ee_fc"        — ee.FeatureCollection of the enriched features
-        "columns"      — list of all column names
-        "size"         — number of features
-        "enriched"     — list of primitive_col names that were filled
-        "skipped"      — list of primitive_col names that were skipped
-        "failed"       — list of (primitive_col, error_message) tuples
-
-    Example
-    -------
-    >>> mapping = load_element_mapping("element_mapping.csv")
-    >>> data    = load_modular_training_data("training_points.shp", aoi=aoi)
-    >>> result  = enrich_training_data(data["gdf"], mapping)
-    >>> print("Enriched columns:", result["enriched"])
-    >>> training_fc = result["ee_fc"]
+    Enrich training data by sampling GEE datasets (Image or FeatureCollection)
+    at each training point and filling the corresponding primitive columns.
     """
+
     logger = logging.getLogger("enrich_training_data")
 
     gdf = gdf.copy()
+
     if gdf.crs is None:
         gdf = gdf.set_crs("EPSG:4326")
     gdf = gdf.to_crs("EPSG:4326")
 
     enriched_cols = []
-    skipped_cols  = []
-    failed_cols   = []
+    skipped_cols = []
+    failed_cols = []
+
+    # Pre-build EE points
+    ee_points = ee.FeatureCollection([
+        ee.Feature(
+            ee.Geometry.Point([row.geometry.x, row.geometry.y]),
+            {"_row_idx": int(idx)}
+        )
+        for idx, row in gdf.iterrows()
+    ])
 
     for _, map_row in mapping.iterrows():
-        prim_col    = map_row["primitive_col"]
-        gee_dataset = map_row["gee_dataset"]
-        band_name   = map_row["band_name"]
-        scale       = scale_override or int(map_row["scale"])
-        transform   = str(map_row["transform"]).lower().strip()
-        value_type  = str(map_row["value_type"]).lower().strip()
-        block       = map_row["element_block"]
-        element     = map_row["element_name"]
+        prim_col   = map_row["primitive_col"]
+        gee_asset  = map_row["gee_dataset"]
+        band_name  = map_row["band_name"]
+        scale      = scale_override or int(map_row["scale"])
+        transform  = str(map_row["transform"]).lower().strip()
+        value_type = str(map_row["value_type"]).lower().strip()
+        block      = map_row["element_block"]
+        element    = map_row["element_name"]
 
-        # Skip if column already has values and overwrite is off
         if prim_col in gdf.columns and not overwrite_existing:
-            existing_valid = gdf[prim_col].notna().sum()
-            if existing_valid > 0:
-                logger.info(
-                    f"  Skipping '{prim_col}' — {existing_valid} values "
-                    "already present (set overwrite_existing=True to refill)."
-                )
+            if gdf[prim_col].notna().sum() > 0:
+                logger.info(f"Skipping '{prim_col}' (already populated)")
                 skipped_cols.append(prim_col)
                 continue
 
         logger.info(
-            f"  Enriching '{prim_col}'  ←  [{block}.{element}]  "
-            f"from {gee_dataset} / {band_name}  (scale={scale}m)"
+            f"Enriching '{prim_col}' ← [{block}.{element}] "
+            f"from {gee_asset} / {band_name} (scale={scale}m)"
         )
 
         try:
-            # Load image and select band
-            image = ee.Image(gee_dataset).select(band_name)
+            # -------------------------
+            # Detect asset type
+            # -------------------------
+            image = None
+            fc = None
+            asset_type = None
 
-            # Build ee.FeatureCollection of training point geometries
-            ee_points = ee.FeatureCollection([
-                ee.Feature(
-                    ee.Geometry.Point([row.geometry.x, row.geometry.y]),
-                    {"_row_idx": int(idx)}
+            try:
+                # Try ImageCollection first
+                ic = ee.ImageCollection(gee_asset)
+                if ic.size().getInfo() > 0:
+                    image = ic.mosaic()  # or .median(), depending on use case
+                    asset_type = "image"
+                else:
+                    raise ValueError("Empty ImageCollection")
+
+            except Exception:
+                try:
+                    image = ee.Image(gee_asset)
+                    asset_type = "image"
+                except Exception:
+                    try:
+                        fc = ee.FeatureCollection(gee_asset)
+                        asset_type = "feature_collection"
+                    except Exception:
+                        raise ValueError(f"Asset '{gee_asset}' is neither Image, ImageCollection, nor FeatureCollection")
+
+            # -------------------------
+            # Sampling
+            # -------------------------
+            if asset_type == "image":
+                bands = image.bandNames().getInfo()
+                if band_name not in bands:
+                    raise ValueError(f"Band '{band_name}' not found. Available: {bands}")
+
+                image = image.select(band_name)
+
+                sampled = image.sampleRegions(
+                    collection=ee_points,
+                    properties=["_row_idx"],
+                    scale=scale,
+                    geometries=False,
                 )
-                for idx, row in gdf.iterrows()
-            ])
 
-            # Sample image at each point
-            sampled = image.sampleRegions(
-                collection=ee_points,
-                properties=["_row_idx"],
-                scale=scale,
-                geometries=False,
-            )
+            else:
+                properties = fc.first().propertyNames().getInfo()
 
-            # Pull results to Python
+                if band_name not in properties:
+                    raise ValueError(
+                        f"Property '{band_name}' not found in FeatureCollection. "
+                        f"Available: {properties}"
+                    )
+
+                joined = ee.Join.saveFirst("match").apply(
+                    primary=ee_points,
+                    secondary=fc,
+                    condition=ee.Filter.intersects(".geo", ".geo")
+                )
+
+                def attach_value(f):
+                    match = ee.Feature(f.get("match"))
+                    val = ee.Algorithms.If(match, match.get(band_name), None)
+                    return f.set(band_name, val)
+
+                sampled = ee.FeatureCollection(joined.map(attach_value))
+
+            # -------------------------
+            # Retrieve results
+            # -------------------------
             features = sampled.getInfo()["features"]
 
-            # Build row_idx → sampled_value lookup
             value_lookup = {}
             for feat in features:
                 props = feat["properties"]
-                idx   = int(props["_row_idx"])
-                val   = props.get(band_name, None)
+                idx = int(props["_row_idx"])
+                val = props.get(band_name, None)
+
                 if val is not None:
-                    value_lookup[idx] = float(val)
+                    try:
+                        value_lookup[idx] = float(val)
+                    except:
+                        pass
 
             if len(value_lookup) == 0:
-                raise ValueError(
-                    f"No values returned from {gee_dataset}/{band_name}. "
-                    "Check that the dataset covers your AOI and date range."
-                )
+                raise ValueError("No valid values returned from dataset.")
 
             logger.info(
-                f"    Sampled {len(value_lookup)} / {len(gdf)} points "
-                f"({100*len(value_lookup)/len(gdf):.0f}% coverage)."
+                f"Sampled {len(value_lookup)} / {len(gdf)} points "
+                f"({100*len(value_lookup)/len(gdf):.0f}% coverage)"
             )
 
-            # Apply transform
+            # -------------------------
+            # Transform (NO NaN handling)
+            # -------------------------
             def _apply_transform(v: float) -> float:
                 if transform == "divide_100":
                     return v / 100.0
@@ -553,14 +663,16 @@ def enrich_training_data(
                     return v / max_val if max_val > 0 else 0.0
                 if transform == "log10":
                     return float(np.log10(v + 1e-6))
-                return v  # "none"
+                return v
 
             transformed = {
                 idx: _apply_transform(v)
                 for idx, v in value_lookup.items()
             }
 
-            # Write values into GeoDataFrame
+            # -------------------------
+            # Write to GeoDataFrame
+            # -------------------------
             if prim_col not in gdf.columns:
                 gdf[prim_col] = np.nan
 
@@ -570,22 +682,23 @@ def enrich_training_data(
                 else:
                     gdf.at[idx, prim_col] = round(val, 4)
 
-            # Fill any points where the dataset had no coverage with 0
-            no_coverage = [i for i in gdf.index if i not in value_lookup]
-            if no_coverage:
+            # Fill missing coverage with 0
+            missing = [i for i in gdf.index if i not in value_lookup]
+            if missing:
                 logger.warning(
-                    f"    {len(no_coverage)} points had no coverage in "
-                    f"{gee_dataset} — filled with 0."
+                    f"{len(missing)} points had no coverage in {gee_asset} → filled with 0"
                 )
-                gdf.loc[no_coverage, prim_col] = 0
+                gdf.loc[missing, prim_col] = 0
 
             enriched_cols.append(prim_col)
 
         except Exception as exc:
-            logger.error(f"  Failed to enrich '{prim_col}': {exc}")
+            logger.error(f"Failed to enrich '{prim_col}': {exc}")
             failed_cols.append((prim_col, str(exc)))
 
-    # Convert enriched GeoDataFrame back to ee.FeatureCollection
+    # -------------------------
+    # Convert back to EE FeatureCollection
+    # -------------------------
     features_ee = [
         ee.Feature(
             ee.Geometry(row.geometry.__geo_interface__),
@@ -593,6 +706,7 @@ def enrich_training_data(
         )
         for _, row in gdf.iterrows()
     ]
+
     ee_fc = ee.FeatureCollection(features_ee)
 
     logger.info(
@@ -603,13 +717,13 @@ def enrich_training_data(
     )
 
     return {
-        "gdf":      gdf,
-        "ee_fc":    ee_fc,
-        "columns":  list(gdf.columns),
-        "size":     len(gdf),
+        "gdf": gdf,
+        "ee_fc": ee_fc,
+        "columns": list(gdf.columns),
+        "size": len(gdf),
         "enriched": enriched_cols,
-        "skipped":  skipped_cols,
-        "failed":   failed_cols,
+        "skipped": skipped_cols,
+        "failed": failed_cols,
     }
 
 
@@ -998,432 +1112,350 @@ class PrimitiveLayerTrainer:
 # RuleSetClassifier — applies scheme rules to produce a land cover map
 # ===========================================================================
 
-class RuleSetClassifier:
-    """
-    Classifies a primitive datacube using CSV-defined rules.
+# class RuleSetClassifier:
+#     """
+#     Classifies a primitive datacube using CSV-defined rules.
 
-    Supports two classification methods:
+#     Supports two classification methods:
 
-        Deterministic — applies rules as hard thresholds on the GEE server.
-                        No uncertainty output. Fast.
+#         Deterministic — applies rules as hard thresholds on the GEE server.
+#                         No uncertainty output. Fast.
 
-        Monte Carlo   — downloads probabilistic primitive arrays locally,
-                        samples binary realisations per iteration, passes
-                        them through the same ruleset, and aggregates to
-                        produce a mode map, per-pixel entropy, and class
-                        probability surfaces.
+#         Monte Carlo   — downloads probabilistic primitive arrays locally,
+#                         samples binary realisations per iteration, passes
+#                         them through the same ruleset, and aggregates to
+#                         produce a mode map, per-pixel entropy, and class
+#                         probability surfaces.
 
-    Both methods use the same rules_df so results are directly comparable.
+#     Both methods use the same rules_df so results are directly comparable.
 
-    Parameters
-    ----------
-    primitive_image : ee.Image
-        Stack of primitive layers. Deterministic: binary bands.
-        Monte Carlo: probabilistic bands in [0, 1] from train_all_mc().
-    rules_df : pd.DataFrame
-        Output of load_scheme() with a 'scheme' column added by the caller:
-            rules_df["scheme"] = "scheme1"
-    aoi : ee.FeatureCollection or ee.Geometry
-        Area of interest for clipping results.
+#     Parameters
+#     ----------
+#     primitive_image : ee.Image
+#         Stack of primitive layers. Deterministic: binary bands.
+#         Monte Carlo: probabilistic bands in [0, 1] from train_all_mc().
+#     rules_df : pd.DataFrame
+#         Output of load_scheme() with a 'scheme' column added by the caller:
+#             rules_df["scheme"] = "scheme1"
+#     aoi : ee.FeatureCollection or ee.Geometry
+#         Area of interest for clipping results.
 
-    Example
-    -------
-    >>> classifier = RuleSetClassifier(primitive_stack, rules, aoi)
-    >>> det_map    = classifier.classify_scheme_deterministic("scheme1")
-    >>> mc_results = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
-    """
+#     Example
+#     -------
+#     >>> classifier = RuleSetClassifier(primitive_stack, rules, aoi)
+#     >>> det_map    = classifier.classify_scheme_deterministic("scheme1")
+#     >>> mc_results = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
+#     """
 
-    def __init__(self, primitive_image: ee.Image, rules_df: pd.DataFrame, aoi):
-        self.primitive_image = primitive_image
-        self.df  = rules_df
-        self.aoi = aoi
+#     def __init__(self, primitive_image: ee.Image, rules_df: pd.DataFrame, aoi):
+#         self.primitive_image = primitive_image
+#         self.df  = rules_df
+#         self.aoi = aoi
 
-        self.logger = logging.getLogger(self.__class__.__name__)
+#         self.logger = logging.getLogger(self.__class__.__name__)
 
-    # ---------------------------------
-    # Deterministic classification
-    # ---------------------------------
+#     # ---------------------------------
+#     # Deterministic classification
+#     # ---------------------------------
 
-    def classify_scheme_deterministic(self, scheme_name: str) -> ee.Image:
-        """
-        Classify using hard threshold rules on the GEE server.
+#     def classify_scheme_deterministic(self, scheme_name: str) -> ee.Image:
+#         """
+#         Classify using hard threshold rules on the GEE server.
 
-        Rules are applied in priority order. Pixels satisfying no rule
-        receive class_id = 0 (nodata).
+#         Rules are applied in priority order. Pixels satisfying no rule
+#         receive class_id = 0 (nodata).
 
-        Parameters
-        ----------
-        scheme_name : str
-            Must match the 'scheme' column in rules_df.
+#         Parameters
+#         ----------
+#         scheme_name : str
+#             Must match the 'scheme' column in rules_df.
 
-        Returns
-        -------
-        ee.Image
-            Single-band image named 'class_id', clipped to AOI.
+#         Returns
+#         -------
+#         ee.Image
+#             Single-band image named 'class_id', clipped to AOI.
 
-        Example
-        -------
-        >>> det_map = classifier.classify_scheme_deterministic("scheme1")
-        """
-        subset   = self._get_subset(scheme_name)
-        aoi_geom = self._resolve_geometry()
-        result   = ee.Image(0).rename("class_id").toFloat()
-        band_dict = {b: self.primitive_image.select(b)
-                     for b in self.primitive_image.bandNames().getInfo()}
+#         Example
+#         -------
+#         >>> det_map = classifier.classify_scheme_deterministic("scheme1")
+#         """
+#         subset   = self._get_subset(scheme_name)
+#         aoi_geom = self._resolve_geometry()
+#         result   = ee.Image(0).rename("class_id").toFloat()
+#         band_dict = {b: self.primitive_image.select(b)
+#                      for b in self.primitive_image.bandNames().getInfo()}
 
-        for _, row in subset.iterrows():
-            class_id  = float(row["class_id"])
-            rule_expr = row["rule"].replace("AND", "&&").replace("OR", "||")
-            try:
-                mask   = ee.Image().expression(rule_expr, band_dict).eq(1)
-                result = result.where(mask, class_id)
-            except Exception as exc:
-                self.logger.warning(f"Skipping class_id {class_id}: {exc}")
+#         for _, row in subset.iterrows():
+#             class_id  = float(row["class_id"])
+#             rule_expr = row["rule"].replace("AND", "&&").replace("OR", "||")
+#             try:
+#                 mask   = ee.Image().expression(rule_expr, band_dict).eq(1)
+#                 result = result.where(mask, class_id)
+#             except Exception as exc:
+#                 self.logger.warning(f"Skipping class_id {class_id}: {exc}")
 
-        return result.clip(aoi_geom)
+#         return result.clip(aoi_geom)
 
-    def classify_all_schemes(self) -> dict:
-        """
-        Run deterministic classification for every scheme in rules_df.
+#     def classify_all_schemes(self) -> dict:
+#         """
+#         Run deterministic classification for every scheme in rules_df.
 
-        Returns
-        -------
-        dict[str, ee.Image]
+#         Returns
+#         -------
+#         dict[str, ee.Image]
 
-        Example
-        -------
-        >>> maps = classifier.classify_all_schemes()
-        """
-        results = {}
-        for scheme in self.df["scheme"].unique():
-            self.logger.info(f"Classifying (deterministic): {scheme}")
-            results[scheme] = self.classify_scheme_deterministic(scheme)
-        return results
+#         Example
+#         -------
+#         >>> maps = classifier.classify_all_schemes()
+#         """
+#         results = {}
+#         for scheme in self.df["scheme"].unique():
+#             self.logger.info(f"Classifying (deterministic): {scheme}")
+#             results[scheme] = self.classify_scheme_deterministic(scheme)
+#         return results
 
-    # ---------------------------------
-    # Monte Carlo classification
-    # ---------------------------------
+#     # ---------------------------------
+#     # Monte Carlo classification
+#     # ---------------------------------
 
-    def classify_scheme_monte_carlo(
-        self,
-        scheme_name: str,
-        n_iterations: int = 300,
-        nodata_value: float = 0.0,
-        seed: Optional[int] = 42,
-        scale: int = 30,
-    ) -> dict:
-        """
-        Classify using repeated Bernoulli sampling from probabilistic primitives.
+#     def classify_scheme_monte_carlo(
+#         self,
+#         scheme_name: str,
+#         n_iterations: int = 300,
+#         nodata_value: float = 0.0,
+#         seed: Optional[int] = 42,
+#         scale: int = 30,
+#     ) -> dict:
+#         """
+#         Classify using repeated Bernoulli sampling from probabilistic primitives.
 
-        In each iteration:
-            1. Each pixel's probability p is sampled as Bernoulli(p) → 0 or 1.
-            2. The binary values are passed through the deterministic ruleset.
-            3. The class assignment is recorded.
+#         In each iteration:
+#             1. Each pixel's probability p is sampled as Bernoulli(p) → 0 or 1.
+#             2. The binary values are passed through the deterministic ruleset.
+#             3. The class assignment is recorded.
 
-        After all iterations the pixel counts are aggregated to produce:
-            - mode_map    : most frequently assigned class per pixel
-            - entropy_map : Shannon entropy of the class distribution (nats)
-            - class_probs : fraction of iterations each class won per pixel
+#         After all iterations the pixel counts are aggregated to produce:
+#             - mode_map    : most frequently assigned class per pixel
+#             - entropy_map : Shannon entropy of the class distribution (nats)
+#             - class_probs : fraction of iterations each class won per pixel
 
-        High entropy = the simulation disagreed often = genuinely uncertain pixel.
+#         High entropy = the simulation disagreed often = genuinely uncertain pixel.
 
-        Parameters
-        ----------
-        scheme_name : str
-            Must match the 'scheme' column in rules_df.
-        n_iterations : int
-            Number of MC draws. 200–500 is typically sufficient.
-        nodata_value : float
-            Class ID for pixels that match no rule in a given iteration.
-        seed : int or None
-            Random seed for reproducibility.
-        scale : int
-            Pixel scale in metres for the primitive array download.
+#         Parameters
+#         ----------
+#         scheme_name : str
+#             Must match the 'scheme' column in rules_df.
+#         n_iterations : int
+#             Number of MC draws. 200–500 is typically sufficient.
+#         nodata_value : float
+#             Class ID for pixels that match no rule in a given iteration.
+#         seed : int or None
+#             Random seed for reproducibility.
+#         scale : int
+#             Pixel scale in metres for the primitive array download.
 
-        Returns
-        -------
-        dict with keys:
-            "mode_map"    — (H, W) int array
-            "entropy_map" — (H, W) float array (nats)
-            "class_probs" — dict[class_id -> (H, W) float array]
-            "n_iterations"— int
+#         Returns
+#         -------
+#         dict with keys:
+#             "mode_map"    — (H, W) int array
+#             "entropy_map" — (H, W) float array (nats)
+#             "class_probs" — dict[class_id -> (H, W) float array]
+#             "n_iterations"— int
 
-        Example
-        -------
-        >>> results     = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
-        >>> mode_map    = results["mode_map"]
-        >>> entropy_map = results["entropy_map"]
-        """
-        subset = self._get_subset(scheme_name)
+#         Example
+#         -------
+#         >>> results     = classifier.classify_scheme_monte_carlo("scheme1", n_iterations=300)
+#         >>> mode_map    = results["mode_map"]
+#         >>> entropy_map = results["entropy_map"]
+#         """
+#         subset = self._get_subset(scheme_name)
 
-        # Download primitive arrays once — all MC iterations use the same arrays
-        self.logger.info(f"Downloading primitive arrays for '{scheme_name}'...")
-        band_arrays = self._download_band_arrays(scale)
-        self._validate_probability_range(band_arrays)
+#         # Download primitive arrays once — all MC iterations use the same arrays
+#         self.logger.info(f"Downloading primitive arrays for '{scheme_name}'...")
+#         band_arrays = self._download_band_arrays(scale)
+#         self._validate_probability_range(band_arrays)
 
-        H, W = next(iter(band_arrays.values())).shape
+#         H, W = next(iter(band_arrays.values())).shape
 
-        # Set up class tracking
-        all_class_ids = sorted(subset["class_id"].unique().tolist())
-        if nodata_value not in all_class_ids:
-            all_class_ids = [nodata_value] + all_class_ids
+#         # Set up class tracking
+#         all_class_ids = sorted(subset["class_id"].unique().tolist())
+#         if nodata_value not in all_class_ids:
+#             all_class_ids = [nodata_value] + all_class_ids
 
-        class_id_to_idx = {cid: i for i, cid in enumerate(all_class_ids)}
-        counts = np.zeros((len(all_class_ids), H, W), dtype=np.int32)
-        rng    = np.random.default_rng(seed)
+#         class_id_to_idx = {cid: i for i, cid in enumerate(all_class_ids)}
+#         counts = np.zeros((len(all_class_ids), H, W), dtype=np.int32)
+#         rng    = np.random.default_rng(seed)
 
-        # Monte Carlo loop
-        self.logger.info(f"Running {n_iterations} Monte Carlo iterations...")
-        for _ in range(n_iterations):
-            binary_bands     = self._sample_bernoulli(band_arrays, rng, H, W)
-            iteration_result = self._apply_ruleset(subset, binary_bands, H, W, nodata_value)
-            for cid, idx in class_id_to_idx.items():
-                counts[idx] += (iteration_result == cid).astype(np.int32)
+#         # Monte Carlo loop
+#         self.logger.info(f"Running {n_iterations} Monte Carlo iterations...")
+#         for _ in range(n_iterations):
+#             binary_bands     = self._sample_bernoulli(band_arrays, rng, H, W)
+#             iteration_result = self._apply_ruleset(subset, binary_bands, H, W, nodata_value)
+#             for cid, idx in class_id_to_idx.items():
+#                 counts[idx] += (iteration_result == cid).astype(np.int32)
 
-        return self._aggregate(counts, all_class_ids, class_id_to_idx, n_iterations)
+#         return self._aggregate(counts, all_class_ids, class_id_to_idx, n_iterations)
 
-    # ---------------------------------
-    # Internal helpers
-    # ---------------------------------
+#     # ---------------------------------
+#     # Internal helpers
+#     # ---------------------------------
 
-    def _get_subset(self, scheme_name: str) -> pd.DataFrame:
-        """Return rules for one scheme sorted by priority then class_id."""
-        subset = self.df[self.df["scheme"] == scheme_name].copy()
-        if subset.empty:
-            raise ValueError(f"No rules found for scheme '{scheme_name}'.")
-        return subset.sort_values(["priority", "class_id"]).reset_index(drop=True)
+#     def _get_subset(self, scheme_name: str) -> pd.DataFrame:
+#         """Return rules for one scheme sorted by priority then class_id."""
+#         subset = self.df[self.df["scheme"] == scheme_name].copy()
+#         if subset.empty:
+#             raise ValueError(f"No rules found for scheme '{scheme_name}'.")
+#         return subset.sort_values(["priority", "class_id"]).reset_index(drop=True)
 
-    def _resolve_geometry(self):
-        """Return ee.Geometry regardless of whether AOI is FC or Geometry."""
-        return self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
+#     def _resolve_geometry(self):
+#         """Return ee.Geometry regardless of whether AOI is FC or Geometry."""
+#         return self.aoi.geometry() if hasattr(self.aoi, "geometry") else self.aoi
 
-    def _download_band_arrays(self, scale: int) -> dict:
-        """
-        Download all primitive bands as numpy arrays via getDownloadURL.
+#     def _download_band_arrays(self, scale: int) -> dict:
+#         """
+#         Download all primitive bands as numpy arrays via getDownloadURL.
 
-        Handles both single multi-band GeoTIFF and ZIP of single-band
-        GeoTIFFs (GEE returns different formats depending on band count).
+#         Handles both single multi-band GeoTIFF and ZIP of single-band
+#         GeoTIFFs (GEE returns different formats depending on band count).
 
-        Returns dict[band_name -> (H, W) float32 array].
-        """
-        aoi_geom   = self._resolve_geometry()
-        band_names = self.primitive_image.bandNames().getInfo()
+#         Returns dict[band_name -> (H, W) float32 array].
+#         """
+#         aoi_geom   = self._resolve_geometry()
+#         band_names = self.primitive_image.bandNames().getInfo()
 
-        self.logger.info(f"  Fetching {len(band_names)} bands at {scale}m resolution...")
+#         self.logger.info(f"  Fetching {len(band_names)} bands at {scale}m resolution...")
 
-        url = self.primitive_image.getDownloadURL({
-            "bands":  band_names,
-            "region": aoi_geom,
-            "scale":  scale,
-            "format": "GEO_TIFF",
-            "crs":    "EPSG:4326",
-        })
+#         url = self.primitive_image.getDownloadURL({
+#             "bands":  band_names,
+#             "region": aoi_geom,
+#             "scale":  scale,
+#             "format": "GEO_TIFF",
+#             "crs":    "EPSG:4326",
+#         })
 
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()
-        raw = response.content
+#         response = requests.get(url, stream=True, timeout=300)
+#         response.raise_for_status()
+#         raw = response.content
 
-        band_arrays = {}
+#         band_arrays = {}
 
-        if raw[:4] == b"PK\x03\x04":
-            # ZIP of individual single-band GeoTIFFs
-            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
-                for band_name, tif_name in zip(band_names, tif_names):
-                    with zf.open(tif_name) as f:
-                        with rasterio.open(io.BytesIO(f.read())) as src:
-                            band_arrays[band_name] = src.read(1).astype(np.float32)
-        else:
-            # Single multi-band GeoTIFF
-            with rasterio.open(io.BytesIO(raw)) as src:
-                for i, band_name in enumerate(band_names, start=1):
-                    band_arrays[band_name] = src.read(i).astype(np.float32)
+#         if raw[:4] == b"PK\x03\x04":
+#             # ZIP of individual single-band GeoTIFFs
+#             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+#                 tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
+#                 for band_name, tif_name in zip(band_names, tif_names):
+#                     with zf.open(tif_name) as f:
+#                         with rasterio.open(io.BytesIO(f.read())) as src:
+#                             band_arrays[band_name] = src.read(1).astype(np.float32)
+#         else:
+#             # Single multi-band GeoTIFF
+#             with rasterio.open(io.BytesIO(raw)) as src:
+#                 for i, band_name in enumerate(band_names, start=1):
+#                     band_arrays[band_name] = src.read(i).astype(np.float32)
 
-        h, w = next(iter(band_arrays.values())).shape
-        self.logger.info(f"  Downloaded: {h} x {w} px ({h * w:,} pixels per band)")
-        return band_arrays
+#         h, w = next(iter(band_arrays.values())).shape
+#         self.logger.info(f"  Downloaded: {h} x {w} px ({h * w:,} pixels per band)")
+#         return band_arrays
 
-    def _validate_probability_range(self, band_arrays: dict):
-        """Raise if any band has values outside [0, 1]."""
-        for name, arr in band_arrays.items():
-            if arr.min() < 0 or arr.max() > 1:
-                raise ValueError(
-                    f"Band '{name}' has values outside [0, 1] "
-                    f"(min={arr.min():.4f}, max={arr.max():.4f}). "
-                    "Ensure primitives were trained with .setOutputMode('PROBABILITY')."
-                )
+#     def _validate_probability_range(self, band_arrays: dict):
+#         """Raise if any band has values outside [0, 1]."""
+#         for name, arr in band_arrays.items():
+#             if arr.min() < 0 or arr.max() > 1:
+#                 raise ValueError(
+#                     f"Band '{name}' has values outside [0, 1] "
+#                     f"(min={arr.min():.4f}, max={arr.max():.4f}). "
+#                     "Ensure primitives were trained with .setOutputMode('PROBABILITY')."
+#                 )
 
-    @staticmethod
-    def _sample_bernoulli(band_arrays: dict, rng: np.random.Generator,
-                          H: int, W: int) -> dict:
-        """
-        Sample one binary realisation from each probabilistic primitive.
+#     @staticmethod
+#     def _sample_bernoulli(band_arrays: dict, rng: np.random.Generator,
+#                           H: int, W: int) -> dict:
+#         """
+#         Sample one binary realisation from each probabilistic primitive.
 
-        A pixel with p=0.94 becomes 1 in ~94% of iterations.
-        A pixel with p=0.53 fluctuates nearly equally between 0 and 1.
-        """
-        return {
-            name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
-            for name, prob_arr in band_arrays.items()
-        }
+#         A pixel with p=0.94 becomes 1 in ~94% of iterations.
+#         A pixel with p=0.53 fluctuates nearly equally between 0 and 1.
+#         """
+#         return {
+#             name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
+#             for name, prob_arr in band_arrays.items()
+#         }
 
-    @staticmethod
-    def _evaluate_rule_numpy(rule_expr: str, band_arrays: dict) -> np.ndarray:
-        """
-        Evaluate a rule expression over 2-D numpy arrays.
+#     @staticmethod
+#     def _evaluate_rule_numpy(rule_expr: str, band_arrays: dict) -> np.ndarray:
+#         """
+#         Evaluate a rule expression over 2-D numpy arrays.
 
-        Translates GEE-style operators (AND, OR, &&, ||) to numpy equivalents
-        and evaluates using eval() with band arrays as local variables.
+#         Translates GEE-style operators (AND, OR, &&, ||) to numpy equivalents
+#         and evaluates using eval() with band arrays as local variables.
 
-        Returns a boolean (H, W) array.
-        """
-        expr = (
-            rule_expr
-            .replace("&&",  " & ")
-            .replace("||",  " | ")
-            .replace("AND", " & ")
-            .replace("OR",  " | ")
-        )
-        local_vars = {name: arr.astype(float) for name, arr in band_arrays.items()}
-        try:
-            result = eval(expr, {"__builtins__": {}}, local_vars)  # noqa: S307
-            return np.asarray(result, dtype=bool)
-        except Exception as exc:
-            raise ValueError(f"Cannot evaluate rule '{rule_expr}': {exc}") from exc
+#         Returns a boolean (H, W) array.
+#         """
+#         expr = (
+#             rule_expr
+#             .replace("&&",  " & ")
+#             .replace("||",  " | ")
+#             .replace("AND", " & ")
+#             .replace("OR",  " | ")
+#         )
+#         local_vars = {name: arr.astype(float) for name, arr in band_arrays.items()}
+#         try:
+#             result = eval(expr, {"__builtins__": {}}, local_vars)  # noqa: S307
+#             return np.asarray(result, dtype=bool)
+#         except Exception as exc:
+#             raise ValueError(f"Cannot evaluate rule '{rule_expr}': {exc}") from exc
 
-    def _apply_ruleset(self, subset: pd.DataFrame, binary_bands: dict,
-                       H: int, W: int, nodata_value: float) -> np.ndarray:
-        """
-        Apply all rules in priority order to the binary band arrays.
+#     def _apply_ruleset(self, subset: pd.DataFrame, binary_bands: dict,
+#                        H: int, W: int, nodata_value: float) -> np.ndarray:
+#         """
+#         Apply all rules in priority order to the binary band arrays.
 
-        Rules are applied sequentially — each rule overwrites earlier ones
-        for matching pixels. Since rules are sorted by priority ascending,
-        the highest-priority class (priority=1) is applied last and wins.
-        """
-        result = np.full((H, W), nodata_value, dtype=float)
-        for _, row in subset.iterrows():
-            class_id  = float(row["class_id"])
-            rule_expr = str(row["rule"])
-            try:
-                mask = self._evaluate_rule_numpy(rule_expr, binary_bands)
-                result[mask] = class_id
-            except ValueError as exc:
-                warnings.warn(str(exc), stacklevel=2)
-        return result
+#         Rules are applied sequentially — each rule overwrites earlier ones
+#         for matching pixels. Since rules are sorted by priority ascending,
+#         the highest-priority class (priority=1) is applied last and wins.
+#         """
+#         result = np.full((H, W), nodata_value, dtype=float)
+#         for _, row in subset.iterrows():
+#             class_id  = float(row["class_id"])
+#             rule_expr = str(row["rule"])
+#             try:
+#                 mask = self._evaluate_rule_numpy(rule_expr, binary_bands)
+#                 result[mask] = class_id
+#             except ValueError as exc:
+#                 warnings.warn(str(exc), stacklevel=2)
+#         return result
 
-    @staticmethod
-    def _aggregate(counts: np.ndarray, all_class_ids: list,
-                   class_id_to_idx: dict, n_iterations: int) -> dict:
-        """Convert raw iteration counts into mode map, entropy map, class probs."""
-        idx_to_class = np.array(all_class_ids, dtype=float)
-        mode_map     = idx_to_class[np.argmax(counts, axis=0)].astype(int)
+#     @staticmethod
+#     def _aggregate(counts: np.ndarray, all_class_ids: list,
+#                    class_id_to_idx: dict, n_iterations: int) -> dict:
+#         """Convert raw iteration counts into mode map, entropy map, class probs."""
+#         idx_to_class = np.array(all_class_ids, dtype=float)
+#         mode_map     = idx_to_class[np.argmax(counts, axis=0)].astype(int)
 
-        probs = counts.astype(float) / n_iterations
+#         probs = counts.astype(float) / n_iterations
 
-        # Shannon entropy: H = -sum(p * ln(p)),  0*ln(0) = 0 by convention
-        with np.errstate(divide="ignore", invalid="ignore"):
-            log_probs = np.where(probs > 0, np.log(probs), 0.0)
-        entropy_map = -np.sum(probs * log_probs, axis=0)
+#         # Shannon entropy: H = -sum(p * ln(p)),  0*ln(0) = 0 by convention
+#         with np.errstate(divide="ignore", invalid="ignore"):
+#             log_probs = np.where(probs > 0, np.log(probs), 0.0)
+#         entropy_map = -np.sum(probs * log_probs, axis=0)
 
-        class_probs = {cid: probs[idx] for cid, idx in class_id_to_idx.items()}
+#         class_probs = {cid: probs[idx] for cid, idx in class_id_to_idx.items()}
 
-        return {
-            "mode_map":     mode_map,
-            "entropy_map":  entropy_map,
-            "class_probs":  class_probs,
-            "n_iterations": n_iterations,
-        }
+#         return {
+#             "mode_map":     mode_map,
+#             "entropy_map":  entropy_map,
+#             "class_probs":  class_probs,
+#             "n_iterations": n_iterations,
+#         }
 
 
 # ===========================================================================
-# Module 4b: Hierarchical Dichotomous Key Classifier
-# load_hierarchical_scheme()       — loads the tree-structured scheme CSV
+# Step 4 updated: Hierarchical Dichotomous Key Classifier
 # HierarchicalRuleSetClassifier    — evaluates primitives in a fixed order:
 #                                    vegetation presence → veg properties
 #                                    (cover, height, phenology) →
 #                                    non-veg (bare, built, water)
 # ===========================================================================
-
-def load_hierarchical_scheme(csv_path: str) -> pd.DataFrame:
-    """
-    Load a hierarchical (dichotomous key) classification scheme CSV.
-
-    Unlike load_scheme() which defines flat per-class rules, this function
-    loads a tree-structured scheme where each row is a decision node.
-    Nodes are evaluated in a fixed primitive-first order:
-
-        L1  vegetation check  — tree_pres / shrub_pres
-        L2a veg sub-keys      — tree_cover, vegetation_height, phenology
-        L2b non-veg sub-keys  — bare_pres, builtup_pres, water_pres
-        leaf                  — assigns final class_id
-
-    Expected CSV columns
-    --------------------
-    node_id     int    Unique identifier for this node.
-    parent_id   int    ID of parent node. Leave blank / NaN for root nodes.
-    primitive   str    Primitive band name to evaluate at this node
-                       (e.g. 'tree_pres', 'tree_cover', 'water_pres').
-    operator    str    Comparison operator: '>=' | '>' | '<=' | '<' | '=='
-    threshold   float  Threshold value for the comparison.
-    class_id    int    Assigned class ID if this is a leaf node. NaN for splits.
-    class_name  str    Human-readable class label (leaf nodes only).
-    node_type   str    'split' — evaluates primitive and branches.
-                       'leaf'  — assigns class_id, no further branching.
-    priority    int    Evaluation order within the same parent level.
-                       Lower number = evaluated first.
-
-    Parameters
-    ----------
-    csv_path : str
-        Path to the hierarchical scheme CSV.
-
-    Returns
-    -------
-    pd.DataFrame
-        Validated node table ready for HierarchicalRuleSetClassifier.
-
-    Example
-    -------
-    >>> tree = load_hierarchical_scheme("scheme_hierarchical.csv")
-    >>> classifier = HierarchicalRuleSetClassifier(primitive_stack, tree, aoi)
-    """
-    logger = logging.getLogger("load_hierarchical_scheme")
-
-    df = pd.read_csv(csv_path)
-
-    required = ["node_id", "primitive", "operator", "threshold", "node_type", "priority"]
-    missing  = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(
-            f"Missing required columns in '{csv_path}': {missing}"
-        )
-
-    valid_ops   = {">", ">=", "<", "<=", "==", "!="}
-    invalid_ops = df[~df["operator"].isin(valid_ops)]["operator"].unique()
-    if len(invalid_ops) > 0:
-        raise ValueError(
-            f"Unknown operators: {list(invalid_ops)}. Supported: {valid_ops}"
-        )
-
-    # parent_id NaN → root node
-    if "parent_id" not in df.columns:
-        df["parent_id"] = np.nan
-
-    leaf_rows = df[df["node_type"] == "leaf"]
-    missing_class = leaf_rows[leaf_rows["class_id"].isna()]
-    if len(missing_class) > 0:
-        raise ValueError(
-            f"Leaf nodes missing class_id: node_ids "
-            f"{missing_class['node_id'].tolist()}"
-        )
-
-    logger.info(
-        f"Loaded hierarchical scheme: {len(df)} nodes "
-        f"({(df['node_type']=='split').sum()} splits, "
-        f"{(df['node_type']=='leaf').sum()} leaves)"
-    )
-    return df.sort_values(["parent_id", "priority"]).reset_index(drop=True)
-
 
 class HierarchicalRuleSetClassifier:
     """
@@ -1793,7 +1825,7 @@ class HierarchicalRuleSetClassifier:
 
 
 # ===========================================================================
-# Module 5: Validation
+# Housekeeping optional step: Validation
 # validate_deterministic() — download and summarise a deterministic result
 # validate_monte_carlo()   — summarise and plot an MC result
 # compare_det_vs_mc()      — side-by-side comparison

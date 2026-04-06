@@ -1,0 +1,19 @@
+﻿node_id,parent_id,primitive,operator,threshold,class_id,class_name,node_type,priority,notes
+1,,tree_pres_prob,>,0.5,,,split,1,L1: tree present?
+2,,tree_pres_prob,<=,0.5,,,split,2,L1: tree absent — check shrub
+3,1,treecover,>,70,,,split,1,L2: dense canopy branch
+4,1,treecover,<=,70,4,Logged-over forest,leaf,2,L2: open canopy → leaf
+5,3,treeheight,>,25,1,Undisturbed forest,leaf,1,L3: tall dense → undisturbed
+6,3,treeheight,<=,25,2,Oil palm monoculture,leaf,2,L3: short dense → oil palm
+7,2,shrub_pres_prob,>,0.5,,,split,1,L2: shrub present?
+8,2,shrub_pres_prob,<=,0.5,,,split,2,L2: shrub absent → check built
+9,7,herb_pres_prob,>,0.5,,,split,1,L3: herb present → check bare soil
+10,7,herb_pres_prob,<=,0.5,5,Shrub,leaf,2,L3: herb absent → shrub leaf
+11,9,baresoil_pres_prob,>,0.5,6,Cropland,leaf,1,L4: bare soil present → cropland
+12,9,baresoil_pres_prob,<=,0.5,7,Grass and savanna,leaf,2,L4: bare soil absent → grass
+13,8,built_pres_prob,<,0.5,,,split,1,L3: built absent → check water
+14,8,built_pres_prob,>,0.5,8,Settlement,leaf,2,L3: built present → settlement
+15,13,water_pres_prob,>,0.5,9,Water body,leaf,1,L4: water present → water body
+16,13,water_pres_prob,<=,0.5,,,split,2,L4: water absent → check bare soil
+17,16,baresoil_pres_prob,<,0.5,0,No Data,leaf,1,L5: bare soil absent → no data
+18,16,baresoil_pres_prob,>,0.5,10,Cleared land,leaf,2,L5: bare soil present → cleared
