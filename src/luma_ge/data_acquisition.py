@@ -1533,3 +1533,14 @@ class Vis_Params:
             'max': max_val,
             'gamma': gamma
         }
+
+    @classmethod
+    def get_thermal_vis_params(cls) -> dict:
+        """Return the default thermal visualization parameters.
+
+        Returns
+        -------
+        dict
+            Thermal visualization parameters with keys ``min``, ``max``, ``gamma``.
+        """
+        return cls.THERMAL_VIS.copy()
