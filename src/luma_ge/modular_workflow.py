@@ -904,36 +904,55 @@ class PrimitiveLayerTrainer:
     Trains one Random Forest model per LCML element and generates a
     primitive layer (ee.Image) for each.
 
-    The primitive datacube produced here is the core reusable asset of
-    the workflow. It encodes per-pixel element presence independently of
-    any classification scheme, allowing multiple schemes to be applied
-    without retraining.
+    Automatically detects whether each primitive requires a binary
+    classifier or a regression model by inspecting the training label
+    values in the reference data:
 
-    Two training modes
-    ------------------
-        train_all()    — binary output (0 or 1), deterministic pathway.
-        train_all_mc() — probabilistic output ([0, 1]), MC pathway.
-                         Uses .setOutputMode('PROBABILITY').
+        all labels ∈ {0, 1}    → binary primitive
+            deterministic  → CLASSIFICATION  (output: 0 or 1)
+            monte carlo    → PROBABILITY     (output: float [0, 1])
+
+        any label outside {0,1} → continuous primitive
+            deterministic  → REGRESSION      (output: float, any range)
+            monte carlo    → REGRESSION      (output: float, any range)
+
+    The detected types are stored in self.primitive_types and should be
+    passed to HierarchicalRuleSetClassifier so the MC sampling step can
+    treat binary and continuous bands correctly.
 
     Parameters
     ----------
     image : ee.Image
         Multi-band predictor image (e.g. stacked Landsat composite).
-        All bands are used as RF input features.
     roi : ee.FeatureCollection
-        Reference data. Each feature must have binary (0/1) properties
-        for each element to be trained.
+        Reference data with one property per primitive element.
+        Binary elements: 0/1 values.
+        Continuous elements: numeric values (e.g. height in metres,
+        cover as 0–100 percentage).
     n_trees : int
         Number of trees per Random Forest. Default 50.
     scale : int
         Pixel scale in metres for region sampling. Default 30.
 
+    Attributes
+    ----------
+    primitive_types : dict[str, str]
+        Maps each primitive name to "binary" or "continuous".
+        Pass this to HierarchicalRuleSetClassifier.
+
     Example
     -------
-    >>> trainer         = PrimitiveLayerTrainer(image=stacked_image, roi=training_fc)
+    >>> trainer = PrimitiveLayerTrainer(image=stacked_image, roi=training_fc)
+    >>> print(trainer.primitive_types)
+    {'tree_pres': 'binary', 'veg_height': 'continuous', 'water_pres': 'binary'}
     >>> prob_layers     = trainer.train_all_mc()
     >>> primitive_stack = ee.Image.cat(list(prob_layers.values()))
     """
+
+    # Columns that are never primitive elements
+    _NON_PRIMITIVE_COLS = {
+        "LULC_Type", "ID", "geometry", "system:index", "class_id", "class_name"
+    }
 
     def __init__(self, image: ee.Image, roi: ee.FeatureCollection,
                  n_trees: int = 50, scale: int = 30):
@@ -944,27 +963,97 @@ class PrimitiveLayerTrainer:
 
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        self.primitives = self._detect_primitives()
+        self.primitives      = self._detect_primitives()
+        self.primitive_types = self._detect_primitive_types()
+
+        self.sample = self.image.sampleRegions(
+            collection=self._clean_roi(),
+            properties=self.primitives,
+            scale=self.scale,
+            geometries=False,
+        )
+
         self.logger.info(f"Detected primitives: {self.primitives}")
+        for prim, ptype in self.primitive_types.items():
+            self.logger.info(f"  {prim:<25} → {ptype}")
 
     # ---------------------------------
-    # Detect which columns are elements
+    # Detect primitive names
     # ---------------------------------
 
     def _detect_primitives(self) -> list:
-        """
-        Read property names from the first reference feature and return
-        those not in the exclusion list.
-        """
+        """Return property names from the first feature, excluding non-primitives."""
         props = self.roi.first().propertyNames().getInfo()
-        return [p for p in props if p not in _NON_PRIMITIVE_COLS]
+        return [p for p in props if p not in self._NON_PRIMITIVE_COLS]
+
+    # ---------------------------------
+    # Auto-detect binary vs continuous
+    # ---------------------------------
+
+    def _detect_primitive_types(self) -> dict:
+
+        stats = {
+            prim: self.roi.aggregate_array(prim)
+            for prim in self.primitives
+        }
+
+        result = ee.Dictionary(stats).getInfo()
+
+        types = {}
+        valid_primitives = []
+
+        for prim, values in result.items():
+            values = [v for v in values if v is not None]
+
+            if not values:
+                self.logger.warning(f"'{prim}' has no values → skipping")
+                continue
+
+            unique_vals = set(float(v) for v in values)
+
+            # FILTER HERE
+            if len(unique_vals) == 1:
+                self.logger.warning(
+                    f"'{prim}' has only one class {unique_vals} → removing from training"
+                )
+                continue  # skip this primitive entirely
+
+            # classify type
+            if unique_vals.issubset({0.0, 1.0}):
+                types[prim] = "binary"
+            else:
+                types[prim] = "continuous"
+
+            valid_primitives.append(prim)
+
+        # overwrite primitives list
+        self.primitives = valid_primitives
+
+        return types
+
+    # ---------------------------------
+    # Resolve GEE output mode
+    # ---------------------------------
+
+    def _get_output_mode(self, primitive: str, mc: bool) -> str:
+        """
+        Return the correct GEE classifier output mode.
+
+            binary  + deterministic → CLASSIFICATION   (0 or 1)
+            binary  + mc            → PROBABILITY      (float [0, 1])
+            continuous              → REGRESSION        (float, any range)
+        """
+        ptype = self.primitive_types.get(primitive, "binary")
+        if ptype == "continuous":
+            return "REGRESSION"
+        return "PROBABILITY" if mc else "CLASSIFICATION"
 
     # ---------------------------------
     # Clean roi before sampling
     # ---------------------------------
 
     def _clean_roi(self) -> ee.FeatureCollection:
-        """Remove system:index to avoid conflicts during sampleRegions."""
+        """Remove system:index to avoid sampleRegions conflicts."""
         return self.roi.map(
             lambda f: f.select(f.propertyNames().remove("system:index"))
         )
@@ -977,37 +1066,44 @@ class PrimitiveLayerTrainer:
         """
         Train a single RF for one primitive and classify the image.
 
+        For REGRESSION mode the training labels must be numeric values
+        already present as a property on each training feature
+        (e.g. tree height in metres, canopy cover 0-100).
+
+        For PROBABILITY mode the training labels must be binary 0/1.
+
         Parameters
         ----------
         primitive : str
-            Element property name (e.g. 'tree_pres').
+            Property name in training data.
         output_mode : str
-            'CLASSIFICATION' for binary output, 'PROBABILITY' for [0,1].
+            One of: 'CLASSIFICATION' | 'PROBABILITY' | 'REGRESSION'
 
         Returns
         -------
         ee.Image
             Single-band image named after the primitive.
         """
-        sample = self.image.sampleRegions(
-            collection=self._clean_roi(),
-            properties=[primitive],
-            scale=self.scale,
-            geometries=False,
-        )
-
+        self.logger.info(f"  -> Training model for {primitive} ({output_mode})")
+        
         classifier = (
             ee.Classifier.smileRandomForest(self.n_trees)
             .setOutputMode(output_mode)
         )
 
         trained = classifier.train(
-            features=sample,
+            features=self.sample,
             classProperty=primitive,
             inputProperties=self.image.bandNames(),
         )
 
-        return self.image.classify(trained).rename(primitive)
+        self.logger.info(f"  -> Applying model for {primitive}")
+
+        img = self.image.clip(self.roi.geometry())
+
+        self.logger.info(f"  -> Finished {primitive}")
+
+        return img.classify(trained).rename(primitive)
 
     # ---------------------------------
     # Deterministic pathway
@@ -1015,40 +1111,41 @@ class PrimitiveLayerTrainer:
 
     def train_one(self, primitive: str) -> ee.Image:
         """
-        Train a single primitive with binary (0/1) output.
+        Train one primitive deterministically.
 
-        Parameters
-        ----------
-        primitive : str
-            Element property name.
-
-        Returns
-        -------
-        ee.Image
-            Single-band binary image.
+        Binary    → CLASSIFICATION (0 or 1 per pixel)
+        Continuous → REGRESSION   (float per pixel)
 
         Example
         -------
-        >>> tree_layer = trainer.train_one("tree_pres")
+        >>> tree_layer   = trainer.train_one("tree_pres")
+        >>> height_layer = trainer.train_one("veg_height")
         """
-        return self._train_one(primitive, output_mode="CLASSIFICATION")
+        for p in self.primitives:
+            self.logger.info(f"Processing primitive: {p}")
+
+        mode = self._get_output_mode(primitive, mc=False)
+        return self._train_one(primitive, mode)
 
     def train_all(self) -> dict:
         """
-        Train all detected primitives with binary output.
+        Train all detected primitives deterministically.
 
         Returns
         -------
         dict[str, ee.Image]
-            Keys are primitive names, values are single-band binary ee.Images.
+            Binary primitives: 0/1 images.
+            Continuous primitives: float regression images.
 
         Example
         -------
-        >>> binary_layers = trainer.train_all()
+        >>> layers = trainer.train_all()
         """
+        self.logger.info("Starting deterministic training for all primitives")
         outputs = {}
         for p in self.primitives:
-            self.logger.info(f"Training (deterministic): {p}")
+            mode = self._get_output_mode(p, mc=False)
+            self.logger.info(f"Training [{mode}]: {p}")
             outputs[p] = self.train_one(p)
         return outputs
 
@@ -1058,54 +1155,60 @@ class PrimitiveLayerTrainer:
 
     def train_one_mc(self, primitive: str) -> ee.Image:
         """
-        Train a single primitive with probabilistic [0, 1] output.
+        Train one primitive for the MC pathway.
 
-        The output is the fraction of RF trees that voted for class 1
-        (presence) at each pixel — the per-pixel confidence score used
-        by the Monte Carlo simulation.
+        Binary     → PROBABILITY  (float [0, 1] — fraction of RF trees
+                                   voting for presence)
+        Continuous → REGRESSION   (float — mean RF tree prediction)
 
-        Parameters
-        ----------
-        primitive : str
-            Element property name.
-
-        Returns
-        -------
-        ee.Image
-            Single-band image with float values in [0, 1].
+        For continuous primitives, uncertainty in the MC simulation is
+        injected via Gaussian noise proportional to the predicted value
+        (see _sample_primitives in HierarchicalRuleSetClassifier).
 
         Example
         -------
-        >>> tree_prob = trainer.train_one_mc("tree_pres")
+        >>> tree_prob   = trainer.train_one_mc("tree_pres")
+        >>> height_pred = trainer.train_one_mc("veg_height")
         """
-        return self._train_one(primitive, output_mode="PROBABILITY")
+        mode = self._get_output_mode(primitive, mc=True)
+        
+        self.logger.info(f"    → Start MC training: {primitive} ({mode})")
+        
+        return self._train_one(primitive, mode)
 
     def train_all_mc(self) -> dict:
         """
-        Train all detected primitives with probabilistic output.
+        Train all detected primitives for the MC pathway.
 
         Returns
         -------
         dict[str, ee.Image]
-            Keys are primitive names, values are single-band ee.Images
-            with float values in [0, 1].
+            Binary primitives: PROBABILITY images [0, 1].
+            Continuous primitives: REGRESSION float images.
 
         Notes
         -----
-        Stack into a single image before passing to RuleSetClassifier:
+        Stack into a single image before passing to the classifier:
             primitive_stack = ee.Image.cat(list(outputs.values()))
+        Also pass trainer.primitive_types to HierarchicalRuleSetClassifier
+        so it can handle binary and continuous bands correctly:
+            clf = HierarchicalRuleSetClassifier(
+                primitive_stack, scheme_df, aoi,
+                primitive_types=trainer.primitive_types
+            )
 
         Example
         -------
         >>> prob_layers     = trainer.train_all_mc()
         >>> primitive_stack = ee.Image.cat(list(prob_layers.values()))
         """
+        self.logger.info("Starting Monte Carlo training for all primitives")
         outputs = {}
         for p in self.primitives:
-            self.logger.info(f"Training (probabilistic): {p}")
+            mode = self._get_output_mode(p, mc=True)
+            self.logger.info(f"Training [{mode}]: {p}")
             outputs[p] = self.train_one_mc(p)
         return outputs
-
 
 # ===========================================================================
 # Step 4: Rule Set Classifier
@@ -1495,10 +1598,14 @@ class HierarchicalRuleSetClassifier:
     """
 
     def __init__(self, primitive_image: ee.Image,
-                 scheme_df: pd.DataFrame, aoi):
+             scheme_df: pd.DataFrame, aoi,
+             primitive_types: Optional[dict] = None,
+             continuous_uncertainty_frac: float = 0.15):
         self.primitive_image = primitive_image
         self.scheme_df       = scheme_df
         self.aoi             = aoi
+        self.primitive_types = primitive_types or {}
+        self.continuous_uncertainty_frac = continuous_uncertainty_frac
         self.logger          = logging.getLogger(self.__class__.__name__)
 
     # ---------------------------------
@@ -1658,53 +1765,140 @@ class HierarchicalRuleSetClassifier:
     # Monte Carlo classification
     # ---------------------------------
 
-    def classify_monte_carlo(
+    def _validate_probability_range(
         self,
-        n_iterations:  int   = 300,
-        nodata_value:  float = 0.0,
-        seed:          Optional[int] = 42,
-        scale:         int   = 30,
-    ) -> dict:
+        band_arrays: dict,
+        primitive_types: Optional[dict] = None,
+    ) -> None:
         """
-        Classify using repeated Bernoulli sampling through the decision tree.
-
-        In each iteration, each primitive probability p is sampled as
-        Bernoulli(p) → 0 or 1 at every pixel. The sampled binary values
-        are passed through the decision tree. Uncertainty accumulates at
-        every branching node in the path, not just the final class —
-        a pixel that is uncertain at the vegetation/non-vegetation split
-        will show high entropy even if the sub-tree it falls into is
-        completely decisive.
+        Validate that binary primitive bands have values in [0, 1].
+        Continuous (regression) bands are exempt from this check because
+        their values have no fixed upper bound.
 
         Parameters
         ----------
-        n_iterations : int
-            Number of Monte Carlo draws.
-        nodata_value : float
-            Assigned to pixels reaching no leaf in a given iteration.
-        seed : int or None
-            Random seed for reproducibility.
-        scale : int
-            Pixel scale in metres.
+        band_arrays : dict[str, np.ndarray]
+            Downloaded primitive arrays.
+        primitive_types : dict[str, str], optional
+            Maps band name → "binary" | "continuous".
+            If None, all bands are treated as binary.
+
+        Raises
+        ------
+        ValueError
+            If a binary band contains values outside [0, 1].
+        """
+        primitive_types = primitive_types or {}
+        for name, arr in band_arrays.items():
+            ptype = primitive_types.get(name, "binary")
+            if ptype == "continuous":
+                continue   # regression output has no [0,1] constraint
+            if arr.min() < 0 or arr.max() > 1:
+                raise ValueError(
+                    f"Band '{name}' has values outside [0, 1] "
+                    f"(min={arr.min():.4f}, max={arr.max():.4f}). "
+                    "Ensure binary primitives were trained with "
+                    ".setOutputMode('PROBABILITY')."
+                )
+
+
+    def _sample_primitives(
+        self,
+        band_arrays: dict,
+        rng: np.random.Generator,
+        H: int,
+        W: int,
+        primitive_types: Optional[dict] = None,
+        continuous_uncertainty_frac: float = 0.15,
+    ) -> dict:
+        """
+        Sample one realisation from each primitive for one MC iteration.
+
+        Binary primitives
+            p is the RF probability of presence. Sampling Bernoulli(p) gives
+            a pixel-level 0/1 decision. Pixels close to 0.5 flip often;
+            pixels near 0 or 1 are stable.
+            Result dtype: uint8 {0, 1}
+
+        Continuous primitives
+            The RF regression output μ is the mean prediction across trees.
+            We approximate per-pixel uncertainty as σ = μ × uncertainty_frac
+            (e.g. 15% of predicted height). Sampling N(μ, σ) produces a
+            slightly different measurement each iteration, propagating
+            measurement uncertainty into the final entropy map.
+            Result dtype: float32, clipped to [0, ∞)
+
+        Parameters
+        ----------
+        band_arrays : dict[str, np.ndarray]
+            Primitive arrays downloaded from GEE.
+        rng : np.random.Generator
+            Seeded random generator for reproducibility.
+        H, W : int
+            Spatial dimensions.
+        primitive_types : dict[str, str], optional
+            Maps band name → "binary" | "continuous".
+            If None, all bands treated as binary.
+        continuous_uncertainty_frac : float
+            Gaussian noise as a fraction of the predicted value for continuous
+            primitives. Default 0.15 (15%). Increase for more uncertainty
+            propagation, decrease for more stable continuous values.
 
         Returns
         -------
-        dict with keys:
-            'mode_map'    — (H, W) int array of most-frequent class
-            'entropy_map' — (H, W) float array (nats)
-            'class_probs' — dict[class_id -> (H, W) float array]
-            'n_iterations'— int
+        dict[str, np.ndarray]
+            One sampled array per primitive, same spatial shape.
+        """
+        primitive_types = primitive_types or {}
+        sampled = {}
 
-        Example
+        for name, arr in band_arrays.items():
+            ptype = primitive_types.get(name, "binary")
+
+            if ptype == "continuous":
+                # Gaussian noise proportional to predicted value
+                sigma  = np.abs(arr) * continuous_uncertainty_frac
+                noisy  = rng.normal(loc=arr, scale=sigma)
+                sampled[name] = np.clip(noisy, 0, None).astype(np.float32)
+            else:
+                # Bernoulli sample from probability
+                sampled[name] = (rng.random((H, W)) < arr).astype(np.uint8)
+
+        return sampled
+
+    def classify_monte_carlo(
+        self,
+        n_iterations: int   = 300,
+        nodata_value: float = 0.0,
+        seed: Optional[int] = 42,
+        scale: int          = 30,
+    ) -> dict:
+        """
+        Classify using repeated sampling through the decision tree.
+
+        Binary primitives: each iteration samples Bernoulli(p) per pixel.
+        Continuous primitives: each iteration samples N(μ, μ×σ_frac) per
+        pixel where σ_frac = continuous_uncertainty_frac (default 15%).
+
+        Uncertainty accumulates at every branching node — a pixel that is
+        uncertain at the vegetation/non-vegetation split (tree_pres ≈ 0.5)
+        OR at a height threshold (veg_height ≈ 15m ± noise) will show
+        elevated entropy in the final map.
+
+        Returns
         -------
-        >>> mc = clf.classify_monte_carlo(n_iterations=300)
-        >>> print(mc["entropy_map"].mean())
+        dict: mode_map, entropy_map, class_probs, n_iterations
         """
         self.logger.info(
-            f"Hierarchical Monte Carlo classification — {n_iterations} iterations..."
+            f"Hierarchical MC — {n_iterations} iterations "
+            f"(binary: Bernoulli, continuous: Gaussian σ="
+            f"{self.continuous_uncertainty_frac*100:.0f}%)..."
         )
+
         band_arrays = self._download_band_arrays(scale)
-        self._validate_probability_range(band_arrays)
+        # Only validate range for binary bands
+        self._validate_probability_range(band_arrays, self.primitive_types)
+
         H, W = next(iter(band_arrays.values())).shape
 
         leaf_nodes    = self.scheme_df[self.scheme_df["node_type"] == "leaf"]
@@ -1717,19 +1911,17 @@ class HierarchicalRuleSetClassifier:
         rng    = np.random.default_rng(seed)
 
         for _ in range(n_iterations):
-            # Sample binary realisations from probabilistic primitives
-            binary_bands = {
-                name: (rng.random((H, W)) < prob_arr).astype(np.uint8)
-                for name, prob_arr in band_arrays.items()
-            }
-            # Traverse the decision tree with this iteration's binary values
-            iter_result = self._traverse_tree_numpy(
-                binary_bands, H, W, nodata_value
+            # Type-aware sampling — binary→Bernoulli, continuous→Gaussian
+            sampled = self._sample_primitives(
+                band_arrays,
+                rng, H, W,
+                primitive_types              = self.primitive_types,
+                continuous_uncertainty_frac  = self.continuous_uncertainty_frac,
             )
+            iter_result = self._traverse_tree_numpy(sampled, H, W, nodata_value)
             for cid, idx in class_id_to_idx.items():
                 counts[idx] += (iter_result == cid).astype(np.int32)
 
-        # Aggregate
         idx_to_class = np.array(all_class_ids, dtype=float)
         mode_map     = idx_to_class[np.argmax(counts, axis=0)].astype(int)
         probs        = counts.astype(float) / n_iterations
@@ -1739,14 +1931,14 @@ class HierarchicalRuleSetClassifier:
         entropy_map = -np.sum(probs * log_probs, axis=0)
         class_probs = {cid: probs[idx] for cid, idx in class_id_to_idx.items()}
 
-        self.logger.info("Monte Carlo classification complete.")
+        self.logger.info("MC classification complete.")
         return {
             "mode_map":     mode_map,
             "entropy_map":  entropy_map,
             "class_probs":  class_probs,
             "n_iterations": n_iterations,
         }
-
+    
     # ---------------------------------
     # Internal helpers
     # ---------------------------------
@@ -1772,28 +1964,37 @@ class HierarchicalRuleSetClassifier:
         raw = response.content
 
         band_arrays = {}
+
+        # b'MM\x00*' = big-endian TIFF (single multi-band file)
+        # b'II\x00*' = little-endian TIFF (single multi-band file)
+        # b'PK\x03\x04' = ZIP archive of individual single-band TIFFs
+
         if raw[:4] == b"PK\x03\x04":
+            # ZIP — extract and read each single-band file from the archive
             with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                tif_names = sorted(n for n in zf.namelist() if n.endswith(".tif"))
+                tif_names = sorted(
+                    n for n in zf.namelist()
+                    if n.lower().endswith(".tif")
+                )
                 for band_name, tif_name in zip(band_names, tif_names):
                     with zf.open(tif_name) as f:
                         with rasterio.open(io.BytesIO(f.read())) as src:
-                            band_arrays[band_name] = src.read(1).astype(np.float32)
+                            # Read without mask first to debug
+                            raw_arr = src.read(1).astype(np.float32)
+                            self.logger.info(f"    {band_name}: dtype={src.dtypes[0]}, shape={raw_arr.shape}, min={np.nanmin(raw_arr):.6f}, max={np.nanmax(raw_arr):.6f}, mean={np.nanmean(raw_arr):.6f}, nodata={src.nodata}")
+                            band_arrays[band_name] = raw_arr
         else:
+            # Single multi-band GeoTIFF (big- or little-endian)
             with rasterio.open(io.BytesIO(raw)) as src:
                 for i, band_name in enumerate(band_names, start=1):
-                    band_arrays[band_name] = src.read(i).astype(np.float32)
+                    # Read without mask first to debug
+                    raw_arr = src.read(i).astype(np.float32)
+                    self.logger.info(f"    {band_name}: dtype={src.dtypes[i-1]}, shape={raw_arr.shape}, min={np.nanmin(raw_arr):.6f}, max={np.nanmax(raw_arr):.6f}, mean={np.nanmean(raw_arr):.6f}, nodata={src.nodata}")
+                    band_arrays[band_name] = raw_arr
 
         h, w = next(iter(band_arrays.values())).shape
         self.logger.info(f"  Downloaded: {h} x {w} px ({h*w:,} pixels per band)")
         return band_arrays
-
-    def _validate_probability_range(self, band_arrays: dict):
-        for name, arr in band_arrays.items():
-            if arr.min() < 0 or arr.max() > 1:
-                raise ValueError(
-                    f"Band '{name}' outside [0,1] — use .setOutputMode('PROBABILITY')."
-                )
 
     def _numpy_to_ee_image(self, class_map: np.ndarray) -> ee.Image:
         """Upload a numpy class map back to GEE as an ee.Image."""
