@@ -16,7 +16,7 @@ import tempfile
 import os
 import geopandas as gpd
 
-# Earth Engine initialization with fallback
+#Earth Engine initialization with fallback
 try:
     from luma_ge import ensure_ee_initialized
 except ImportError:
@@ -31,7 +31,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 #Sampling Design
-
 class sample_size_calculator:
     """Calculator for reference sample sizes using stratified random sampling.
 
@@ -41,6 +40,7 @@ class sample_size_calculator:
     def __init__(self):
         ensure_ee_initialized()
 
+    #step 1. Get the pixel count for each class
     def get_pixel_counts_per_class(
         self,
         classification_map: ee.Image,
@@ -71,7 +71,7 @@ class sample_size_calculator:
         """
         last_error = None
         backoff = initial_backoff
-
+        #use reduce region and frequency histogram
         for attempt in range(max_retries):
             try:
                 histogram = classification_map.reduceRegion(
@@ -97,7 +97,7 @@ class sample_size_calculator:
 
                 return {class_id: int(histogram_dict.get(str(class_id), 0))
                         for class_id in class_ids}
-
+            #returb error if memory is exceeded
             except ee.EEException as e:
                 last_error = e
                 if "User memory limit exceeded" in str(e) or "Computation timed out" in str(e):
@@ -114,7 +114,9 @@ class sample_size_calculator:
                     backoff *= 2
 
         raise RuntimeError(f"Failed after {max_retries} attempts: {last_error}")
-
+    
+    #input validation methods
+    #static method indicate that this function can be used with initializing the class
     @staticmethod
     def validate_sample_size_inputs(
         expected_accuracies: Dict[int, float],
@@ -144,7 +146,8 @@ class sample_size_calculator:
             errors.append("Standard error must be in [0.001, 0.1]")
 
         return len(errors) == 0, errors
-
+    
+    #core function for strata sample requirement calculation
     @staticmethod
     def calculate_strata_sample(
         pixel_counts: Dict[int, int],
@@ -213,7 +216,8 @@ class sample_size_calculator:
             'stratum_std_devs': stratum_std_devs,
             'class_proportions': class_proportions
         }
-
+    
+    #function to allocate sample accross strata using stratified random approach
     def generate_stratified_samples(
         self,
         classification_map: ee.Image,
@@ -261,7 +265,7 @@ class sample_size_calculator:
         if not band_names:
             raise ValueError("classification_map has no bands")
         class_band = 'classification' if 'classification' in band_names else band_names[0]
-
+        #use earth engine's native function 
         samples = classification_map.stratifiedSample(
             numPoints=sum(class_points),
             classBand=class_band,
@@ -275,7 +279,8 @@ class sample_size_calculator:
         )
 
         return samples.map(lambda f: f.set('sample_id', f.id()))
-
+    
+    #function allowing the user to download the generated samples
     def export_samples_to_shp(
         self,
         samples: ee.FeatureCollection,
@@ -320,7 +325,7 @@ class sample_size_calculator:
 
 
 #Validation Point Flagging
-
+#only work for point data (1 point 1 pixel), not gonna work for polygon, which contain many pixels in a single polygon
 class validation_error_flag:
     """Flags validation points as correct/incorrect and generates map popups.
 
@@ -427,6 +432,7 @@ class validation_error_flag:
         """.strip()
 
 #Thematic Accuracy Assessment
+#minimal change 
 class thematic_accuracy:
     """Thematic Accuracy Assessment manager.
 
