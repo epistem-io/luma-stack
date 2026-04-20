@@ -631,6 +631,14 @@ class Reflectance_Data:
             raise ValueError(f"optical_data must be one of: {list(self.OPTICAL_DATASETS.keys())}")
 
         config = self.OPTICAL_DATASETS[optical_data]
+        #Warn if using legacy Landsat 1-3 data
+        if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
+            self.logger.warning(
+                f"WARNING: You are using {config['description']}"
+                f"Data avaliability and coverage for Landsat 1-3 (1972 - 1984) is very limited in some locations."
+                f"Consider using Landsat 4-9 for better data coverage."
+                f"Moreover, Landsat 1-3 data are DN values, representing scaled, calibrated at-sensor radiance. Further pre-processing are required. "
+            )
 
         #Use verbose to import detailed logging information
         if verbose:
