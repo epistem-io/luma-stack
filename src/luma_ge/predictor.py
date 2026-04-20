@@ -90,15 +90,18 @@ class terrain_calculator:
             dem_datasets = {
                 "NASADEM": {
                     "asset": "NASA/NASADEM_HGT/001",
-                    "band": "elevation"
+                    "band": "elevation",
+                    "is_collection": False
                 },
                 "COPERNICUS": {
                     "asset": "COPERNICUS/DEM/GLO30",
-                    "band": "DEM"
+                    "band": "DEM", #The band is called DEM, but documentation called it DSM
+                    "is_collection": True  #GLO30 is an ImageCollection, requires mosaic
                 },
                 "ALOS": {
                     "asset": "JAXA/ALOS/AW3D30/V4_1",
-                    "band": "DSM"  # Digital Surface Model
+                    "band": "DSM",  # Digital Surface Model
+                    "is_collection": False
                 }
             }
             
@@ -109,8 +112,11 @@ class terrain_calculator:
             
             # Get DEM configuration
             dem_config = dem_datasets[dem_source]
-            # Load and process DEM
-            dem = ee.Image(dem_config["asset"]).select(dem_config["band"]).clip(aoi)
+            # Load and process DEM — Copernicus GLO30 is an ImageCollection, so mosaic first
+            if dem_config["is_collection"]:
+                dem = ee.ImageCollection(dem_config["asset"]).select(dem_config["band"]).mosaic().clip(aoi)
+            else:
+                dem = ee.Image(dem_config["asset"]).select(dem_config["band"]).clip(aoi)
             # Rename band to 'elevation' for consistency across all DEM sources
             dem = dem.rename('elevation')
             logger.info(f"Successfully calculated elevation layer using {dem_source} DEM")
