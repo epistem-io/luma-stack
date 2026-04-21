@@ -96,7 +96,7 @@ class terrain_calculator:
                 "COPERNICUS": {
                     "asset": "COPERNICUS/DEM/GLO30",
                     "band": "DEM", #The band is called DEM, but documentation called it DSM
-                    "is_collection": True  #GLO30 is an ImageCollection, requires mosaic
+                    "is_collection": True  #GLO30 is an ImageCollection
                 },
                 "ALOS": {
                     "asset": "JAXA/ALOS/AW3D30/V4_1",
@@ -112,7 +112,7 @@ class terrain_calculator:
             
             # Get DEM configuration
             dem_config = dem_datasets[dem_source]
-            # Load and process DEM — Copernicus GLO30 is an ImageCollection, so mosaic first
+            #Load and process DEM, with special treatment for Copernicus DEM
             if dem_config["is_collection"]:
                 dem = ee.ImageCollection(dem_config["asset"]).select(dem_config["band"]).mosaic().clip(aoi)
             else:
@@ -134,6 +134,7 @@ class terrain_calculator:
                 except Exception as fallback_e:
                     logger.error(f"Fallback to NASADEM also failed: {str(fallback_e)}")
             return None
+
     #calculate slope from elevation data 
     def calculate_slope(self, aoi: ee.Geometry, dem_source: str = "NASADEM") -> ee.Image:
         """
@@ -722,7 +723,7 @@ class distance_calculator:
         Create distance images based on predefined datasets.
         
         This method calculates cumulative cost distance from various geographic
-        features to create spatial predictors for land cover classification.
+        features to create spatial predictors for land cover classification using Earth Engine's cumulativeCost().
         Distance metrics help capture accessibility patterns and spatial
         relationships that influence land use decisions.
         
@@ -733,7 +734,6 @@ class distance_calculator:
         max_dist : float, default=500000
             Maximum cumulative cost distance in meters or pixels.
             Larger values increase computation time but provide more complete coverage.
-            Recommended: 50000-500000 meters depending on study area size.
         in_meters : bool, default=False
             Distance unit selection:
             - True: Output distance in meters (more accurate, slower computation)
@@ -748,9 +748,6 @@ class distance_calculator:
             - 'dist_settlement': Distance to nearest settlement
             Returns None if calculation fails completely.
             
-        Algorithm:
-        ----------
-        Uses Earth Engine's cumulativeCost() function
         Example:
         --------
         >>> calc = distance_calculator()
@@ -814,15 +811,15 @@ class distance_calculator:
                 coast_dist = ee.Image(0).mask(ee.Image(0))
             
             # 2. Roads Data Processing (OSM + RBI)
-            # Combines OpenStreetMap and Regional Basic Infrastructure (RBI) road networks
+            # Combines OpenStreetMap and Rupa Bumi Indonesia (RBI) road networks
             logger.info("Processing roads data...")
             try:
-                # OpenStreetMap roads - community-contributed global road network
+                #OpenStreetMap roads (use legacy asset from RESTORE+, update might be needed)
                 road_osm = ee.FeatureCollection(
                     "users/hadicu06/IIASA/RESTORE/vector_datasets/road_osm"
                 ).filterBounds(aoi)
                 
-                # RBI roads - regional road network (coverage varies by country)
+                #RBI roads (use legacy asset from RESTORE+, update might be needed)
                 road_rbi = ee.FeatureCollection(
                     "users/hadicu06/IIASA/RESTORE/vector_datasets/road_rbi"
                 ).filterBounds(aoi)
@@ -841,6 +838,7 @@ class distance_calculator:
             # 3. Settlement Data Processing (HRSL)
             # Source: Facebook High Resolution Settlement Layer
             # https://dataforgood.facebook.com/dfg/tools/high-resolution-population-density-maps
+            #calculation is based on RESTORE+ codebase
             logger.info("Processing settlement data...")
             try:
                 # Load HRSL population density data
@@ -889,7 +887,7 @@ class PredictorCalculation:
     """
     Main orchestration service for predictor computation workflows.
     This class coordinates between terrain_calculator, SpectralCalculator, 
-    and distance_calculator(future) to provide a unified interface for predictor computation.
+    and distance_calculator to provide a unified interface for predictor computation.
     """
     
     def __init__(self):
@@ -901,7 +899,7 @@ class PredictorCalculation:
         self.spectral_calc = SpectralCalculator()
         
         logger.info("Predictor Calculation initialized with terrain and spectral calculators")
-    
+    #Input validation
     def validate_prerequisites(self, composite: ee.Image, aoi: ee.Geometry, 
                              collection: ee.ImageCollection = None) -> Dict[str, Any]:
         """
@@ -961,7 +959,7 @@ class PredictorCalculation:
                 "errors": [f"Validation failed: {str(e)}"],
                 "warnings": []
             }
-    
+    #core function: Compute Predictor
     def compute_predictors(self, composite: ee.Image,aoi: ee.Geometry,predictor_config: Dict[str, Any],collection: ee.ImageCollection = None,
                           progress_callback: callable = None) -> Dict[str, Any]:
         """
@@ -1197,7 +1195,8 @@ class PredictorCalculation:
                 "errors": [error_msg],
                 "warnings": []
             }
-    
+    #Predictor calculation summary
+    #This summary will be used to determine which predictor is used for classification
     def prepare_module6_summary(self, computation_result: Dict[str, Any], 
                                predictor_config: Dict[str, Any]) -> Dict[str, Any]:
         """
