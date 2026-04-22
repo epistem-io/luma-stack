@@ -527,7 +527,19 @@ class Generate_LULC:
             source           : str             — "prebuilt_bypass"
             year_used        : int             — actual year loaded (may differ if fallback)
             scheme           : str             — scheme_name
+            accuracy_metrics : Dict            — model accuracy, kappa, F1, G-score
         """
+        # hardcoded value of model accuracy 
+        _accuracy_metrics = {
+            "RESTORE+ Project": {
+                "overall_accuracy": 0.87,
+                "kappa": 0.82,
+                "average_f1_score": 0.84,
+                "gmean_score": 0.85,
+            },
+
+        }
+
         cfg = self._prebuilt_registry.get(scheme_name)
         if cfg is None:
             raise ValueError(
@@ -585,6 +597,20 @@ class Generate_LULC:
             "class_names": labels,
         }
 
+        # static default accuracy metrics
+
+        metrics = _accuracy_metrics.get(scheme_name, {})
+        if metrics:
+            print(
+                f"[classify_from_prebuilt] Model Accuracy Metrics for '{scheme_name}':\n"
+                f"  • Accuracy:      {metrics['overall_accuracy']:.4f}\n"
+                f"  • Kappa:         {metrics['kappa']:.4f}\n"
+                f"  • F1 Average:    {metrics['average_f1_score']:.4f}\n"
+                f"  • G-Score Avg:   {metrics['gmean_score']:.4f}"
+            )
+        else:
+            print(f"[classify_from_prebuilt] No accuracy metrics registered for '{scheme_name}'")        
+
         return {
             "final_map":       clipped_map,
             "present_classes": present_classes,
@@ -592,4 +618,5 @@ class Generate_LULC:
             "source":          "prebuilt_bypass",
             "year_used":       year_used,
             "scheme":          scheme_name,
+            "accuracy_metrics": metrics,
         }
