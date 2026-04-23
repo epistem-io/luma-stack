@@ -208,6 +208,7 @@ __marimo__/
 auth/earth-engine-451407-4045e13555ee.json
 notebooks/Module_2_Classification_Scheme.ipynb
 notebooks/Module_3_Generate_ROI.ipynb
+/.kiro
 
 /auth
 *.geojson
