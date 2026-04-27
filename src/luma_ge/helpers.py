@@ -24,14 +24,13 @@ import ee
 from .ee_config import ensure_ee_initialized
 
 #Module-level constants
-DEFAULT_CACHE_TTL   = 30    # seconds
-MAX_PIXELS          = 1e13  # maximum pixels for large-area exports
-DEFAULT_CRS         = "EPSG:4326"
+DEFAULT_CACHE_TTL   = 30    #seconds
+MAX_PIXELS          = 1e13  #maximum pixels for large-area exports
+DEFAULT_CRS         = "EPSG:4326" #Default Coordinate Reference System (CRS) set to WGS 1984
 DEFAULT_FILE_FORMAT = "GeoTIFF"
 
 # ---------------------------------------------------------------------------
-# EE_Export_Manager
-# ---------------------------------------------------------------------------
+#Earth Engine Export Manager
 class EE_Export_Manager:
     """
     Manages Earth Engine image exports and task tracking.
@@ -48,10 +47,8 @@ class EE_Export_Manager:
         self.task_cache: Dict[str, Any]               = {}
         self.last_cache_update: Dict[str, datetime.datetime] = {}
 
-    # -----------------------------------------------------------------------
-    # Utility helpers
-    # -----------------------------------------------------------------------
-
+    #Utility helpers
+    #standarized export name for consistent default naming
     @staticmethod
     def sanitize_export_name(name: str) -> str:
         """
@@ -86,6 +83,8 @@ class EE_Export_Manager:
         return sanitized
 
     @staticmethod
+    #get the geometry from AOI. 
+    #support ee geometry, feature, and feature collection
     def extract_geometry(
         aoi: Union[ee.FeatureCollection, ee.Feature, ee.Geometry]
     ) -> Union[ee.Geometry, Dict[str, Any]]:
@@ -174,9 +173,8 @@ class EE_Export_Manager:
             or self._validate_bucket(bucket, export_method)
         )
 
-    # -----------------------------------------------------------------------
-    # Format / scale helpers (private)
-
+    #Format / scale helpers (private)
+    #dedicated for module 5 only
     @staticmethod
     def _predictor_options(export_type: Optional[str], scale: float) -> Dict[str, Any]:
         """Return format_options and adjusted scale for a given export type."""
@@ -192,13 +190,10 @@ class EE_Export_Manager:
         elif export_type == "classification":
             format_options["noData"] = 0
         # spectral_index and others: use defaults
-
         return {"format_options": format_options, "adjusted_scale": adjusted_scale}
 
-    # -----------------------------------------------------------------------
-    # Export helpers (private)
-    # -----------------------------------------------------------------------
-
+    #Export helpers
+    #direct download export
     def _export_direct_download(
         self,
         image: ee.Image,
@@ -233,7 +228,8 @@ class EE_Export_Manager:
                              "Try reducing the area or use Google Cloud Storage export.",
                 }
             return {"success": False, "method": "direct", "error": f"Direct download failed: {e}"}
-
+    #google cloud storage export
+    #not fully operational
     def _export_gcs(
         self,
         image: ee.Image,
@@ -277,7 +273,9 @@ class EE_Export_Manager:
             return {"success": True, "method": "gcs", "task_info": task_info}
         except Exception as e:
             return {"success": False, "method": "gcs", "error": f"GCS export failed: {e}"}
-
+    #Google drive export using OAuth2 authentication
+    #the user needs to login and authenticate the app to access their drive. This is a placeholder for the full OAuth2 flow.
+    #not yet operational
     def _export_oauth2(
         self,
         image: ee.Image,
@@ -327,7 +325,6 @@ class EE_Export_Manager:
 
     # -----------------------------------------------------------------------
     # Public export API
-
     def export_image(
         self,
         image: ee.Image,
@@ -405,9 +402,9 @@ class EE_Export_Manager:
         except Exception as e:
             return {"success": False, "method": export_method, "error": f"Export failed: {e}"}
 
-    # -----------------------------------------------------------------------
-    # Task status monitoring
-
+    #Task status monitoring
+    #simple task monitoring for exports
+    #More comprehensive monitoring is implemented in earth engine task export
     def get_task_status(
         self,
         task_id: str,
