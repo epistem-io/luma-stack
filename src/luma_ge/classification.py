@@ -1,7 +1,10 @@
+from unittest import result
+
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Tuple
 import ee
+from sklearn import metrics
 from .ee_config import ensure_ee_initialized
 
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
@@ -600,7 +603,7 @@ class Generate_LULC:
         # static default accuracy metrics
 
         metrics = _accuracy_metrics.get(scheme_name, {})
-        if metrics:
+        if metrics and len(metrics) > 0:
             print(
                 f"[classify_from_prebuilt] Model Accuracy Metrics for '{scheme_name}':\n"
                 f"  • Accuracy:      {metrics['overall_accuracy']:.4f}\n"
@@ -608,8 +611,12 @@ class Generate_LULC:
                 f"  • F1 Average:    {metrics['average_f1_score']:.4f}\n"
                 f"  • G-Score Avg:   {metrics['gmean_score']:.4f}"
             )
+            print(f"\n  Note: These accuracy metrics reflect the original model training")
+            print(f"  and validation  that was used to generate the original 2018 RESTORE+ map") 
+            print(f"  and are static across all years. They do not vary")
+            print(f"  by the selected year or area of interest.")
         else:
-            print(f"[classify_from_prebuilt] No accuracy metrics registered for '{scheme_name}'")        
+            print(f"[classify_from_prebuilt] No accuracy metrics registered for '{scheme_name}'. Requested: '{scheme_name}', Available: {list(_accuracy_metrics.keys())}")        
 
         return {
             "final_map":       clipped_map,
