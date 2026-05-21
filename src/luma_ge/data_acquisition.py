@@ -312,6 +312,17 @@ class Reflectance_Data:
             'description': 'Landsat 9 Operational Land Imager-2 Surface Reflectance'
         }
     }
+    #Define the Sentinel-2 datasets. Uses Level-2A Surface Reflectance (Harmonized) collection
+    #Cloud masking is performed via Cloud Score+ (GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED)
+    S2_DATASETS = {
+        'S2_SR': {
+            'collection': 'COPERNICUS/S2_SR_HARMONIZED',
+            'cloud_property': 'CLOUDY_PIXEL_PERCENTAGE',
+            'type': 's2_sr',
+            'sensor': 'S2',
+            'description': 'Sentinel-2 Level-2A Surface Reflectance (Harmonized)',
+        },
+    }
     #Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
     #The TOA data provide consistent result and contain minimum missing pixel data
     #Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are not included
@@ -506,6 +517,53 @@ class Reflectance_Data:
         optical_bands = image.select('SR_B.').multiply(0.0000275).add(-0.2)
         #thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
         return image.addBands(optical_bands, None, True)
+    ## System Response 3.1 — Cloud masking for Sentinel-2 via Cloud Score+
+    def mask_s2_clouds(self, image: ee.Image, threshold: float = 0.60) -> ee.Image:
+        """
+        Mask cloudy, hazy, and cirrus-affected pixels in a Sentinel-2 image using Cloud Score+.
+
+        The image must already have the ``cs_cdf`` band joined from the
+        ``GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED`` collection (e.g. via
+        ``linkCollection``).  Pixels whose ``cs_cdf`` value is below
+        *threshold* are masked out; all original image properties are
+        preserved.
+
+        Parameters
+        ----------
+        image : ee.Image
+            Sentinel-2 SR image with the ``cs_cdf`` band already joined.
+        threshold : float, optional
+            Minimum ``cs_cdf`` score a pixel must meet to be considered
+            clear.  Values range from 0 (fully occluded) to 1 (fully
+            clear).  Default is ``0.60``.
+
+        Returns
+        -------
+        ee.Image
+            Cloud-masked image with all original properties copied, or
+            ``None`` if an error occurs.
+
+        References
+        ----------
+        https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_CLOUD_SCORE_PLUS_V1_S2_HARMONIZED
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> masked = rd.mask_s2_clouds(image, threshold=0.65)
+        >>> # Map over a collection
+        >>> masked_col = collection.map(lambda img: rd.mask_s2_clouds(img))
+        """
+        try:
+            masked = image.updateMask(image.select('cs_cdf').gte(threshold))
+            return masked.copyProperties(image, image.propertyNames())
+        except ee.EEException as e:
+            self.logger.error(f"EEException in mask_s2_clouds: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error in mask_s2_clouds: {e}")
+            return None
+
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
                         cloud_cover=30,
@@ -779,7 +837,7 @@ class Reflectance_Stats:
         self.logger.setLevel(log_level)
 
         self.logger.info("Reflectance Stats initialized.")
-    def get_collection_statistics(self, collection, compute_stats=True, print_report=False):
+    def get_collection_statistics(self, collection, compute_stats=True, print_report=False, cloud_property='CLOUD_COVER_LAND'):
         """
         Get comprehensive statistics about an Earth Engine image collection retrival.
 
@@ -795,6 +853,10 @@ class Reflectance_Stats:
         print_report : bool, optional
             If True the function will print formatted report of collection retrival
             (default: False).
+        cloud_property : str, optional
+            The image property name used to retrieve cloud cover values
+            (default: ``'CLOUD_COVER_LAND'`` for Landsat). Pass
+            ``'CLOUDY_PIXEL_PERCENTAGE'`` for Sentinel-2 collections.
 
         Returns
         -------
@@ -824,7 +886,7 @@ class Reflectance_Stats:
                 total_images = size.getInfo() #Client side operation, produce number of image collection
                 if total_images > 0:
                     #Get the cloud cover percentage, and image aqcusition date
-                    cloud_values = collection.aggregate_array('CLOUD_COVER_LAND').getInfo()
+                    cloud_values = collection.aggregate_array(cloud_property).getInfo()
                     dates = collection.aggregate_array('system:time_start').getInfo()
                     dates_readable = [datetime.fromtimestamp(d/1000).strftime('%Y-%m-%d') for d in dates]
                     date_range = f"{min(dates_readable)} to {max(dates_readable)}"
