@@ -588,7 +588,7 @@ class Reflectance_Data:
         ee.Image
             Image with bands renamed to
             ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
-            'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
+            'RED_EDGE3','NIR','NIR_NARROW','SWIR1','SWIR2']``.
 
         Example
         -------
@@ -600,7 +600,7 @@ class Reflectance_Data:
         return image.select(
             ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
             ['AEROSOL', 'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
-             'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
+             'NIR', 'NIR_NARROW', 'SWIR1', 'SWIR2']
         )
 
     #Scalled the sentinel 2 band according to the data scale factor
@@ -638,6 +638,203 @@ class Reflectance_Data:
         """
         optical_bands = image.select('B.*').multiply(0.0001)
         return image.addBands(optical_bands, None, True)
+
+    ## System Response 6: Sentinel-2 optical data retrieval
+    def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.60,
+        verbose: bool = True,
+        compute_detailed_stats: bool = True,):
+        """
+        Retrieve a filtered and pre-processed Sentinel-2 image collection.
+
+        Fetches ``COPERNICUS/S2_SR_HARMONIZED`` for the given AOI and date
+        range, joins Cloud Score+ scores, applies cloud masking, scale
+        factors, and band renaming, then returns the collection together
+        with a statistics dictionary.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest.  Must not be ``None``.
+        start_date : int or str
+            Start date as ``'YYYY-MM-DD'`` or a 4-digit year (expanded to
+            ``YYYY-01-01``).
+        end_date : int or str
+            End date as ``'YYYY-MM-DD'`` or a 4-digit year (expanded to
+            ``YYYY-12-31``).
+        cloud_cover : int, optional
+            Maximum ``CLOUDY_PIXEL_PERCENTAGE`` for pre-filtering images.
+            Default is ``30``.
+        cs_threshold : float, optional
+            Minimum ``cs_cdf`` score for pixel-level cloud masking via
+            Cloud Score+.  Default is ``0.60``.
+        verbose : bool, optional
+            Log collection details when ``True``.  Default is ``True``.
+        compute_detailed_stats : bool, optional
+            Compute full statistics (cloud cover range, dates, etc.) when
+            ``True``.  Default is ``True``.
+
+        Returns
+        -------
+        tuple : (ee.ImageCollection, dict)
+            * ``ee.ImageCollection`` — filtered and pre-processed collection
+              with standardized band names
+              ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
+              'RED_EDGE3','NIR','NIR_NARROW','SWIR1','SWIR2']``.
+            * ``dict`` — statistics and metadata with keys:
+              ``dataset``, ``sensor``, ``date_range_requested``,
+              ``cloud_cover_threshold``, ``initial_collection``,
+              ``filtered_collection``, ``detailed_stats_computed``.
+
+        Raises
+        ------
+        ValueError
+            If ``aoi`` is ``None``.
+
+        References
+        ----------
+        https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> collection, stats = rd.get_s2_optical_data(aoi, 2020, 2023)
+        >>> collection, stats = rd.get_s2_optical_data(aoi, '2021-01-01', '2022-12-31', cloud_cover=20)
+        """
+        # Validate AOI before any GEE call (Requirement 9.2)
+        if aoi is None:
+            raise ValueError("aoi must not be None — provide an ee.Geometry or ee.FeatureCollection.")
+
+        # Helper: expand 4-digit year to full date string (Requirement 6.2)
+        def parse_year_or_date(date_input, is_start=True):
+            if isinstance(date_input, int):
+                return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
+            elif isinstance(date_input, str):
+                if len(date_input) == 4 and date_input.isdigit():
+                    return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
+                else:
+                    return date_input
+            else:
+                raise ValueError("Date must be either YYYY or YYYY-MM-DD format")
+
+        start_date = parse_year_or_date(start_date, is_start=True)
+        end_date   = parse_year_or_date(end_date, is_start=False)
+
+        config = self.S2_DATASETS['S2_SR']
+
+        try:
+            if verbose:
+                self.logger.info(f"Starting data fetch for {config['description']}")
+                self.logger.info(f"Date range: {start_date} to {end_date}")
+                self.logger.info(f"Cloud cover threshold (image-level): {cloud_cover}%")
+                self.logger.info(f"Cloud Score+ pixel threshold: {cs_threshold}")
+                if not compute_detailed_stats:
+                    self.logger.info("Detailed statistics will not be computed")
+
+            # --- Initial collection (before cloud cover filter) ---
+            initial_collection = (
+                ee.ImageCollection(config['collection'])
+                .filterBounds(aoi)
+                .filterDate(start_date, end_date)
+            )
+            stats_object = Reflectance_Stats()
+            initial_stats = stats_object.get_collection_statistics(
+                initial_collection,
+                compute_detailed_stats,
+                cloud_property='CLOUDY_PIXEL_PERCENTAGE',
+            )
+
+            if verbose and compute_detailed_stats and initial_stats.get('total_images', 0) > 0:
+                self.logger.info(
+                    f"Initial collection (before cloud filtering): "
+                    f"{initial_stats['total_images']} images"
+                )
+                self.logger.info(
+                    f"Date range of available images: {initial_stats['date_range']}"
+                )
+
+            # --- Filter by cloud cover, limit, join Cloud Score+ ---
+            collection = (
+                initial_collection
+                .filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
+                .limit(250)
+            )
+
+            # Join Cloud Score+ 'cs_cdf' band via linkCollection (Requirement 6.4)
+            cs_plus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
+            collection = collection.linkCollection(cs_plus, ['cs_cdf'])
+
+            # Apply processing pipeline: mask → scale → rename (Requirement 6.4)
+            collection = (
+                collection
+                .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
+                .map(lambda img: self.apply_s2_scale_factors(img))
+                .map(lambda img: self.rename_s2_bands(img))
+            )
+
+            # --- Filtered stats (after cloud cover filter + processing) ---
+            filtered_stats = stats_object.get_collection_statistics(
+                collection,
+                compute_detailed_stats,
+                cloud_property='CLOUDY_PIXEL_PERCENTAGE',
+            )
+
+            # --- Verbose logging (Requirements 6.6, 6.7) ---
+            if verbose and compute_detailed_stats:
+                if filtered_stats.get('total_images', 0) > 0:
+                    self.logger.info(
+                        f"After cloud filtering (<{cloud_cover}%): "
+                        f"{filtered_stats['total_images']} images"
+                    )
+                    self.logger.info(
+                        f"Cloud cover of selected images: "
+                        f"{filtered_stats['cloud_cover']['min']:.1f}% - "
+                        f"{filtered_stats['cloud_cover']['max']:.1f}%"
+                    )
+                    self.logger.info(
+                        f"Average cloud cover: {filtered_stats['cloud_cover']['mean']:.1f}%"
+                    )
+                    if len(filtered_stats['individual_dates']) <= 20:
+                        self.logger.info(
+                            f"Image dates: {', '.join(filtered_stats['individual_dates'])}"
+                        )
+                    else:
+                        self.logger.info(
+                            f"Images span from "
+                            f"{min(filtered_stats['individual_dates'])} "
+                            f"to {max(filtered_stats['individual_dates'])}"
+                        )
+                else:
+                    self.logger.warning(
+                        f"No images found after cloud filtering (CLOUDY_PIXEL_PERCENTAGE < {cloud_cover}%)"
+                    )
+                    if initial_stats.get('total_images', 0) > 0:
+                        self.logger.info(
+                            "Consider increasing the cloud_cover threshold or expanding the date range. "
+                            f"Available cloud cover range: "
+                            f"{initial_stats['cloud_cover']['min']:.1f}% - "
+                            f"{initial_stats['cloud_cover']['max']:.1f}%"
+                        )
+            elif verbose:
+                self.logger.info(
+                    "Filtered collection created (use compute_detailed_stats=True for more information)"
+                )
+
+            return collection, {
+                'dataset': config['description'],
+                'sensor': config['sensor'],
+                'date_range_requested': f"{start_date} to {end_date}",
+                'cloud_cover_threshold': cloud_cover,
+                'initial_collection': initial_stats,
+                'filtered_collection': filtered_stats,
+                'detailed_stats_computed': compute_detailed_stats,
+            }
+
+        except ee.EEException as e:
+            self.logger.error(f"EEException in get_s2_optical_data: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Unexpected error in get_s2_optical_data: {e}")
+            raise
 
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
