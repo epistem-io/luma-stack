@@ -517,7 +517,9 @@ class Reflectance_Data:
         optical_bands = image.select('SR_B.').multiply(0.0000275).add(-0.2)
         #thermal_bands = image.select('ST_B.*').multiply(0.00341802).add(149.0)
         return image.addBands(optical_bands, None, True)
-    ## System Response 3.1 — Cloud masking for Sentinel-2 via Cloud Score+
+    #Cloud masking for Sentinel-2 via Cloud Score+
+    #Cloud Score+ provide improve cloud masking approach compared with quality control band pixel based masking
+    #available from 2015 - present
     def mask_s2_clouds(self, image: ee.Image, threshold: float = 0.60) -> ee.Image:
         """
         Mask cloudy, hazy, and cirrus-affected pixels in a Sentinel-2 image using Cloud Score+.
@@ -527,6 +529,7 @@ class Reflectance_Data:
         ``linkCollection``).  Pixels whose ``cs_cdf`` value is below
         *threshold* are masked out; all original image properties are
         preserved.
+        further reading: https://medium.com/google-earth/all-clear-with-cloud-score-bd6ee2e2235e
 
         Parameters
         ----------
@@ -563,6 +566,78 @@ class Reflectance_Data:
         except Exception as e:
             self.logger.error(f"Unexpected error in mask_s2_clouds: {e}")
             return None
+
+    #Band renaming for Sentinel-2. Standarized band name for later use
+    def rename_s2_bands(self, image: ee.Image) -> ee.Image:
+        """
+        Rename Sentinel-2 SR bands to standardized semantic names.
+
+        Maps the raw Sentinel-2 band identifiers to a common naming
+        convention shared across the luma-ge pipeline, enabling downstream
+        modules to reference bands by semantic name rather than sensor-
+        specific identifiers.
+
+        Parameters
+        ----------
+        image : ee.Image
+            Sentinel-2 SR image containing the source bands
+            ``['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``.
+
+        Returns
+        -------
+        ee.Image
+            Image with bands renamed to
+            ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
+            'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> renamed = rd.rename_s2_bands(image)
+        >>> # Map over a collection
+        >>> renamed_col = collection.map(lambda img: rd.rename_s2_bands(img))
+        """
+        return image.select(
+            ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
+            ['AEROSOL', 'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
+             'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
+        )
+
+    #Scalled the sentinel 2 band according to the data scale factor
+    def apply_s2_scale_factors(self, image: ee.Image) -> ee.Image:
+        """
+        Convert Sentinel-2 DN values to surface reflectance by applying a scale factor.
+
+        Multiplies all optical bands by ``0.0001``, replacing the original
+        DN bands in-place.  Non-optical bands (e.g. ``cs_cdf``, QA bands)
+        are preserved unchanged.
+
+        Parameters
+        ----------
+        image : ee.Image
+            Sentinel-2 SR image with DN optical bands
+            ``['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``
+
+        Returns
+        -------
+        ee.Image
+            Image with optical bands scaled to the ``[0, 1]`` reflectance
+            range, replacing the original DN bands.  All other bands and
+            image properties are preserved.
+
+        References
+        ----------
+        https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> scaled = rd.apply_s2_scale_factors(image)
+        >>> # Map over a collection
+        >>> scaled_col = collection.map(lambda img: rd.apply_s2_scale_factors(img))
+        """
+        optical_bands = image.select('B.*').multiply(0.0001)
+        return image.addBands(optical_bands, None, True)
 
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
