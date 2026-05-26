@@ -376,7 +376,7 @@ class Reflectance_Data:
         self.logger.setLevel(log_level)
 
         self.logger.info("ReflectanceData initialized.")
-    
+    #check if landsat mission contain thermal band
     def has_thermal_capability(self, optical_data):
         """
         Check if a given optical dataset has corresponding thermal bands.
@@ -519,7 +519,6 @@ class Reflectance_Data:
         return image.addBands(optical_bands, None, True)
     #Cloud masking for Sentinel-2 via Cloud Score+
     #Cloud Score+ provide improve cloud masking approach compared with quality control band pixel based masking
-    #available from 2015 - present
     def mask_s2_clouds(self, image: ee.Image, threshold: float = 0.60) -> ee.Image:
         """
         Mask cloudy, hazy, and cirrus-affected pixels in a Sentinel-2 image using Cloud Score+.
@@ -639,7 +638,83 @@ class Reflectance_Data:
         optical_bands = image.select('B.*').multiply(0.0001)
         return image.addBands(optical_bands, None, True)
 
-    ## System Response 6: Sentinel-2 optical data retrieval
+    #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
+    def sharpen_s2_bands(self, image: ee.Image) -> ee.Image:
+        """
+        Sharpen 20 m Sentinel-2 bands to 10 m using High-Pass Filter (HPF) approach
+
+        Expects an image with standardized band names already applied (output
+        of :meth:`rename_s2_bands`).  The NIR band (10 m native) is used as
+        the high-resolution panchromatic reference.  A high-frequency detail
+        component is extracted from NIR via a Gaussian blur and added to each
+        bilinearly-resampled 20 m band.  The four 10 m native bands
+        (``BLUE``, ``GREEN``, ``RED``, ``NIR``) are passed through unchanged.
+
+        Algorithm
+        ---------
+        1. Extract HPF component from NIR (10 m reference)::
+
+               hpf = NIR - gaussian_smooth(NIR)   # kernel: radius=1, sigma=1
+
+        2. For each 20 m band::
+
+               sharpened = resample(band_20m, bilinear) + hpf
+
+        3. 10 m native bands pass through unchanged.
+
+        Parameters
+        ----------
+        image : ee.Image
+            Sentinel-2 SR image with standardized band names
+            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
+            'NIR','NIR_NARROW','SWIR1','SWIR2']`` already applied.
+
+        Returns
+        -------
+        ee.Image
+            Image with all 10 bands at 10 m resolution and all original
+            image properties preserved, or ``None`` if an error occurs.
+
+        References
+        ----------
+        https://developers.google.com/earth-engine/guides/resample
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> sharpened = rd.sharpen_s2_bands(renamed_image)
+        >>> # Map over a collection
+        >>> sharpened_col = collection.map(lambda img: rd.sharpen_s2_bands(img))
+        """
+        try:
+            # --- 1. Extract high-frequency detail from NIR (10 m reference) ---
+            nir = image.select('NIR')
+            gaussian_kernel = ee.Kernel.gaussian(radius=1, sigma=1, units='pixels')
+            nir_smooth = nir.reduceNeighborhood(
+                reducer=ee.Reducer.mean(),
+                kernel=gaussian_kernel,
+            )
+            hpf = nir.subtract(nir_smooth)
+
+            # --- 2. Pass 10 m native bands through unchanged ---
+            bands_10m = image.select(['BLUE', 'GREEN', 'RED', 'NIR'])
+
+            # --- 3. Resample each 20 m band to 10 m and inject HPF detail ---
+            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'NIR_NARROW', 'SWIR1', 'SWIR2']
+            sharpened_bands = image.select(bands_20m_names).resample('bilinear').add(hpf)
+
+            # --- 4. Recombine all bands and preserve image properties ---
+            result = bands_10m.addBands(sharpened_bands)
+            return result.copyProperties(image, image.propertyNames())
+
+        except ee.EEException as e:
+            self.logger.error(f"EEException in sharpen_s2_bands: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error in sharpen_s2_bands: {e}")
+            return None
+
+    #Core methods to retrieve sentinel 2 data
     def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.60,
         verbose: bool = True,
         compute_detailed_stats: bool = True,):
@@ -752,18 +827,18 @@ class Reflectance_Data:
                     f"Date range of available images: {initial_stats['date_range']}"
                 )
 
-            # --- Filter by cloud cover, limit, join Cloud Score+ ---
+            #Filter by cloud cover, limit scene collection, join the main collection with Cloud Score+
             collection = (
                 initial_collection
                 .filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
-                .limit(250)
+                .limit(350)
             )
 
-            # Join Cloud Score+ 'cs_cdf' band via linkCollection (Requirement 6.4)
+            #Join Cloud Score+ 'cs_cdf' band via linkCollection
             cs_plus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
             collection = collection.linkCollection(cs_plus, ['cs_cdf'])
 
-            # Apply processing pipeline: mask → scale → rename (Requirement 6.4)
+            #Apply processing pipeline: mask → scale → rename
             collection = (
                 collection
                 .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
@@ -771,14 +846,14 @@ class Reflectance_Data:
                 .map(lambda img: self.rename_s2_bands(img))
             )
 
-            # --- Filtered stats (after cloud cover filter + processing) ---
+            #Filtered stats (after cloud cover filter + processing)
             filtered_stats = stats_object.get_collection_statistics(
                 collection,
                 compute_detailed_stats,
                 cloud_property='CLOUDY_PIXEL_PERCENTAGE',
             )
 
-            # --- Verbose logging (Requirements 6.6, 6.7) ---
+            #Verbose logging
             if verbose and compute_detailed_stats:
                 if filtered_stats.get('total_images', 0) > 0:
                     self.logger.info(
@@ -836,7 +911,7 @@ class Reflectance_Data:
             self.logger.error(f"Unexpected error in get_s2_optical_data: {e}")
             raise
 
-    #Function to retrive Landsat multispectral bands
+    #core method to retrieve landsat data
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
                         cloud_cover=30,
                         verbose=True, compute_detailed_stats=True):
@@ -1313,6 +1388,7 @@ class final_Image:
         self.logger.setLevel(log_level)
         self.logger.info("final_Image creation initialized.")
     #Function to calculate data coverage (pixel validity) within AOI
+    #adjust the scale if needed
     def calculate_data_coverage(self, composite_image, aoi, scale=30, max_pixels=1e9, verbose=True):
         """
         Calculate data coverage (valid pixels) percentage within AOI for temporal aggregation composite image.
@@ -1516,6 +1592,7 @@ class final_Image:
     #Temporal composite computes statistics across pixels
     #logic behind cloud 'removal' is that cloud typically have higher pixel value due to high reflectance,
     #thus when median composite is used cloud get 'remove' from the final image
+    #adjust scale if needed
     def get_temporal_composite(self, collection, aoi, reducer='median',calculate_coverage=False, 
                               coverage_scale=30, verbose=True):
         """
