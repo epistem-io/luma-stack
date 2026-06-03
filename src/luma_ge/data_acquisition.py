@@ -572,16 +572,15 @@ class Reflectance_Data:
         except Exception as e:
             self.logger.error(f"Unexpected error in mask_s2_clouds: {e}")
             return None
-
     #Band renaming for Sentinel-2. Standarized band name for later use
     def rename_s2_bands(self, image: ee.Image) -> ee.Image:
         """
-        Rename Sentinel-2 SR bands to standardized semantic names.
+        Rename Sentinel-2 SR bands to standardized semantic names and apply
+        the Sentinel-2 SR scale factor.
 
-        Maps the raw Sentinel-2 band identifiers to a common naming
-        convention shared across the luma-ge pipeline, enabling downstream
-        modules to reference bands by semantic name rather than sensor-
-        specific identifiers.
+        Selects the raw Sentinel-2 optical bands, converts them from DN to
+        surface reflectance, and renames them to a common semantic band
+        convention used across the luma-ge pipeline.
 
         Parameters
         ----------
@@ -592,7 +591,7 @@ class Reflectance_Data:
         Returns
         -------
         ee.Image
-            Image with bands renamed to
+            Image with scaled and renamed optical bands:
             ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
             'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
 
@@ -603,100 +602,111 @@ class Reflectance_Data:
         >>> # Map over a collection
         >>> renamed_col = collection.map(lambda img: rd.rename_s2_bands(img))
         """
-        return image.select(
-            ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
-            ['AEROSOL', 'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
+        optical = image.select(
+            ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
+        ).multiply(0.0001)
+        renamed = optical.rename(
+            ['BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
              'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
         )
-
-    #Scalled the sentinel 2 band according to the data scale factor
-    def apply_s2_scale_factors(self, image: ee.Image) -> ee.Image:
-        """
-        Convert Sentinel-2 DN values to surface reflectance by applying a scale factor.
-
-        Multiplies all optical bands by ``0.0001``, replacing the original
-        DN bands in-place.  Non-optical bands (e.g. ``cs_cdf``, QA bands)
-        are preserved unchanged.
-
-        Parameters
-        ----------
-        image : ee.Image
-            Sentinel-2 SR image with DN optical bands
-            ``['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``
-
-        Returns
-        -------
-        ee.Image
-            Image with optical bands scaled to the ``[0, 1]`` reflectance range, replacing the original DN bands. 
-
-        References
-        ----------
-        https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED
-
-        Example
-        -------
-        >>> rd = Reflectance_Data()
-        >>> scaled = rd.apply_s2_scale_factors(image)
-        >>> # Map over a collection
-        >>> scaled_col = collection.map(lambda img: rd.apply_s2_scale_factors(img))
-        """
-        optical_bands = image.select('B.*').multiply(0.0001)
-        return image.addBands(optical_bands, None, True)
+        return renamed.copyProperties(image, image.propertyNames())
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
-    def sharpen_s2_bands(self, image: ee.Image) -> ee.Image:
+    def sharpen_s2_bands(self, image: ee.Image, aoi=None) -> ee.Image:
         """
-        Sharpen 20 m Sentinel-2 bands to 10 m using High-Pass Filter (HPF) approach
+        Sharpen 20 m Sentinel-2 bands to 10 m using HPF pan-sharpening.
 
-        Expects an image with standardized band names already applied.  
-        The NIR band (10 m native) is used as the high-resolution panchromatic reference.  
-        A high-frequency detail
-        component is extracted from NIR via a Gaussian blur and added to each
-        bilinearly-resampled 20 m band.  The four 10 m native bands
-        (``BLUE``, ``GREEN``, ``RED``, ``NIR``) are passed through unchanged.
+        The composite PAN is the mean of native 10 m bands (BLUE, GREEN, RED,
+        NIR) following Kaplan (2018).  A fixed UTM scale is used rather than
+        inheriting the composite's degraded projection.
 
         Parameters
         ----------
         image : ee.Image
-            Sentinel-2 SR image with standardized band names
+            Sentinel-2 image with standardized band names output of
+            ``rename_s2_bands``.  Must contain BLUE, GREEN, RED, NIR,
+            RED_EDGE1–4, SWIR1, SWIR2.
+        aoi : ee.Geometry or ee.FeatureCollection, optional
+            Bounds for ``reduceRegion`` std-dev computation.  Falls back to
+            ``image.geometry()`` when ``None``.
 
         Returns
         -------
         ee.Image
-            Image with all 10 bands at 10 m resolution and all original
-            image properties preserved, or ``None`` if an error occurs.
+            All bands at 10 m, or ``None`` on error.
 
         References
         ----------
-        https://developers.google.com/earth-engine/guides/resample
+        Kaplan, G. & Avdan, U. (2018). https://doi.org/10.3390/ijgi7090389
 
         Example
         -------
         >>> rd = Reflectance_Data()
-        >>> sharpened = rd.sharpen_s2_bands(renamed_image)
-        >>> # Map over a collection
-        >>> sharpened_col = collection.map(lambda img: rd.sharpen_s2_bands(img))
+        >>> sharpened = rd.sharpen_s2_bands(composite, aoi=aoi)
         """
         try:
-            # --- 1. Extract high-frequency detail from NIR (10 m reference) ---
-            nir = image.select('NIR')
-            gaussian_kernel = ee.Kernel.gaussian(radius=1, sigma=1, units='pixels')
-            nir_smooth = nir.reduceNeighborhood(
-                reducer=ee.Reducer.mean(),
-                kernel=gaussian_kernel,
-            )
-            hpf = nir.subtract(nir_smooth)
+            # Resolve geometry for reduceRegion bounds
+            if aoi is not None:
+                geometry = (aoi.geometry()
+                            if isinstance(aoi, ee.FeatureCollection)
+                            else aoi)
+            else:
+                geometry = image.geometry()
 
-            # --- 2. Pass 10 m native bands through unchanged ---
+            # Fixed CRS — do NOT inherit from composite (composite projection is
+            # EPSG:4326 at 1° scale after .reduce(), not the native 10 m grid)
+            TARGET_CRS = 'EPSG:32748'  # WGS84 / UTM zone 48S — adjust per region
+            TARGET_SCALE = 10
+
+            # --- 1. Build composite PAN from native 10 m bands ---
+            pan = (image
+                   .select(['BLUE', 'GREEN', 'RED', 'NIR'])
+                   .reduce(ee.Reducer.mean())
+                   .rename('PAN')
+                   .reproject(crs=TARGET_CRS, scale=TARGET_SCALE))
+
+            # --- 2. HPF component (high-frequency detail layer) ---
+            smooth = pan.convolve(ee.Kernel.gaussian(radius=2, sigma=2, units='pixels'))
+            hpf = pan.subtract(smooth)
+
+            # --- 3. Resample all 20 m bands to 10 m in one call ---
+            bands_20m = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
+            resampled = (image
+                         .select(bands_20m)
+                         .resample('bilinear')
+                         .reproject(crs=TARGET_CRS, scale=TARGET_SCALE))
+
+            # --- 4. Single batched stdDev over PAN + all 20 m bands ---
+            std_dict = (pan
+                        .addBands(resampled)
+                        .reduceRegion(
+                            reducer=ee.Reducer.stdDev(),
+                            geometry=geometry,
+                            scale=20,           # native 20 m scale for accuracy
+                            maxPixels=1e8,
+                            bestEffort=True
+                        ))
+
+            # Guard against null (empty region) with .max(1e-6)
+            pan_std = ee.Number(std_dict.get('PAN')).max(1e-6)
+
+            # --- 5. Weighted HPF injection per 20 m band ---
+            def sharpen_band(band_name):
+                ms = resampled.select([band_name])
+                ms_std = ee.Number(std_dict.get(band_name)).max(1e-6)
+                weight = ms_std.divide(pan_std)
+                return ms.add(hpf.multiply(weight)).rename([band_name])
+
+            sharpened_bands = ee.Image.cat([sharpen_band(b) for b in bands_20m])
+
+            # --- 6. Recombine 10 m native + sharpened 20 m bands ---
+            # Use .set() instead of copyProperties to guarantee ee.Image return type.
+            # copyProperties is defined on ee.Element (base class) and its Python-
+            # side return type is ee.Element, not ee.Image.
             bands_10m = image.select(['BLUE', 'GREEN', 'RED', 'NIR'])
-
-            # --- 3. Resample each 20 m band to 10 m and inject HPF detail ---
-            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
-            sharpened_bands = image.select(bands_20m_names).resample('bilinear').add(hpf)
-
-            # --- 4. Recombine all bands and preserve image properties ---
-            result = bands_10m.addBands(sharpened_bands)
-            return result.copyProperties(image, image.propertyNames())
+            result = ee.Image(bands_10m.addBands(sharpened_bands))
+            props = image.toDictionary(image.propertyNames())
+            return result.set(props)
 
         except ee.EEException as e:
             self.logger.error(f"EEException in sharpen_s2_bands: {e}")
@@ -704,7 +714,6 @@ class Reflectance_Data:
         except Exception as e:
             self.logger.error(f"Unexpected error in sharpen_s2_bands: {e}")
             return None
-
     #Core methods to retrieve sentinel 2 data
     def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.60,
         verbose: bool = True,
@@ -833,7 +842,6 @@ class Reflectance_Data:
             collection = (
                 collection
                 .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
-                .map(lambda img: self.apply_s2_scale_factors(img))
                 .map(lambda img: self.rename_s2_bands(img))
             )
 
@@ -957,7 +965,7 @@ class Reflectance_Data:
 
         config = self.OPTICAL_DATASETS[optical_data]
 
-        # Warn if using legacy Landsat 1-3 data
+        #Warn if using Landsat 1-3 data
         if optical_data in ['L1_RAW', 'L2_RAW', 'L3_RAW']:
             self.logger.warning(
                 f"WARNING: You are using {config['description']}"
