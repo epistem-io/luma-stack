@@ -312,7 +312,7 @@ class Reflectance_Data:
             'description': 'Landsat 9 Operational Land Imager-2 Surface Reflectance'
         }
     }
-    #Define the Sentinel-2 datasets. Uses Level-2A Surface Reflectance (Harmonized) collection
+    #Define the Sentinel-2 datasets, SR and TOA
     #Cloud masking is performed via Cloud Score+ (GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED)
     S2_DATASETS = {
         'S2_SR': {
@@ -322,6 +322,13 @@ class Reflectance_Data:
             'sensor': 'S2',
             'description': 'Sentinel-2 Level-2A Surface Reflectance (Harmonized)',
         },
+        'S2_TOA': {
+            'collection': 'COPERNICUS/S2_HARMONIZED',
+            'cloud_property': 'CLOUDY_PIXEL_PERCENTAGE',
+            'type': 's2_toa',
+            'sensor': 'S2',
+            'description': 'Sentinel-2 Level-1C Top-of-Atmosphere (Harmonized)',
+        }
     }
     #Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
     #The TOA data provide consistent result and contain minimum missing pixel data
@@ -587,7 +594,7 @@ class Reflectance_Data:
         ee.Image
             Image with bands renamed to
             ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
-            'RED_EDGE3','NIR','NIR_NARROW','SWIR1','SWIR2']``.
+            'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
 
         Example
         -------
@@ -599,7 +606,7 @@ class Reflectance_Data:
         return image.select(
             ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
             ['AEROSOL', 'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
-             'NIR', 'NIR_NARROW', 'SWIR1', 'SWIR2']
+             'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
         )
 
     #Scalled the sentinel 2 band according to the data scale factor
@@ -620,9 +627,7 @@ class Reflectance_Data:
         Returns
         -------
         ee.Image
-            Image with optical bands scaled to the ``[0, 1]`` reflectance
-            range, replacing the original DN bands.  All other bands and
-            image properties are preserved.
+            Image with optical bands scaled to the ``[0, 1]`` reflectance range, replacing the original DN bands. 
 
         References
         ----------
@@ -643,31 +648,17 @@ class Reflectance_Data:
         """
         Sharpen 20 m Sentinel-2 bands to 10 m using High-Pass Filter (HPF) approach
 
-        Expects an image with standardized band names already applied (output
-        of :meth:`rename_s2_bands`).  The NIR band (10 m native) is used as
-        the high-resolution panchromatic reference.  A high-frequency detail
+        Expects an image with standardized band names already applied.  
+        The NIR band (10 m native) is used as the high-resolution panchromatic reference.  
+        A high-frequency detail
         component is extracted from NIR via a Gaussian blur and added to each
         bilinearly-resampled 20 m band.  The four 10 m native bands
         (``BLUE``, ``GREEN``, ``RED``, ``NIR``) are passed through unchanged.
-
-        Algorithm
-        ---------
-        1. Extract HPF component from NIR (10 m reference)::
-
-               hpf = NIR - gaussian_smooth(NIR)   # kernel: radius=1, sigma=1
-
-        2. For each 20 m band::
-
-               sharpened = resample(band_20m, bilinear) + hpf
-
-        3. 10 m native bands pass through unchanged.
 
         Parameters
         ----------
         image : ee.Image
             Sentinel-2 SR image with standardized band names
-            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
-            'NIR','NIR_NARROW','SWIR1','SWIR2']`` already applied.
 
         Returns
         -------
@@ -700,7 +691,7 @@ class Reflectance_Data:
             bands_10m = image.select(['BLUE', 'GREEN', 'RED', 'NIR'])
 
             # --- 3. Resample each 20 m band to 10 m and inject HPF detail ---
-            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'NIR_NARROW', 'SWIR1', 'SWIR2']
+            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
             sharpened_bands = image.select(bands_20m_names).resample('bilinear').add(hpf)
 
             # --- 4. Recombine all bands and preserve image properties ---
@@ -754,7 +745,7 @@ class Reflectance_Data:
             * ``ee.ImageCollection`` — filtered and pre-processed collection
               with standardized band names
               ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
-              'RED_EDGE3','NIR','NIR_NARROW','SWIR1','SWIR2']``.
+              'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
             * ``dict`` — statistics and metadata with keys:
               ``dataset``, ``sensor``, ``date_range_requested``,
               ``cloud_cover_threshold``, ``initial_collection``,
