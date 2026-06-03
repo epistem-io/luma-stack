@@ -453,7 +453,7 @@ class Reflectance_Data:
                         .And(cirrus_conf.lt(cirrus_conf_thresh)))
         #Final mask
         final_mask = cloud_mask.And(shadow_mask).And(cirrus_mask).And(conf_mask)
-        return image.updateMask(final_mask).copyProperties(image, image.propertyNames())
+        return ee.Image(image.updateMask(final_mask).copyProperties(image, image.propertyNames()))
     #Functions to rename Landsat bands 
     def rename_landsat_bands(self, image, sensor_type):
         """
@@ -565,7 +565,7 @@ class Reflectance_Data:
         """
         try:
             masked = image.updateMask(image.select('cs_cdf').gte(threshold))
-            return masked.copyProperties(image, image.propertyNames())
+            return ee.Image(masked.copyProperties(image, image.propertyNames()))
         except ee.EEException as e:
             self.logger.error(f"EEException in mask_s2_clouds: {e}")
             return None
@@ -586,14 +586,16 @@ class Reflectance_Data:
         ----------
         image : ee.Image
             Sentinel-2 SR image containing the source bands
-            ``['B1','B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``.
+            ``['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``.
 
         Returns
         -------
         ee.Image
             Image with scaled and renamed optical bands:
-            ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
+            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
             'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
+            Note: B1 (coastal aerosol, 60m) is excluded — not used in the
+            sharpening pipeline or spectral index computation.
 
         Example
         -------
@@ -609,104 +611,118 @@ class Reflectance_Data:
             ['BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
              'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
         )
-        return renamed.copyProperties(image, image.propertyNames())
+        return ee.Image(renamed.copyProperties(image, image.propertyNames()))
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
     def sharpen_s2_bands(self, image: ee.Image, aoi=None) -> ee.Image:
-        """
-        Sharpen 20 m Sentinel-2 bands to 10 m using HPF pan-sharpening.
-
-        The composite PAN is the mean of native 10 m bands (BLUE, GREEN, RED,
-        NIR) following Kaplan (2018).  A fixed UTM scale is used rather than
-        inheriting the composite's degraded projection.
-
-        Parameters
-        ----------
-        image : ee.Image
-            Sentinel-2 image with standardized band names output of
-            ``rename_s2_bands``.  Must contain BLUE, GREEN, RED, NIR,
-            RED_EDGE1–4, SWIR1, SWIR2.
-        aoi : ee.Geometry or ee.FeatureCollection, optional
-            Bounds for ``reduceRegion`` std-dev computation.  Falls back to
-            ``image.geometry()`` when ``None``.
-
-        Returns
-        -------
-        ee.Image
-            All bands at 10 m, or ``None`` on error.
-
-        References
-        ----------
-        Kaplan, G. & Avdan, U. (2018). https://doi.org/10.3390/ijgi7090389
-
-        Example
-        -------
-        >>> rd = Reflectance_Data()
-        >>> sharpened = rd.sharpen_s2_bands(composite, aoi=aoi)
-        """
         try:
-            # Resolve geometry for reduceRegion bounds
             if aoi is not None:
-                geometry = (aoi.geometry()
-                            if isinstance(aoi, ee.FeatureCollection)
-                            else aoi)
+                geometry = aoi.geometry() if isinstance(aoi, ee.FeatureCollection) else aoi
             else:
                 geometry = image.geometry()
 
-            # Fixed CRS — do NOT inherit from composite (composite projection is
-            # EPSG:4326 at 1° scale after .reduce(), not the native 10 m grid)
-            TARGET_CRS = 'EPSG:32748'  # WGS84 / UTM zone 48S — adjust per region
-            TARGET_SCALE = 10
+            proj_10m = image.select('NIR').projection()
 
-            # --- 1. Build composite PAN from native 10 m bands ---
+            # --- 1. Composite PAN (Kaplan 2018) ---
             pan = (image
-                   .select(['BLUE', 'GREEN', 'RED', 'NIR'])
-                   .reduce(ee.Reducer.mean())
-                   .rename('PAN')
-                   .reproject(crs=TARGET_CRS, scale=TARGET_SCALE))
+                .select(['BLUE', 'GREEN', 'RED', 'NIR'])
+                .reduce(ee.Reducer.mean())
+                .rename('PAN')
+                .reproject(crs=proj_10m, scale=10)
+            )
 
-            # --- 2. HPF component (high-frequency detail layer) ---
-            smooth = pan.convolve(ee.Kernel.gaussian(radius=2, sigma=2, units='pixels'))
-            hpf = pan.subtract(smooth)
+            # --- 2. Fixed high-boost HPF kernel (from reference JS code) ---
+            # 5x5 Laplacian-style kernel; center=24, all others=-1, sum=0
+            kernel_weights = [
+                [-1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1],
+                [-1, -1, 24, -1, -1],
+                [-1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1],
+            ]
+            kernel = ee.Kernel.fixed(5, 5, kernel_weights, -3, -3, False)
+            hpf = pan.convolve(kernel)
 
-            # --- 3. Resample all 20 m bands to 10 m in one call ---
-            bands_20m = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
-            resampled = (image
-                         .select(bands_20m)
-                         .resample('bilinear')
-                         .reproject(crs=TARGET_CRS, scale=TARGET_SCALE))
+            # --- 3. Modulating factor (dampens over-sharpening) ---
+            mod = 0.25
 
-            # --- 4. Single batched stdDev over PAN + all 20 m bands ---
-            std_dict = (pan
-                        .addBands(resampled)
-                        .reduceRegion(
-                            reducer=ee.Reducer.stdDev(),
-                            geometry=geometry,
-                            scale=20,           # native 20 m scale for accuracy
-                            maxPixels=1e8,
-                            bestEffort=True
-                        ))
+            # --- 4. Resample 20m bands ---
+            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
+                            'RED_EDGE4', 'SWIR1', 'SWIR2']
+            resampled_20m = (image
+                .select(bands_20m_names)
+                .resample('bilinear')
+                .reproject(crs=proj_10m, scale=10)
+            )
 
-            # Guard against null (empty region) with .max(1e-6)
-            pan_std = ee.Number(std_dict.get('PAN')).max(1e-6)
+            # --- 5. Std dev for MS bands (at 20m) and HPF (at 10m, its native scale) ---
+            # MS bands and HPF must be sampled at their own native scales so the
+            # weight W = SD(MS) / SD(HPF) * mod is computed correctly.
+            ms_std_dict = resampled_20m.reduceRegion(
+                reducer=ee.Reducer.stdDev(),
+                geometry=geometry,
+                scale=20,
+                maxPixels=1e8,
+                bestEffort=True
+            )
+            hpf_std_dict = hpf.reduceRegion(
+                reducer=ee.Reducer.stdDev(),
+                geometry=geometry,
+                scale=10,
+                maxPixels=1e8,
+                bestEffort=True
+            )
+            hpf_std = ee.Number(hpf_std_dict.get('PAN')).max(1e-6)
 
-            # --- 5. Weighted HPF injection per 20 m band ---
+            # --- 6. Inject HPF with modulated weight per band ---
             def sharpen_band(band_name):
-                ms = resampled.select([band_name])
-                ms_std = ee.Number(std_dict.get(band_name)).max(1e-6)
-                weight = ms_std.divide(pan_std)
+                ms     = resampled_20m.select([band_name])
+                ms_std = ee.Number(ms_std_dict.get(band_name)).max(1e-6)
+                weight = ms_std.divide(hpf_std).multiply(mod)
                 return ms.add(hpf.multiply(weight)).rename([band_name])
 
-            sharpened_bands = ee.Image.cat([sharpen_band(b) for b in bands_20m])
+            sharpened_bands = ee.Image.cat(
+                [sharpen_band(b) for b in bands_20m_names]
+            )
 
-            # --- 6. Recombine 10 m native + sharpened 20 m bands ---
-            # Use .set() instead of copyProperties to guarantee ee.Image return type.
-            # copyProperties is defined on ee.Element (base class) and its Python-
-            # side return type is ee.Element, not ee.Image.
-            bands_10m = image.select(['BLUE', 'GREEN', 'RED', 'NIR'])
-            result = ee.Image(bands_10m.addBands(sharpened_bands))
-            props = image.toDictionary(image.propertyNames())
-            return result.set(props)
+            # --- 7. Linear stretch: z-score normalise sharpened → rescale to original 20m stats ---
+            # Preserves the spectral mean and variance of the original 20m bands exactly.
+            # Formula: (sharp - mean(sharp)) / SD(sharp) * SD(orig) + mean(orig)
+            orig_stats = image.select(bands_20m_names).reduceRegion(
+                reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+                geometry=geometry,
+                scale=20,
+                maxPixels=1e8,
+                bestEffort=True
+            )
+            sharp_stats = sharpened_bands.reduceRegion(
+                reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
+                geometry=geometry,
+                scale=10,
+                maxPixels=1e8,
+                bestEffort=True
+            )
+
+            def stretch_band(band_name):
+                band   = sharpened_bands.select([band_name])
+                s_mean = ee.Number(sharp_stats.get(band_name + '_mean'))
+                s_std  = ee.Number(sharp_stats.get(band_name + '_stdDev')).max(1e-6)
+                o_mean = ee.Number(orig_stats.get(band_name + '_mean'))
+                o_std  = ee.Number(orig_stats.get(band_name + '_stdDev'))
+                return (band.subtract(s_mean)
+                            .divide(s_std)
+                            .multiply(o_std)
+                            .add(o_mean)
+                            .rename([band_name]))
+
+            stretched_bands = ee.Image.cat(
+                [stretch_band(b) for b in bands_20m_names]
+            )
+
+            # --- 8. Recombine ---
+            # Cast back to ee.Image — copyProperties returns ee.Element at the Python level
+            result = image.select(['BLUE', 'GREEN', 'RED', 'NIR']).addBands(stretched_bands)
+            return ee.Image(result.copyProperties(image, image.propertyNames()))
 
         except ee.EEException as e:
             self.logger.error(f"EEException in sharpen_s2_bands: {e}")
