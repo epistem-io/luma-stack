@@ -612,16 +612,14 @@ class Reflectance_Data:
         return ee.Image(renamed.copyProperties(image, image.propertyNames()))
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
-    def sharpen_s2_bands(
-        self,
-        image: ee.Image,
-        aoi=None,
-        crs: str = 'EPSG:32648',
+    def sharpen_s2_bands(self,image: ee.Image,aoi=None,
+        crs: str = 'EPSG:3857',
         crs_transform: Optional[List] = None,
         mod: float = 0.25,
     ) -> Optional[ee.Image]:
         """
-        Sharpen 20m Sentinel-2 bands to 10m using HPF pan-sharpening.
+        Sharpen 20m Sentinel-2 bands to 10m using Multi Resolution Analysis, namely
+        High pass filter (HPF).
 
         Mirrors the standalone ``s2_hpf_sharpen.py`` approach: a user-supplied
         (or default) UTM CRS with a fixed ``crs_transform`` grid anchor is used
@@ -655,12 +653,16 @@ class Reflectance_Data:
             Region for stat reductions. Falls back to ``image.geometry()`` if None.
         crs : str, optional
             EPSG code of the target UTM projection.
-            Default: ``'EPSG:32648'`` (WGS 84 / UTM Zone 48N).
+            Ignored when ``crs_transform`` is ``None`` (the default) — in that
+            case the UTM zone is computed automatically from the AOI centroid.
+            Only takes effect when ``crs_transform`` is also explicitly supplied
+            by the caller. Default: ``'EPSG:32648'`` (WGS 84 / UTM Zone 48N).
         crs_transform : list, optional
             Affine transform ``[xScale, xShear, xOrig, yShear, yScale, yOrig]``
-            anchoring the pixel grid. Defaults to
-            ``[10, 0, 300000, 0, -10, 300000]`` — standard Sentinel-2 UTM
-            tile-grid origin. Override if your AOI uses a different tile origin.
+            anchoring the pixel grid. When ``None`` (default), the UTM zone is
+            auto-derived from the AOI centroid and the standard S2 tile-grid
+            origin ``[10, 0, 300000, 0, -10, 300000]`` is used. Supply both
+            ``crs`` and ``crs_transform`` together to fully override.
         mod : float, optional
             HPF modulating factor (sharpening strength). Default: ``0.25``.
 
@@ -676,10 +678,11 @@ class Reflectance_Data:
         >>> rd = Reflectance_Data()
         >>> collection, _ = rd.get_s2_optical_data(aoi, 2022, 2023)
         >>> img = final_Image().get_temporal_composite(collection, aoi)
-        >>> # Default — UTM 48N (most of Indonesia / mainland SE Asia)
+        >>> # Auto UTM zone derived from AOI centroid (recommended)
         >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi)
-        >>> # Eastern Indonesia (UTM 49S)
-        >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi, crs='EPSG:32749')
+        >>> # Force a specific CRS and tile-grid origin (advanced override)
+        >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi, crs='EPSG:32749',
+        ...                                  crs_transform=[10, 0, 300000, 0, -10, 300000])
         """
         try:
             if aoi is not None:
@@ -687,10 +690,27 @@ class Reflectance_Data:
             else:
                 geometry = image.geometry()
 
-            # Default crs_transform anchors the grid to the standard S2 UTM tile origin.
-            # The 20m grid shares the same origin but uses 20m pixel spacing.
+            # --- CRS resolution ---
+            # Compute UTM zone from the AOI centroid (client-side Python math).
+            # Works identically for single scenes and composites — no dependency
+            # on GEE's stored image projection, which composites lose (reset to EPSG:4326).
+            # One getInfo() on the geometry centroid is cheap and always reliable.
+            # Only runs when the caller has not explicitly supplied crs_transform;
+            # an explicit crs_transform means the caller also owns the crs parameter.
             if crs_transform is None:
+                centroid_coords = geometry.centroid(maxError=1000).getInfo()['coordinates']
+                lon, lat = centroid_coords[0], centroid_coords[1]
+                zone = int((lon + 180) / 6) + 1
+                epsg_code = 32600 + zone if lat >= 0 else 32700 + zone
+                crs = f'EPSG:{epsg_code}'
                 crs_transform = [10, 0, 300_000, 0, -10, 300_000]
+                self.logger.info(
+                    f"Auto UTM zone: {crs} "
+                    f"(centroid lon={lon:.4f}, lat={lat:.4f}, zone={zone})"
+                )
+            else:
+                self.logger.info(f"Using caller-supplied crs_transform with CRS: {crs}")
+
             crs_transform_20m = [20, 0, crs_transform[2], 0, -20, crs_transform[5]]
 
             bands_10m = ['BLUE', 'GREEN', 'RED', 'NIR']
