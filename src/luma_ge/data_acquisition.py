@@ -575,153 +575,229 @@ class Reflectance_Data:
     #Band renaming for Sentinel-2. Standarized band name for later use
     def rename_s2_bands(self, image: ee.Image) -> ee.Image:
         """
-        Rename Sentinel-2 SR bands to standardized semantic names and apply
-        the Sentinel-2 SR scale factor.
+        Rename Sentinel-2 SR bands to standardized semantic names.
 
-        Selects the raw Sentinel-2 optical bands, converts them from DN to
-        surface reflectance, and renames them to a common semantic band
-        convention used across the luma-ge pipeline.
+        Selects raw Sentinel-2 optical bands and renames them to the common
+        semantic convention used across the luma-ge pipeline. No scaling is
+        applied — data remains as raw DN (0–10000 range), consistent with
+        the JS reference implementation.
 
         Parameters
         ----------
         image : ee.Image
-            Sentinel-2 SR image containing the source bands
+            Sentinel-2 SR image containing source bands
             ``['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``.
 
         Returns
         -------
         ee.Image
-            Image with scaled and renamed optical bands:
+            Image with renamed bands (DN values preserved):
             ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
             'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
-            Note: B1 (coastal aerosol, 60m) is excluded — not used in the
-            sharpening pipeline or spectral index computation.
+            Note: B1 (coastal aerosol, 60m) is excluded.
 
         Example
         -------
         >>> rd = Reflectance_Data()
         >>> renamed = rd.rename_s2_bands(image)
-        >>> # Map over a collection
         >>> renamed_col = collection.map(lambda img: rd.rename_s2_bands(img))
         """
-        optical = image.select(
-            ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12']
-        ).multiply(0.0001)
-        renamed = optical.rename(
+        # No scaling applied — data stays as raw DN (0–10000 range),
+        # consistent with the JS reference which operates on unscaled DN throughout.
+        renamed = image.select(
+            ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
             ['BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
              'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
         )
         return ee.Image(renamed.copyProperties(image, image.propertyNames()))
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
-    def sharpen_s2_bands(self, image: ee.Image, aoi=None) -> ee.Image:
+    def sharpen_s2_bands(
+        self,
+        image: ee.Image,
+        aoi=None,
+        crs: str = 'EPSG:32648',
+        crs_transform: Optional[List] = None,
+        mod: float = 0.25,
+    ) -> Optional[ee.Image]:
+        """
+        Sharpen 20m Sentinel-2 bands to 10m using HPF pan-sharpening.
+
+        Mirrors the standalone ``s2_hpf_sharpen.py`` approach: a user-supplied
+        (or default) UTM CRS with a fixed ``crs_transform`` grid anchor is used
+        for all reprojections and stat reductions. This is intentional — the
+        auto-UTM centroid approach proved unreliable for composites; explicit CRS
+        is the tested, working path.
+
+        The default CRS (``EPSG:32648``, UTM Zone 48N) covers most of Indonesia
+        and mainland SE Asia. Override ``crs`` for other regions, e.g.:
+        - ``'EPSG:32647'`` — UTM Zone 47N (western Indonesia / Thailand)
+        - ``'EPSG:32749'`` — UTM Zone 49S (eastern Indonesia)
+        - ``'EPSG:32750'`` — UTM Zone 50S (Papua / Maluku)
+
+        Algorithm (identical to standalone ``s2_hpf_sharpen.py``)
+        ----------------------------------------------------------
+        1. Build pseudo-panchromatic from 10m bands (BLUE+GREEN+RED+NIR / 4).
+        2. Reproject PAN and 20m bands to the fixed UTM grid via ``crs_transform``.
+        3. Convolve PAN with a 5x5 Laplacian HPF kernel (centred at -2, -2).
+        4. Bilinear-resample 20m bands to 10m on the same grid.
+        5. Inject HPF detail: ``out = MS_resampled + HPF x (sigma_MS / sigma_HPF x mod)``.
+        6. Linear histogram stretch: z-score match mean/stdDev of original 20m bands.
+        7. Recombine with native 10m bands and copy image properties.
+
+        Parameters
+        ----------
+        image : ee.Image
+            Output of ``rename_s2_bands`` — raw DN 0-10000, bands:
+            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
+            'NIR','RED_EDGE4','SWIR1','SWIR2']``.
+        aoi : ee.Geometry or ee.FeatureCollection, optional
+            Region for stat reductions. Falls back to ``image.geometry()`` if None.
+        crs : str, optional
+            EPSG code of the target UTM projection.
+            Default: ``'EPSG:32648'`` (WGS 84 / UTM Zone 48N).
+        crs_transform : list, optional
+            Affine transform ``[xScale, xShear, xOrig, yShear, yScale, yOrig]``
+            anchoring the pixel grid. Defaults to
+            ``[10, 0, 300000, 0, -10, 300000]`` — standard Sentinel-2 UTM
+            tile-grid origin. Override if your AOI uses a different tile origin.
+        mod : float, optional
+            HPF modulating factor (sharpening strength). Default: ``0.25``.
+
+        Returns
+        -------
+        ee.Image or None
+            Sharpened image with bands
+            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
+            'NIR','RED_EDGE4','SWIR1','SWIR2']``, or ``None`` on error.
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> collection, _ = rd.get_s2_optical_data(aoi, 2022, 2023)
+        >>> img = final_Image().get_temporal_composite(collection, aoi)
+        >>> # Default — UTM 48N (most of Indonesia / mainland SE Asia)
+        >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi)
+        >>> # Eastern Indonesia (UTM 49S)
+        >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi, crs='EPSG:32749')
+        """
         try:
             if aoi is not None:
                 geometry = aoi.geometry() if isinstance(aoi, ee.FeatureCollection) else aoi
             else:
                 geometry = image.geometry()
 
-            proj_10m = image.select('NIR').projection()
+            # Default crs_transform anchors the grid to the standard S2 UTM tile origin.
+            # The 20m grid shares the same origin but uses 20m pixel spacing.
+            if crs_transform is None:
+                crs_transform = [10, 0, 300_000, 0, -10, 300_000]
+            crs_transform_20m = [20, 0, crs_transform[2], 0, -20, crs_transform[5]]
 
-            # --- 1. Composite PAN (Kaplan 2018) ---
-            pan = (image
-                .select(['BLUE', 'GREEN', 'RED', 'NIR'])
-                .reduce(ee.Reducer.mean())
-                .rename('PAN')
-                .reproject(crs=proj_10m, scale=10)
+            bands_10m = ['BLUE', 'GREEN', 'RED', 'NIR']
+            bands_20m = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
+                         'RED_EDGE4', 'SWIR1', 'SWIR2']
+
+            # --- 1. Synthetic panchromatic: explicit add/divide mirrors standalone ---
+            b = image.select(bands_10m)
+            pan = (
+                b.select('BLUE')
+                 .add(b.select('GREEN'))
+                 .add(b.select('RED'))
+                 .add(b.select('NIR'))
+                 .divide(4)
+                 .rename('PAN')
+                 .reproject(crs=crs, crsTransform=crs_transform)
             )
 
-            # --- 2. Fixed high-boost HPF kernel (from reference JS code) ---
-            # 5x5 Laplacian-style kernel; center=24, all others=-1, sum=0
-            kernel_weights = [
-                [-1, -1, -1, -1, -1],
-                [-1, -1, -1, -1, -1],
-                [-1, -1, 24, -1, -1],
-                [-1, -1, -1, -1, -1],
-                [-1, -1, -1, -1, -1],
-            ]
-            kernel = ee.Kernel.fixed(5, 5, kernel_weights, -3, -3, False)
+            # --- 2. 20m bands snapped to their native 20m UTM grid ---
+            twenty_m = (
+                image.select(bands_20m)
+                     .reproject(crs=crs, crsTransform=crs_transform_20m)
+            )
+
+            # --- 3. HPF kernel: 5x5 Laplacian, origin at -2,-2 (correctly centred) ---
+            kernel = ee.Kernel.fixed(
+                5, 5,
+                [[-1, -1, -1, -1, -1],
+                 [-1, -1, -1, -1, -1],
+                 [-1, -1, 24, -1, -1],
+                 [-1, -1, -1, -1, -1],
+                 [-1, -1, -1, -1, -1]],
+                -2, -2, False,
+            )
             hpf = pan.convolve(kernel)
 
-            # --- 3. Modulating factor (dampens over-sharpening) ---
-            mod = 0.25
-
-            # --- 4. Resample 20m bands ---
-            bands_20m_names = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
-                            'RED_EDGE4', 'SWIR1', 'SWIR2']
-            resampled_20m = (image
-                .select(bands_20m_names)
+            # --- 4. Bilinear resample 20m -> 10m on the same UTM grid ---
+            resampled_20m = (
+                twenty_m
                 .resample('bilinear')
-                .reproject(crs=proj_10m, scale=10)
+                .reproject(crs=crs, crsTransform=crs_transform)
             )
 
-            # --- 5. Std dev for MS bands (at 20m) and HPF (at 10m, its native scale) ---
-            # MS bands and HPF must be sampled at their own native scales so the
-            # weight W = SD(MS) / SD(HPF) * mod is computed correctly.
-            ms_std_dict = resampled_20m.reduceRegion(
-                reducer=ee.Reducer.stdDev(),
-                geometry=geometry,
-                scale=20,
-                maxPixels=1e8,
-                bestEffort=True
+            # --- 5. stdDev for injection weights (fully server-side, no getInfo) ---
+            ms_sd_dict = ee.Dictionary(
+                resampled_20m.reduceRegion(
+                    reducer=ee.Reducer.stdDev(),
+                    geometry=geometry,
+                    bestEffort=True,
+                )
             )
-            hpf_std_dict = hpf.reduceRegion(
-                reducer=ee.Reducer.stdDev(),
-                geometry=geometry,
-                scale=10,
-                maxPixels=1e8,
-                bestEffort=True
+            hpf_sd = ee.Number(
+                ee.List(
+                    hpf.reduceRegion(
+                        reducer=ee.Reducer.stdDev(),
+                        geometry=geometry,
+                        bestEffort=True,
+                    ).values()
+                ).get(0)
+            ).max(1e-6)
+
+            # --- 6. HPF injection: out = MS_resampled + HPF x (sigma_MS / sigma_HPF x mod) ---
+            ms_sd_list = ms_sd_dict.values(bands_20m)  # ordered ee.List, no getInfo
+            sharpened_bands = []
+            for i, band in enumerate(bands_20m):
+                ms_sd = ee.Number(ms_sd_list.get(i)).max(1e-6)
+                correction = hpf.multiply(ms_sd).divide(hpf_sd).multiply(mod)
+                sharpened_bands.append(
+                    resampled_20m.select(band).add(correction).rename(band)
+                )
+            sharpened = ee.Image.cat(sharpened_bands)
+
+            # --- 7. Linear stretch: z-score histogram match to original 20m stats ---
+            # _stats_to_image keeps all stat operations server-side (no getInfo loop)
+            def _stats_to_image(stats_dict, bands):
+                values = ee.Dictionary(stats_dict).values(bands)
+                return ee.Image.cat(
+                    [ee.Image.constant(values.get(i)) for i in range(len(bands))]
+                ).rename(bands)
+
+            sharp_mean = _stats_to_image(
+                sharpened.reduceRegion(reducer=ee.Reducer.mean(), geometry=geometry, bestEffort=True),
+                bands_20m,
             )
-            hpf_std = ee.Number(hpf_std_dict.get('PAN')).max(1e-6)
-
-            # --- 6. Inject HPF with modulated weight per band ---
-            def sharpen_band(band_name):
-                ms     = resampled_20m.select([band_name])
-                ms_std = ee.Number(ms_std_dict.get(band_name)).max(1e-6)
-                weight = ms_std.divide(hpf_std).multiply(mod)
-                return ms.add(hpf.multiply(weight)).rename([band_name])
-
-            sharpened_bands = ee.Image.cat(
-                [sharpen_band(b) for b in bands_20m_names]
+            sharp_sd = _stats_to_image(
+                sharpened.reduceRegion(reducer=ee.Reducer.stdDev(), geometry=geometry, bestEffort=True),
+                bands_20m,
             )
-
-            # --- 7. Linear stretch: z-score normalise sharpened → rescale to original 20m stats ---
-            # Preserves the spectral mean and variance of the original 20m bands exactly.
-            # Formula: (sharp - mean(sharp)) / SD(sharp) * SD(orig) + mean(orig)
-            orig_stats = image.select(bands_20m_names).reduceRegion(
-                reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
-                geometry=geometry,
-                scale=20,
-                maxPixels=1e8,
-                bestEffort=True
+            orig_mean = _stats_to_image(
+                twenty_m.reduceRegion(reducer=ee.Reducer.mean(), geometry=geometry, bestEffort=True),
+                bands_20m,
             )
-            sharp_stats = sharpened_bands.reduceRegion(
-                reducer=ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True),
-                geometry=geometry,
-                scale=10,
-                maxPixels=1e8,
-                bestEffort=True
-            )
-
-            def stretch_band(band_name):
-                band   = sharpened_bands.select([band_name])
-                s_mean = ee.Number(sharp_stats.get(band_name + '_mean'))
-                s_std  = ee.Number(sharp_stats.get(band_name + '_stdDev')).max(1e-6)
-                o_mean = ee.Number(orig_stats.get(band_name + '_mean'))
-                o_std  = ee.Number(orig_stats.get(band_name + '_stdDev'))
-                return (band.subtract(s_mean)
-                            .divide(s_std)
-                            .multiply(o_std)
-                            .add(o_mean)
-                            .rename([band_name]))
-
-            stretched_bands = ee.Image.cat(
-                [stretch_band(b) for b in bands_20m_names]
+            orig_sd = _stats_to_image(
+                twenty_m.reduceRegion(reducer=ee.Reducer.stdDev(), geometry=geometry, bestEffort=True),
+                bands_20m,
             )
 
-            # --- 8. Recombine ---
-            # Cast back to ee.Image — copyProperties returns ee.Element at the Python level
-            result = image.select(['BLUE', 'GREEN', 'RED', 'NIR']).addBands(stretched_bands)
+            stretched = (
+                sharpened
+                .subtract(sharp_mean)
+                .divide(sharp_sd)
+                .multiply(orig_sd)
+                .add(orig_mean)
+            )
+
+            # --- 8. Recombine: native 10m bands + sharpened 20m bands ---
+            result = image.select(bands_10m).addBands(stretched)
             return ee.Image(result.copyProperties(image, image.propertyNames()))
 
         except ee.EEException as e:
@@ -730,6 +806,7 @@ class Reflectance_Data:
         except Exception as e:
             self.logger.error(f"Unexpected error in sharpen_s2_bands: {e}")
             return None
+
     #Core methods to retrieve sentinel 2 data
     def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.60,
         verbose: bool = True,
@@ -769,7 +846,7 @@ class Reflectance_Data:
         tuple : (ee.ImageCollection, dict)
             * ``ee.ImageCollection`` — filtered and pre-processed collection
               with standardized band names
-              ``['AEROSOL','BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
+              ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
               'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
             * ``dict`` — statistics and metadata with keys:
               ``dataset``, ``sensor``, ``date_range_requested``,
@@ -947,8 +1024,7 @@ class Reflectance_Data:
 
         Returns
         -------
-        tuple : (ee.ImageCollection, dict)
-            Filtered and preprocessed image collection with statistics.
+        tuple : (ee.ImageCollection, dict) Filtered and preprocessed image collection with statistics.
         
         References
         -------
@@ -1493,8 +1569,9 @@ class final_Image:
             'gap_area_km2': round(gap_km2, 2)
         }
     #Quality mosaic for stacking multiple scene and then clip them. This procedure stacked all of the imagery regardless of the pixel value
-    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI', 
-                          calculate_coverage=False, coverage_scale=30, verbose=True):
+    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI',
+                          calculate_coverage=False, coverage_scale=30,
+                          sharpen: bool = False, verbose=True):
         """
         Create a mosaic that selects the best available pixels across the AOI.
         Uses qualityMosaic to automatically select pixels with highest quality metric.
@@ -1502,27 +1579,31 @@ class final_Image:
         Parameters
         ----------
         collection : ee.ImageCollection
-            Filtered image collection from Reflectance_Data
+            Filtered image collection from Reflectance_Data.
         aoi : ee.Geometry or ee.FeatureCollection
-            Area of interest for clipping
+            Area of interest for clipping.
         quality_band : str
             Band to use for quality assessment. Options:
-            - 'NDVI': Normalized Difference Vegetation Index (Select pixels with high NDVI value)
-            - 'NIR': Near-infrared band (general purpose, select pixel with highest NIR reflectance)
+            - 'NDVI': Normalized Difference Vegetation Index (selects pixels with highest NDVI)
+            - 'NIR': Near-infrared band (general purpose)
         calculate_coverage : bool
-            If True, calculate data coverage within AOI (default: False)
-            Note: This triggers a client-side computation and may be slow for large areas
+            If True, calculate data coverage within AOI (default: False).
+            Note: This triggers a client-side computation and may be slow for large areas.
         coverage_scale : int
-            Pixel scale in meters for coverage calculation (default: 30m)
-            Use larger values (90m+) for faster computation on large areas
+            Pixel scale in meters for coverage calculation (default: 30m).
+            Use larger values (90m+) for faster computation on large areas.
+        sharpen : bool
+            If True, apply HPF pan-sharpening to upsample 20m Sentinel-2 bands
+            (RED_EDGE1–SWIR2) to 10m after mosaicking. Only effective for
+            Sentinel-2 collections; ignored with a warning for Landsat. Default is False.
         verbose : bool
-            If True, log detailed information (default: True)
+            If True, log detailed information (default: True).
             
         Returns
         -------
         tuple : (ee.Image, dict) if calculate_coverage=True, else ee.Image
-            - Quality mosaic image clipped to AOI with best available pixels
-            - Coverage statistics dict (only if calculate_coverage=True)
+            - Quality mosaic image clipped to AOI with best available pixels.
+            - Coverage statistics dict (only if calculate_coverage=True).
             
         Example
         -------
@@ -1530,7 +1611,6 @@ class final_Image:
         >>> collection, stats = data_fetcher.get_optical_data(aoi, 2020, 2020, 'L8_SR')
         >>> image_processor = final_Image()
         >>> quality_image = image_processor.get_quality_mosaic(collection, aoi, quality_band='NDVI')
-        >>> # With coverage calculation
         >>> quality_image, coverage = image_processor.get_quality_mosaic(
         ...     collection, aoi, quality_band='NDVI', calculate_coverage=True
         ... )
@@ -1595,7 +1675,26 @@ class final_Image:
             start_str = start_date.getInfo()
             end_str = end_date.getInfo()
             self.logger.info(f"Mosaic date range: {start_str} to {end_str}")
-        
+
+        # --- Optional HPF sharpening (Sentinel-2 only) ---
+        if sharpen:
+            s2_bands = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
+            band_names = clipped.bandNames().getInfo()
+            if all(b in band_names for b in s2_bands):
+                rd = Reflectance_Data.__new__(Reflectance_Data)
+                rd.logger = self.logger
+                clipped = rd.sharpen_s2_bands(clipped, aoi=aoi)
+                if clipped is None:
+                    raise RuntimeError("sharpen_s2_bands failed — check logs for details")
+                if verbose:
+                    self.logger.info("HPF sharpening applied to 20m Sentinel-2 bands")
+            else:
+                if verbose:
+                    self.logger.warning(
+                        "sharpen=True ignored: collection does not contain Sentinel-2 20m bands "
+                        f"({', '.join(s2_bands)})"
+                    )
+
         # Calculate data coverage if requested
         if calculate_coverage:
             coverage_stats = self.calculate_data_coverage(
@@ -1608,24 +1707,33 @@ class final_Image:
     #logic behind cloud 'removal' is that cloud typically have higher pixel value due to high reflectance,
     #thus when median composite is used cloud get 'remove' from the final image
     #adjust scale if needed
-    def get_temporal_composite(self, collection, aoi, reducer='median',calculate_coverage=False, 
-                              coverage_scale=30, verbose=True):
+    def get_temporal_composite(self, collection, aoi, reducer='median', calculate_coverage=False,
+                              coverage_scale=30, sharpen: bool = False, verbose=True):
         """
         Create a temporal composite from image collection using specified reducer.
         Output is always clipped to the AOI.
         
         Parameters
         ----------
-        collection : ee.ImageCollection. Filtered image collection from Reflectance_Data
-        aoi :  ee.FeatureCollection. Area of interest for clipping
-        reducer : str or ee.Reducer. Reduction method: 'median', 'mean', 'min', 'max', 'percentile_'
-        add_band_stats : bool, If True, add additional bands with stdDev and count (default: False)
-        calculate_coverage : bool. If True, calculate data coverage within AOI (default: False)
-            Note: This triggers a client-side computation and may be slow for large areas
-        coverage_scale : int. Pixel scale in meters for coverage calculation (default: 30m)
-            Use larger values (90m+) for faster computation on large areas
+        collection : ee.ImageCollection
+            Filtered image collection from Reflectance_Data.
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest for clipping.
+        reducer : str or ee.Reducer
+            Reduction method: 'median', 'mean', 'min', 'max', 'percentile_<n>'.
+        calculate_coverage : bool
+            If True, calculate data coverage within AOI (default: False).
+            Note: This triggers a client-side computation and may be slow for large areas.
+        coverage_scale : int
+            Pixel scale in meters for coverage calculation (default: 30m).
+            Use larger values (90m+) for faster computation on large areas.
+        sharpen : bool
+            If True, apply HPF pan-sharpening to upsample 20m Sentinel-2 bands
+            (RED_EDGE1–SWIR2) to 10m after compositing. Only effective for
+            Sentinel-2 collections that contain those band names; ignored silently
+            for Landsat. Default is False.
         verbose : bool
-            If True, log detailed information (default: True)
+            If True, log detailed information (default: True).
             
         Returns
         -------
@@ -1639,6 +1747,9 @@ class final_Image:
         >>> collection, stats = data_fetcher.get_optical_data(aoi, 2020, 2020, 'L8_SR')
         >>> image_processor = final_Image()
         >>> composite = image_processor.get_temporal_composite(collection, aoi, reducer='median')
+        >>> # Sentinel-2 with sharpening
+        >>> s2_col, _ = Reflectance_Data().get_s2_optical_data(aoi, 2022, 2023)
+        >>> sharpened = image_processor.get_temporal_composite(s2_col, aoi, sharpen=True)
         >>> # With coverage calculation
         >>> composite, coverage = image_processor.get_temporal_composite(
         ...     collection, aoi, reducer='median', calculate_coverage=True
@@ -1710,7 +1821,26 @@ class final_Image:
             start_date_str = start_date.getInfo()
             end_date_str = end_date.getInfo()
             self.logger.info(f"Composite created from {start_date_str} to {end_date_str}")
-        
+
+        # --- Optional HPF sharpening (Sentinel-2 only) ---
+        if sharpen:
+            s2_bands = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
+            band_names = composite.bandNames().getInfo()
+            if all(b in band_names for b in s2_bands):
+                rd = Reflectance_Data.__new__(Reflectance_Data)
+                rd.logger = self.logger
+                composite = rd.sharpen_s2_bands(composite, aoi=aoi)
+                if composite is None:
+                    raise RuntimeError("sharpen_s2_bands failed — check logs for details")
+                if verbose:
+                    self.logger.info("HPF sharpening applied to 20m Sentinel-2 bands")
+            else:
+                if verbose:
+                    self.logger.warning(
+                        "sharpen=True ignored: collection does not contain Sentinel-2 20m bands "
+                        f"({', '.join(s2_bands)})"
+                    )
+
         # Calculate data coverage if requested
         if calculate_coverage:
             coverage_stats = self.calculate_data_coverage(
