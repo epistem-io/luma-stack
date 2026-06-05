@@ -430,7 +430,7 @@ class Reflectance_Data:
         >>> get_landsat = Reflectance_Data()
         #Implementation on image collection
         >>> collection = (collection.map(lambda img: get_landsat.mask_landsat_sr(img))
-        #Implementatio on Image
+        #Implementation on Image
         >>> masked_image = get_landsat.mask_landsat_sr(image)
         """
         qa = image.select('QA_PIXEL')
@@ -575,12 +575,11 @@ class Reflectance_Data:
     #Band renaming for Sentinel-2. Standarized band name for later use
     def rename_s2_bands(self, image: ee.Image) -> ee.Image:
         """
-        Rename Sentinel-2 SR bands to standardized semantic names.
+        Rename Sentinel-2 SR bands to standardized semantic names and scale to reflectance.
 
-        Selects raw Sentinel-2 optical bands and renames them to the common
-        semantic convention used across the luma-ge pipeline. No scaling is
-        applied — data remains as raw DN (0–10000 range), consistent with
-        the JS reference implementation.
+        Selects raw Sentinel-2 optical bands, renames them to the common
+        semantic convention used across the luma-ge pipeline, and scales
+        DN values (0–10000) to surface reflectance (0.0–1.0) in one step.
 
         Parameters
         ----------
@@ -591,7 +590,7 @@ class Reflectance_Data:
         Returns
         -------
         ee.Image
-            Image with renamed bands (DN values preserved):
+            Image with renamed bands scaled to 0.0–1.0 reflectance:
             ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
             'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
             Note: B1 (coastal aerosol, 60m) is excluded.
@@ -602,13 +601,11 @@ class Reflectance_Data:
         >>> renamed = rd.rename_s2_bands(image)
         >>> renamed_col = collection.map(lambda img: rd.rename_s2_bands(img))
         """
-        # No scaling applied — data stays as raw DN (0–10000 range),
-        # consistent with the JS reference which operates on unscaled DN throughout.
         renamed = image.select(
             ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
             ['BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
              'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
-        )
+        ).multiply(0.0001).toFloat()
         return ee.Image(renamed.copyProperties(image, image.propertyNames()))
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
@@ -640,7 +637,7 @@ class Reflectance_Data:
         Parameters
         ----------
         image : ee.Image
-            Output of ``rename_s2_bands`` — raw DN 0–10 000, bands:
+            Output of ``rename_s2_bands`` — scaled reflectance 0.0–1.0, bands:
             ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
             'NIR','RED_EDGE4','SWIR1','SWIR2']``.
         aoi : ee.Geometry or ee.FeatureCollection, optional
