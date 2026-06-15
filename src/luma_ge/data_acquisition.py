@@ -252,8 +252,8 @@ class GEE_Asset_Manager:
 # Module 1: Cloudless Image Mosaic
 ## System Response 1.2: Search and Filter Imagery
 class Reflectance_Data:
-    """Class for fetching and pre-processing Landsat image collection from Google Earth Engine API."""
-    #Define the optical datasets. The band reflectances used is from Collection 2 Surface Reflectancce Data
+    """Class for fetching and pre-processing satellite image collection from Google Earth Engine API."""
+    #Define the Landsat optical datasets. The band reflectances used is from Collection 2 Surface Reflectancce Data
     OPTICAL_DATASETS = {
         'L1_RAW': {
             'collection': 'LANDSAT/LM01/C02/T1',
@@ -575,22 +575,24 @@ class Reflectance_Data:
     #Band renaming for Sentinel-2. Standarized band name for later use
     def rename_s2_bands(self, image: ee.Image) -> ee.Image:
         """
-        Rename Sentinel-2 SR bands to standardized semantic names and scale to reflectance.
+        Select and rename Sentinel-2 optical bands to standardized semantic names.
 
-        Selects raw Sentinel-2 optical bands, renames them to the common
-        semantic convention used across the luma-ge pipeline, and scales
-        DN values (0–10000) to surface reflectance (0.0–1.0) in one step.
+        Selects raw Sentinel-2 optical bands and renames them to the common
+        semantic convention used across the luma-ge pipeline.  Raw DN values
+        (0–10000) are preserved — scaling to reflectance (0.0–1.0) is a
+        separate, standalone operation performed by ``apply_s2_scale_factors``.
+        B1 (coastal aerosol, 60m) is excluded.
 
         Parameters
         ----------
         image : ee.Image
-            Sentinel-2 SR image containing source bands
+            Sentinel-2 image containing source bands
             ``['B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12']``.
 
         Returns
         -------
         ee.Image
-            Image with renamed bands scaled to 0.0–1.0 reflectance:
+            Image with renamed bands retaining raw DN values:
             ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2',
             'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
             Note: B1 (coastal aerosol, 60m) is excluded.
@@ -605,12 +607,37 @@ class Reflectance_Data:
             ['B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B8A', 'B11', 'B12'],
             ['BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
              'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2']
-        ).multiply(0.0001).toFloat()
+        )
         return ee.Image(renamed.copyProperties(image, image.propertyNames()))
+
+    #Apply Sentinel-2 scale factors (standalone, post-collection operation)
+    def apply_s2_scale_factors(self, image: ee.Image) -> ee.Image:
+        """
+        Convert Sentinel-2 DN values to surface reflectance in the [0, 1] range.
+
+        Parameters
+        ----------
+        image : ee.Image Sentinel-2 image with standardized band names (output of ``rename_s2_bands``).  Band values are raw DN (0–10000).
+
+        Returns
+        -------
+        ee.Image
+            Image with optical bands scaled to reflectance (0.0–1.0).
+
+        Example
+        -------
+        >>> rd = Reflectance_Data()
+        >>> collection, _ = rd.get_s2_optical_data(aoi, 2022, 2023)
+        >>> composite = final_Image().get_temporal_composite(collection, aoi)
+        >>> sharpened = rd.sharpen_s2_bands(composite, aoi=aoi)   # requires raw DN
+        >>> reflectance = rd.apply_s2_scale_factors(sharpened)    # scale after sharpen
+        """
+        optical_bands = image.multiply(0.0001).toFloat()
+        return ee.Image(optical_bands.copyProperties(image, image.propertyNames()))
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
     def sharpen_s2_bands(self, image: ee.Image, aoi=None,
-        crs: str = 'EPSG:3857',
+        crs: str = 'EPSG:3857', #legacy, might be remove 
         crs_transform: Optional[List] = None,
         mod: float = 0.25,
         best_effort: bool = True,
@@ -618,15 +645,14 @@ class Reflectance_Data:
         max_pixels: Optional[int] = None,
     ) -> Optional[ee.Image]:
         """
-        Sharpen 20m Sentinel-2 bands to 10m using High Pass Filter (HPF) injection.
-
-        Algorithm
+        Sharpen 20m Sentinel-2 bands to 10m using High Pass Filter (HPF) Multi Resolution Anlaysis (MRA)
+        Summary of the HPF algoritm as follow
         ---------
-        1. Build pseudo-panchromatic from mean of 10m bands (BLUE, GREEN, RED, NIR).
-        2. Snap PAN and 20m bands to a fixed UTM pixel grid (composite-safe).
+        1. Build pseudo-panchromatic band (PAN) from mean value of 10m bands
+        2. Snap PAN and 20m bands to a fixed UTM pixel grid.
         3. Convolve PAN with a 5×5 Laplacian HPF kernel (centred at -2, -2).
         4. Bilinear-resample 20m bands to 10m on the same UTM grid.
-        5. Compute injection weight from *native* 20m stdDev (not resampled):
+        5. Compute injection weight from *native* 20m stdDev:
                W = σ_native20m / σ_HPF × mod
         6. Inject: ``out = MS_resampled + HPF × W``. Cast to uint16.
         7. Linear histogram stretch to restore original 20m mean/stdDev:
@@ -659,9 +685,6 @@ class Reflectance_Data:
         tile_scale : float, optional
             Aggregation tile-size scaling factor. Increase (e.g. 2 or 4) if
             ``reduceRegion`` runs out of memory. Default: ``1.0``.
-        max_pixels : int, optional
-            Maximum pixels for ``reduceRegion`` calls. Defaults to GEE built-in
-            limit when ``None``.
 
         Returns
         -------
@@ -702,7 +725,7 @@ class Reflectance_Data:
                 crs = f'EPSG:{epsg_code}'
                 crs_transform = [10, 0, 300_000, 0, -10, 300_000]
                 self.logger.info(
-                    f"Auto UTM zone: {crs} "
+                    f"Retrieved UTM zone: {crs} "
                     f"(centroid lon={lon:.4f}, lat={lat:.4f}, zone={zone})"
                 )
             else:
@@ -855,7 +878,7 @@ class Reflectance_Data:
             return None
 
     #Core methods to retrieve sentinel 2 data
-    def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.60,
+    def get_s2_optical_data(self, aoi, start_date, end_date, cloud_cover: int = 30, cs_threshold: float = 0.7,
         verbose: bool = True,
         compute_detailed_stats: bool = True,):
         """
@@ -894,7 +917,8 @@ class Reflectance_Data:
               'RED_EDGE3','NIR','RED_EDGE4','SWIR1','SWIR2']``.
             * ``dict`` — statistics and metadata with keys:
               ``dataset``, ``sensor``, ``date_range_requested``,
-              ``cloud_cover_threshold``, ``initial_collection``,
+              ``cloud_cover_threshold``, ``collection_type``,
+              ``initial_collection``,
               ``filtered_collection``, ``detailed_stats_computed``.
 
         Raises
@@ -916,7 +940,7 @@ class Reflectance_Data:
         if aoi is None:
             raise ValueError("aoi must not be None — provide an ee.Geometry or ee.FeatureCollection.")
 
-        #Helper: expand 4-digit year to full date string (Requirement 6.2)
+        # Helper: expand 4-digit year to full date string (Requirement 6.2)
         def parse_year_or_date(date_input, is_start=True):
             if isinstance(date_input, int):
                 return f"{date_input}-01-01" if is_start else f"{date_input}-12-31"
@@ -931,23 +955,115 @@ class Reflectance_Data:
         start_date = parse_year_or_date(start_date, is_start=True)
         end_date   = parse_year_or_date(end_date, is_start=False)
 
-        config = self.S2_DATASETS['S2_SR']
+        # SR_BOUNDARY: first date for which COPERNICUS/S2_SR_HARMONIZED is available in GEE
+        SR_BOUNDARY = '2017-03-28'
+
+        # --- Three-branch date routing (Requirements 13.1, 13.2, 13.3) ---
+        if end_date < SR_BOUNDARY:
+            # TOA-only path — SR archive does not exist before this date
+            collection_type = 'S2_TOA'
+            config = self.S2_DATASETS['S2_TOA']
+            dataset_description = config['description']
+        elif start_date >= SR_BOUNDARY:
+            # SR-only path — existing behavior
+            collection_type = 'S2_SR'
+            config = self.S2_DATASETS['S2_SR']
+            dataset_description = config['description']
+        else:
+            # Split/merge path — date range straddles the SR availability boundary
+            collection_type = 'S2_MERGED'
+            config = self.S2_DATASETS['S2_SR']  # used for cloud_property field
+            dataset_description = 'Sentinel-2 Merged TOA+SR (auto-fallback)'
 
         try:
             if verbose:
-                self.logger.info(f"Starting data fetch for {config['description']}")
                 self.logger.info(f"Date range: {start_date} to {end_date}")
                 self.logger.info(f"Cloud cover threshold (image-level): {cloud_cover}%")
                 self.logger.info(f"Cloud Score+ pixel threshold: {cs_threshold}")
                 if not compute_detailed_stats:
                     self.logger.info("Detailed statistics will not be computed")
 
-            # --- Initial collection (before cloud cover filter) ---
-            initial_collection = (
-                ee.ImageCollection(config['collection'])
-                .filterBounds(aoi)
-                .filterDate(start_date, end_date)
-            )
+                # Verbose logging for collection selection reason (Requirements 16.1, 16.2, 16.3, 16.4)
+                if collection_type == 'S2_TOA':
+                    self.logger.info(
+                        f"S2_SR data is unavailable before {SR_BOUNDARY}. "
+                        f"Using Sentinel-2 Level 1 TOA instead."
+                    )
+                elif collection_type == 'S2_SR':
+                    self.logger.info(
+                        f"Using Sentinel-2 Level 2A SR data."
+                    )
+                else:  # S2_MERGED
+                    self.logger.info(
+                        f"Date range spans the Sentinel-2 SR availability boundary ({SR_BOUNDARY}). "
+                        f"Sentinel-2 Level 1C TOA will be used for the pre-boundary portion "
+                        f"[{start_date} to 2017-03-27] and Level 2A SR for "
+                        f"the post-boundary portion [2017-03-28 to {end_date}]. "
+                        f"Split point: {SR_BOUNDARY}."
+                    )
+
+            # Cloud Score+ collection (shared across all paths)
+            cs_plus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
+
+            # Build the collection based on the routing branch
+            if collection_type == 'S2_TOA':
+                # TOA-only path
+                initial_collection = (
+                    ee.ImageCollection(self.S2_DATASETS['S2_TOA']['collection'])
+                    .filterBounds(aoi)
+                    .filterDate(start_date, end_date)
+                )
+                collection = (
+                    initial_collection
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_cover))
+                    .limit(250)
+                    .linkCollection(cs_plus, ['cs_cdf'])
+                    .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
+                    .map(lambda img: self.rename_s2_bands(img))
+                )
+
+            elif collection_type == 'S2_SR':
+                # SR-only path (existing behavior)
+                initial_collection = (
+                    ee.ImageCollection(self.S2_DATASETS['S2_SR']['collection'])
+                    .filterBounds(aoi)
+                    .filterDate(start_date, end_date)
+                )
+                collection = (
+                    initial_collection
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_cover))
+                    .limit(250)
+                    .linkCollection(cs_plus, ['cs_cdf'])
+                    .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
+                    .map(lambda img: self.rename_s2_bands(img))
+                )
+
+            else:  # S2_MERGED
+                # Split/merge path: TOA covers pre-boundary, SR covers post-boundary
+                toa_sub = (
+                    ee.ImageCollection(self.S2_DATASETS['S2_TOA']['collection'])
+                    .filterBounds(aoi)
+                    .filterDate(start_date, '2017-03-27')
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_cover))
+                    .limit(250)
+                    .linkCollection(cs_plus, ['cs_cdf'])
+                    .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
+                    .map(lambda img: self.rename_s2_bands(img))
+                )
+                sr_sub = (
+                    ee.ImageCollection(self.S2_DATASETS['S2_SR']['collection'])
+                    .filterBounds(aoi)
+                    .filterDate('2017-03-28', end_date)
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_cover))
+                    .limit(250)
+                    .linkCollection(cs_plus, ['cs_cdf'])
+                    .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
+                    .map(lambda img: self.rename_s2_bands(img))
+                )
+                initial_collection = toa_sub.merge(sr_sub)
+                collection = initial_collection
+
+            # --- Statistics ---
             stats_object = Reflectance_Stats()
             initial_stats = stats_object.get_collection_statistics(
                 initial_collection,
@@ -964,32 +1080,14 @@ class Reflectance_Data:
                     f"Date range of available images: {initial_stats['date_range']}"
                 )
 
-            #Filter by cloud cover, limit scene collection, join the main collection with Cloud Score+
-            collection = (
-                initial_collection
-                .filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
-                .limit(350)
-            )
-
-            #Join Cloud Score+ 'cs_cdf' band via linkCollection
-            cs_plus = ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED')
-            collection = collection.linkCollection(cs_plus, ['cs_cdf'])
-
-            #Apply processing pipeline: mask → scale → rename
-            collection = (
-                collection
-                .map(lambda img: self.mask_s2_clouds(img, threshold=cs_threshold))
-                .map(lambda img: self.rename_s2_bands(img))
-            )
-
-            #Filtered stats (after cloud cover filter + processing)
+            # Filtered stats (after cloud cover filter + processing)
             filtered_stats = stats_object.get_collection_statistics(
                 collection,
                 compute_detailed_stats,
                 cloud_property='CLOUDY_PIXEL_PERCENTAGE',
             )
 
-            #Verbose logging
+            # Verbose logging of filtered collection details
             if verbose and compute_detailed_stats:
                 if filtered_stats.get('total_images', 0) > 0:
                     self.logger.info(
@@ -1031,10 +1129,11 @@ class Reflectance_Data:
                 )
 
             return collection, {
-                'dataset': config['description'],
-                'sensor': config['sensor'],
+                'dataset': dataset_description,
+                'sensor': 'S2',
                 'date_range_requested': f"{start_date} to {end_date}",
                 'cloud_cover_threshold': cloud_cover,
+                'collection_type': collection_type,
                 'initial_collection': initial_stats,
                 'filtered_collection': filtered_stats,
                 'detailed_stats_computed': compute_detailed_stats,
