@@ -1,0 +1,20 @@
+LULC_24,waterbody_cover,bareSoil_cover,builtup_cover,herb_horizontal_spreading,herb_cover,palm_horizontal_spreading,palm_cover,shrub_horizontal_spreading,shrub_cover,species_name,timber_extraction,tree_cover,tree_horizontal_spreading,woody_leaf_phenology,agricultural_activity
+Hutan lahan kering primer,0-5,0,0,unevenlySpread,0-10,unevenlySpread,0-10,unevenlySpread,0-10,others,No,90-100,unevenlySpread,evergreen/deciduous,No
+Hutan lahan kering sekunder,0-10,0,0-10,unevenlySpread,0-15,unevenlySpread,0-15,unevenlySpread,0-10,others,Yes/no,70-90,unevenlySpread,evergreen/deciduous,Yes/no
+Hutan rawa sekunder/bekas tebangan,0-10,0,0-10,unevenlySpread,0-15,unevenlySpread,0-15,unevenlySpread,0-10,others,Yes/no,70-90,unevenlySpread,evergreen/deciduous,Yes/no
+Hutan mangrove sekunder/bekas tebangan,0-10,0,0-5,unevenlySpread,0-5,clusters,0-15,clusters,0-10,mangrove,Yes/no,70-90,clusters,evergreen,Yes/no
+Hutan tanaman,0-20,0-5,0-20,unevenlySpread,0-15,regularRowsGeneral,0-90,unevenlySpread,0-15,others,Yes,30-90,regularRowsSingleElement,evergreen/deciduous,No
+Perkebunan/Kebun,0-25,0-10,0-25,unevenlySpread,0-20,regularRowsGeneral,0-70,unevenlySpread,0-20,others,No,0-30,regularRowsGeneral,evergreen,Yes
+Semak belukar,0-20,0,0-20,unevenlySpread,0-10,unevenlySpread,0-10,unevenlySpread,50-90,others,Yes/no,0-30,unevenlySpread,evergreen/deciduous,Yes/no
+Semak belukar rawa,0-10,0,0-10,unevenlySpread,0-10,unevenlySpread,0-10,unevenlySpread,40-80,others,Yes/no,0-30,unevenlySpread,evergreen,Yes/no
+Pertanian lahan kering,0-40,0-10,0-40,regularRowsGeneral,0-15,unevenlySpread,0-15,unevenlySpread,0-15,others,Yes/no,0-30,unevenlySpread,deciduous,Yes/no
+Pertanian Lahan Kering campur semak,0-30,0-10,0-30,unevenlySpread,0-15,unevenlySpread,0-15,unevenlySpread,30-60,others,Yes/no,0-30,unevenlySpread,deciduous,Yes/no
+Sawah,0-15,0-5,30-80,regularRowsSingleElement,0-5,other,0,other,0-5,others,No,0-5,other,deciduous,Yes
+Tambak,0-15,0-5,0-10,other,0,other,0,other,0,others,No,0,other,deciduous,No
+Permukiman/lahan terbangun,0-20,60-100,0-15,clusters,0-10,clusters,0-10,clusters,0-10,others,No,0-10,clusters,evergreen,No
+Transmigrasi,0-35,20-60,0-35,unevenlySpread,0-20,regularRowsGeneral,0-20,unevenlySpread,0-20,coconut,No,0-10,regularRowsGeneral,deciduous,No
+Tanah terbuka,60-100,0-10,0-20,other,0-15,other,0,other,0-5,others,No,0,other,deciduous,No
+Pertambangan,70-100,0-15,0-10,other,0-10,other,0,other,0-15,others,No,0,other,deciduous,No
+Tubuh air,0,0,0-10,other,0,other,0,other,0,others,No,0,other,deciduous,No
+Rawa,0-10,0,20-50,unevenlySpread,0-5,unevenlySpread,0-15,unevenlySpread,50-90,others,No,0,unevenlySpread,evergreen,No
+Bandara/Pelabuhan,0-15,70-100,0-15,other,0-5,other,0,other,0-10,others,No,0,other,deciduous,No
