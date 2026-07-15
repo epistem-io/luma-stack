@@ -501,7 +501,33 @@ class LULC_Scheme_Manager:
                 {'ID': 15, 'Class Name': 'Settlement', 'Color Code': '#FF0000'},
                 {'ID': 16, 'Class Name': 'Cleared land', 'Color Code': '#D2B48C'},
                 {'ID': 17, 'Class Name': 'Waterbody', 'Color Code': '#0000FF'},
-            ]
+            ],
+            "Epistem": [
+                {'ID': 1, 'Class Name': 'Primary Dryland Forest', 'Color Code': '#006400'},
+                {'ID': 2, 'Class Name': 'Secondary Dryland Forest', 'Color Code': '#228B22'},
+                {'ID': 3, 'Class Name': 'Primary Mangrove Forest', 'Color Code': '#4169E1'},
+                {'ID': 4, 'Class Name': 'Secondary Mangrove Forest', 'Color Code': '#87CEEB'},
+                {'ID': 5, 'Class Name': 'Primary Swamp Forest', 'Color Code': '#2E8B57'},
+                {'ID': 6, 'Class Name': 'Secondary Swamp Forest', 'Color Code': '#8FBC8F'},
+                {'ID': 7, 'Class Name': 'Plantation Forest', 'Color Code': '#32CD32'},
+                {'ID': 8, 'Class Name': 'Rubber Monoculture', 'Color Code': '#8B4513'},
+                {'ID': 9, 'Class Name': 'Oil palm Monoculture', 'Color Code': '#FF8C00'},
+                {'ID': 10, 'Class Name': 'Cacao Monoculture', 'Color Code': '#D2691E'},
+                {'ID': 11, 'Class Name': 'Coconut monoculture', 'Color Code': '#F4A460'},
+                {'ID': 12, 'Class Name': 'Other Monoculture', 'Color Code': '#DAA520'},
+                {'ID': 13, 'Class Name': 'Other Cropland', 'Color Code': '#FFFF00'},
+                {'ID': 14, 'Class Name': 'Coffee agroforestry', 'Color Code': '#6B8E23'},
+                {'ID': 15, 'Class Name': 'Rubber agroforestry', 'Color Code': '#9ACD32'},
+                {'ID': 16, 'Class Name': 'Mixed/home garden', 'Color Code': '#7CFC00'},
+                {'ID': 17, 'Class Name': 'Paddy field', 'Color Code': '#EEE8AA'},
+                {'ID': 18, 'Class Name': 'Grass or Savanna', 'Color Code': '#ADFF2F'},
+                {'ID': 19, 'Class Name': 'Shrub', 'Color Code': '#90EE90'},
+                {'ID': 20, 'Class Name': 'Settlement', 'Color Code': '#FF0000'},
+                {'ID': 21, 'Class Name': 'Cleared Land', 'Color Code': '#D2B48C'},
+                {'ID': 22, 'Class Name': 'Mining area', 'Color Code': '#808080'},
+                {'ID': 23, 'Class Name': 'Waterbody', 'Color Code': '#0000FF'},
+                {'ID': 24, 'Class Name': 'Fish pond', 'Color Code': '#00BFFF'},
+        ]
         }
     
     @staticmethod
