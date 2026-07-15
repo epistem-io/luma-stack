@@ -1,0 +1,361 @@
+ID,LULC_24,waterbody_cover,bareSoil_cover,builtup_cover,herb_horizontal_spreading,herb_cover,palm_horizontal_spreading,palm_cover,shrub_horizontal_spreading,shrub_cover,species_name,timber_extraction,tree_cover,tree_horizontal_spreading,woody_leaf_phenology,agricultural_activity
+1,Hutan lahan kering primer,3.9,0,0,unevenlySpread,0.8,unevenlySpread,8.7,unevenlySpread,5.7,others,No,94.9,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,4.4,0,0,unevenlySpread,6.5,unevenlySpread,6.4,unevenlySpread,6.4,others,No,98.2,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,0.7,0,0,unevenlySpread,9.7,unevenlySpread,0.5,unevenlySpread,7.8,others,No,94.0,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,4.2,0,0,unevenlySpread,4.0,unevenlySpread,2.7,unevenlySpread,9.6,others,No,96.4,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,0.9,0,0,unevenlySpread,6.8,unevenlySpread,1.6,unevenlySpread,8.9,others,No,95.5,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,4.5,0,0,unevenlySpread,9.4,unevenlySpread,3.7,unevenlySpread,6.6,others,No,95.0,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,3.7,0,0,unevenlySpread,2.4,unevenlySpread,1.1,unevenlySpread,8.4,others,No,92.3,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,4.3,0,0,unevenlySpread,3.6,unevenlySpread,9.1,unevenlySpread,1.6,others,No,98.2,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,4.6,0,0,unevenlySpread,5.5,unevenlySpread,1.7,unevenlySpread,2.3,others,No,98.0,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,0.1,0,0,unevenlySpread,6.3,unevenlySpread,1.5,unevenlySpread,4.7,others,No,93.4,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,4.5,0,0,unevenlySpread,9.9,unevenlySpread,0.4,unevenlySpread,5.2,others,No,97.7,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,4.3,0,0,unevenlySpread,9.8,unevenlySpread,0.6,unevenlySpread,3.8,others,No,93.1,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,0.3,0,0,unevenlySpread,6.2,unevenlySpread,9.2,unevenlySpread,0.5,others,No,94.6,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,3.3,0,0,unevenlySpread,2.5,unevenlySpread,0.8,unevenlySpread,8.2,others,No,91.0,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,1.6,0,0,unevenlySpread,4.3,unevenlySpread,8.3,unevenlySpread,1.7,others,No,95.4,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,3.1,0,0,unevenlySpread,1.1,unevenlySpread,3.1,unevenlySpread,4.5,others,No,99.9,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,2.9,0,0,unevenlySpread,9.7,unevenlySpread,6.0,unevenlySpread,2.3,others,No,90.3,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,2.6,0,0,unevenlySpread,0.1,unevenlySpread,4.1,unevenlySpread,5.0,others,No,97.5,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,1.7,0,0,unevenlySpread,7.9,unevenlySpread,4.5,unevenlySpread,3.5,others,No,90.1,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,4.6,0,0,unevenlySpread,8.0,unevenlySpread,4.9,unevenlySpread,7.4,others,No,92.8,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,2.8,0,0,unevenlySpread,1.1,unevenlySpread,4.1,unevenlySpread,7.8,others,No,93.9,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,3.8,0,0,unevenlySpread,3.2,unevenlySpread,8.4,unevenlySpread,6.8,others,No,96.8,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,4.4,0,0,unevenlySpread,8.9,unevenlySpread,9.6,unevenlySpread,5.5,others,No,94.0,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,3.6,0,0,unevenlySpread,1.7,unevenlySpread,7.2,unevenlySpread,9.6,others,No,98.7,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,2.7,0,0,unevenlySpread,1.9,unevenlySpread,0.0,unevenlySpread,8.0,others,No,97.4,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,0.7,0,0,unevenlySpread,8.8,unevenlySpread,4.7,unevenlySpread,7.7,others,No,91.8,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,2.0,0,0,unevenlySpread,0.6,unevenlySpread,9.7,unevenlySpread,6.7,others,No,94.3,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,4.6,0,0,unevenlySpread,4.0,unevenlySpread,8.0,unevenlySpread,4.3,others,No,96.2,unevenlySpread,evergreen,No
+1,Hutan lahan kering primer,3.5,0,0,unevenlySpread,7.4,unevenlySpread,6.8,unevenlySpread,8.7,others,No,97.8,unevenlySpread,deciduous,No
+1,Hutan lahan kering primer,0.3,0,0,unevenlySpread,7.4,unevenlySpread,1.2,unevenlySpread,7.5,others,No,90.5,unevenlySpread,deciduous,No
+2,Hutan lahan kering sekunder,1.3,0,3.9,unevenlySpread,2.5,unevenlySpread,13.5,unevenlySpread,1.5,others,Yes,83.0,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,2.8,0,5.2,unevenlySpread,11.6,unevenlySpread,7.4,unevenlySpread,9.9,others,Yes,74.7,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,3.9,0,9.3,unevenlySpread,10.7,unevenlySpread,7.2,unevenlySpread,9.9,others,no,73.3,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,2.8,0,6.8,unevenlySpread,0.2,unevenlySpread,8.4,unevenlySpread,5.0,others,no,80.4,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,5.5,0,0.0,unevenlySpread,13.4,unevenlySpread,9.3,unevenlySpread,3.3,others,no,76.9,unevenlySpread,deciduous,Yes
+2,Hutan lahan kering sekunder,6.5,0,4.6,unevenlySpread,12.8,unevenlySpread,1.1,unevenlySpread,7.3,others,Yes,75.9,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,6.2,0,2.1,unevenlySpread,14.3,unevenlySpread,6.7,unevenlySpread,0.8,others,Yes,89.9,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,6.9,0,2.0,unevenlySpread,4.2,unevenlySpread,4.4,unevenlySpread,1.0,others,no,78.8,unevenlySpread,deciduous,Yes
+2,Hutan lahan kering sekunder,5.9,0,7.5,unevenlySpread,4.2,unevenlySpread,5.3,unevenlySpread,9.0,others,Yes,79.9,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,5.6,0,3.7,unevenlySpread,12.7,unevenlySpread,7.9,unevenlySpread,1.3,others,Yes,76.2,unevenlySpread,deciduous,Yes
+2,Hutan lahan kering sekunder,8.3,0,8.3,unevenlySpread,1.0,unevenlySpread,11.1,unevenlySpread,6.1,others,no,89.1,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,7.5,0,2.0,unevenlySpread,1.6,unevenlySpread,3.8,unevenlySpread,6.0,others,no,86.4,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,2.1,0,2.3,unevenlySpread,4.4,unevenlySpread,1.3,unevenlySpread,5.4,others,Yes,81.4,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,7.1,0,0.7,unevenlySpread,10.0,unevenlySpread,7.6,unevenlySpread,1.7,others,Yes,83.2,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,1.3,0,2.6,unevenlySpread,11.5,unevenlySpread,13.9,unevenlySpread,9.0,others,no,80.5,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,4.1,0,4.7,unevenlySpread,0.7,unevenlySpread,2.7,unevenlySpread,4.6,others,no,81.9,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,3.9,0,3.9,unevenlySpread,5.3,unevenlySpread,10.7,unevenlySpread,1.6,others,no,80.6,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,2.3,0,7.1,unevenlySpread,12.6,unevenlySpread,1.4,unevenlySpread,0.4,others,no,81.2,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,4.5,0,2.6,unevenlySpread,8.5,unevenlySpread,13.5,unevenlySpread,3.3,others,Yes,80.3,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,8.0,0,7.7,unevenlySpread,7.3,unevenlySpread,13.1,unevenlySpread,6.7,others,no,89.3,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,9.6,0,4.0,unevenlySpread,11.4,unevenlySpread,10.1,unevenlySpread,9.5,others,Yes,74.2,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,8.5,0,8.1,unevenlySpread,8.9,unevenlySpread,10.7,unevenlySpread,6.9,others,Yes,88.6,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,0.2,0,6.3,unevenlySpread,0.8,unevenlySpread,3.2,unevenlySpread,2.9,others,Yes,72.2,unevenlySpread,deciduous,no
+2,Hutan lahan kering sekunder,5.6,0,8.6,unevenlySpread,0.0,unevenlySpread,1.5,unevenlySpread,4.8,others,Yes,79.8,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,8.2,0,9.1,unevenlySpread,4.9,unevenlySpread,6.8,unevenlySpread,9.9,others,Yes,85.5,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,3.7,0,0.5,unevenlySpread,12.0,unevenlySpread,5.8,unevenlySpread,0.6,others,Yes,76.6,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,10.0,0,1.5,unevenlySpread,7.9,unevenlySpread,4.2,unevenlySpread,2.0,others,no,73.6,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,1.8,0,3.8,unevenlySpread,5.3,unevenlySpread,8.8,unevenlySpread,0.9,others,no,79.6,unevenlySpread,evergreen,Yes
+2,Hutan lahan kering sekunder,9.0,0,1.4,unevenlySpread,3.1,unevenlySpread,0.8,unevenlySpread,1.1,others,no,71.0,unevenlySpread,evergreen,no
+2,Hutan lahan kering sekunder,6.1,0,3.1,unevenlySpread,11.9,unevenlySpread,7.1,unevenlySpread,6.8,others,no,84.0,unevenlySpread,evergreen,no
+8,Perkebunan/Kebun,6.0,0.8,11.9,unevenlySpread,2.9,regularRowsGeneral,37.9,unevenlySpread,0.5,others,No,27.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,23.8,3.9,7.0,unevenlySpread,19.9,regularRowsGeneral,68.7,unevenlySpread,10.7,others,No,20.2,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,1.4,5.6,1.0,unevenlySpread,12.9,regularRowsGeneral,58.9,unevenlySpread,6.6,others,No,19.2,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,8.9,4.4,7.3,unevenlySpread,15.7,regularRowsGeneral,52.3,unevenlySpread,0.5,others,No,11.1,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,8.9,3.9,24.5,unevenlySpread,4.1,regularRowsGeneral,59.2,unevenlySpread,8.9,others,No,5.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,2.7,4.4,17.4,unevenlySpread,10.8,regularRowsGeneral,7.7,unevenlySpread,5.3,others,No,19.2,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,24.3,8.8,15.3,unevenlySpread,7.7,regularRowsGeneral,25.9,unevenlySpread,3.7,others,No,27.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,22.2,8.2,24.9,unevenlySpread,2.4,regularRowsGeneral,64.1,unevenlySpread,18.0,others,No,15.8,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,5.3,0.8,1.9,unevenlySpread,18.0,regularRowsGeneral,56.0,unevenlySpread,19.1,others,No,26.8,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,5.0,7.2,23.4,unevenlySpread,13.9,regularRowsGeneral,49.7,unevenlySpread,11.4,others,No,5.3,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,0.5,4.6,2.8,unevenlySpread,18.9,regularRowsGeneral,21.5,unevenlySpread,16.7,others,No,22.1,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,15.2,7.5,19.2,unevenlySpread,18.0,regularRowsGeneral,43.7,unevenlySpread,10.9,others,No,3.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,16.4,7.2,15.9,unevenlySpread,3.6,regularRowsGeneral,18.2,unevenlySpread,1.0,others,No,9.3,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,7.4,9.2,18.4,unevenlySpread,5.6,regularRowsGeneral,41.4,unevenlySpread,15.2,others,No,3.2,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,6.5,1.3,16.6,unevenlySpread,0.7,regularRowsGeneral,21.0,unevenlySpread,17.0,others,No,2.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,21.9,0.6,12.1,unevenlySpread,6.3,regularRowsGeneral,51.5,unevenlySpread,14.2,others,No,23.9,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,12.5,3.9,1.2,unevenlySpread,18.4,regularRowsGeneral,24.0,unevenlySpread,18.2,others,No,3.6,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,11.3,1.0,1.9,unevenlySpread,6.1,regularRowsGeneral,62.0,unevenlySpread,16.2,others,No,24.3,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,0.5,9.4,13.0,unevenlySpread,16.0,regularRowsGeneral,62.9,unevenlySpread,19.5,others,No,21.1,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,5.8,5.7,4.2,unevenlySpread,7.3,regularRowsGeneral,28.0,unevenlySpread,9.3,others,No,1.4,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,6.6,4.6,5.3,unevenlySpread,15.3,regularRowsGeneral,66.8,unevenlySpread,8.7,others,No,7.8,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,12.6,7.3,3.2,unevenlySpread,15.5,regularRowsGeneral,56.0,unevenlySpread,14.6,others,No,25.7,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,10.9,5.5,16.2,unevenlySpread,8.4,regularRowsGeneral,31.6,unevenlySpread,7.8,others,No,4.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,0.1,5.2,15.1,unevenlySpread,10.5,regularRowsGeneral,27.2,unevenlySpread,4.7,others,No,18.9,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,3.2,5.4,13.8,unevenlySpread,6.2,regularRowsGeneral,41.6,unevenlySpread,7.0,others,No,12.5,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,12.7,9.7,18.0,unevenlySpread,15.7,regularRowsGeneral,61.2,unevenlySpread,1.9,others,No,15.8,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,15.4,5.8,24.5,unevenlySpread,3.5,regularRowsGeneral,69.0,unevenlySpread,6.9,others,No,14.4,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,5.3,6.4,10.7,unevenlySpread,13.6,regularRowsGeneral,20.1,unevenlySpread,7.8,others,No,8.7,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,18.3,0.8,12.4,unevenlySpread,0.3,regularRowsGeneral,19.4,unevenlySpread,7.6,others,No,5.0,regularRowsGeneral,evergreen,Yes
+8,Perkebunan/Kebun,3.0,7.5,2.3,unevenlySpread,1.1,regularRowsGeneral,53.2,unevenlySpread,8.8,others,No,26.0,regularRowsGeneral,evergreen,Yes
+9,Semak belukar,15.1,0,7.5,unevenlySpread,8.0,unevenlySpread,9.6,unevenlySpread,86.5,others,Yes,6.0,unevenlySpread,evergreen,no
+9,Semak belukar,5.7,0,5.3,unevenlySpread,8.5,unevenlySpread,4.2,unevenlySpread,78.4,others,Yes,9.3,unevenlySpread,deciduous,no
+9,Semak belukar,19.1,0,3.9,unevenlySpread,5.9,unevenlySpread,7.1,unevenlySpread,65.1,others,no,6.7,unevenlySpread,deciduous,no
+9,Semak belukar,7.7,0,2.6,unevenlySpread,7.2,unevenlySpread,4.2,unevenlySpread,85.1,others,Yes,10.6,unevenlySpread,evergreen,Yes
+9,Semak belukar,17.8,0,6.4,unevenlySpread,1.1,unevenlySpread,6.9,unevenlySpread,64.7,others,no,3.0,unevenlySpread,evergreen,no
+9,Semak belukar,19.9,0,4.9,unevenlySpread,9.7,unevenlySpread,5.1,unevenlySpread,88.4,others,no,2.3,unevenlySpread,deciduous,Yes
+9,Semak belukar,1.0,0,14.4,unevenlySpread,3.9,unevenlySpread,3.0,unevenlySpread,82.6,others,Yes,9.3,unevenlySpread,deciduous,no
+9,Semak belukar,3.8,0,13.9,unevenlySpread,0.9,unevenlySpread,5.0,unevenlySpread,53.4,others,Yes,6.0,unevenlySpread,evergreen,Yes
+9,Semak belukar,12.5,0,16.7,unevenlySpread,8.5,unevenlySpread,8.3,unevenlySpread,58.2,others,Yes,18.1,unevenlySpread,evergreen,no
+9,Semak belukar,14.2,0,8.8,unevenlySpread,2.6,unevenlySpread,4.8,unevenlySpread,60.9,others,Yes,18.8,unevenlySpread,evergreen,no
+9,Semak belukar,0.3,0,15.5,unevenlySpread,7.8,unevenlySpread,2.1,unevenlySpread,68.0,others,no,21.5,unevenlySpread,deciduous,no
+9,Semak belukar,1.0,0,14.8,unevenlySpread,1.6,unevenlySpread,3.5,unevenlySpread,58.5,others,Yes,25.6,unevenlySpread,deciduous,no
+9,Semak belukar,20.0,0,4.5,unevenlySpread,4.8,unevenlySpread,1.8,unevenlySpread,70.5,others,no,28.7,unevenlySpread,evergreen,Yes
+9,Semak belukar,1.1,0,2.7,unevenlySpread,2.1,unevenlySpread,4.4,unevenlySpread,84.5,others,no,27.7,unevenlySpread,deciduous,no
+9,Semak belukar,17.4,0,8.4,unevenlySpread,1.6,unevenlySpread,9.4,unevenlySpread,87.7,others,no,16.7,unevenlySpread,evergreen,Yes
+9,Semak belukar,2.8,0,0.2,unevenlySpread,4.9,unevenlySpread,3.6,unevenlySpread,84.0,others,Yes,3.4,unevenlySpread,deciduous,no
+9,Semak belukar,3.4,0,14.8,unevenlySpread,5.4,unevenlySpread,8.9,unevenlySpread,78.3,others,Yes,13.7,unevenlySpread,evergreen,Yes
+9,Semak belukar,1.5,0,10.5,unevenlySpread,2.4,unevenlySpread,0.2,unevenlySpread,62.7,others,no,28.4,unevenlySpread,evergreen,no
+9,Semak belukar,12.1,0,13.3,unevenlySpread,9.1,unevenlySpread,1.0,unevenlySpread,52.6,others,no,24.9,unevenlySpread,evergreen,no
+9,Semak belukar,13.2,0,1.4,unevenlySpread,4.7,unevenlySpread,3.3,unevenlySpread,59.3,others,no,26.9,unevenlySpread,deciduous,no
+9,Semak belukar,15.3,0,7.7,unevenlySpread,2.5,unevenlySpread,8.6,unevenlySpread,73.3,others,Yes,24.1,unevenlySpread,evergreen,Yes
+9,Semak belukar,2.0,0,18.7,unevenlySpread,9.1,unevenlySpread,2.1,unevenlySpread,61.2,others,no,6.8,unevenlySpread,evergreen,no
+9,Semak belukar,18.2,0,7.9,unevenlySpread,4.9,unevenlySpread,1.9,unevenlySpread,56.5,others,no,14.3,unevenlySpread,deciduous,no
+9,Semak belukar,13.5,0,6.3,unevenlySpread,6.2,unevenlySpread,7.3,unevenlySpread,79.3,others,Yes,24.1,unevenlySpread,evergreen,no
+9,Semak belukar,11.1,0,9.5,unevenlySpread,8.7,unevenlySpread,4.9,unevenlySpread,57.0,others,no,25.0,unevenlySpread,deciduous,no
+9,Semak belukar,13.8,0,1.1,unevenlySpread,7.0,unevenlySpread,2.4,unevenlySpread,75.9,others,no,29.7,unevenlySpread,evergreen,no
+9,Semak belukar,1.5,0,17.7,unevenlySpread,2.1,unevenlySpread,4.7,unevenlySpread,61.0,others,no,14.7,unevenlySpread,evergreen,Yes
+9,Semak belukar,17.9,0,19.6,unevenlySpread,4.7,unevenlySpread,6.1,unevenlySpread,54.7,others,no,28.7,unevenlySpread,evergreen,no
+9,Semak belukar,17.4,0,16.5,unevenlySpread,1.6,unevenlySpread,6.3,unevenlySpread,65.4,others,no,29.7,unevenlySpread,evergreen,Yes
+9,Semak belukar,5.4,0,6.6,unevenlySpread,5.9,unevenlySpread,2.2,unevenlySpread,76.6,others,Yes,15.9,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,39.7,8.5,10.4,regularRowsGeneral,3.3,unevenlySpread,6.9,unevenlySpread,11.2,others,no,21.6,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,2.6,0.2,37.1,regularRowsGeneral,8.2,unevenlySpread,13.4,unevenlySpread,14.9,others,Yes,29.2,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,26.4,5.5,23.6,regularRowsGeneral,4.0,unevenlySpread,8.6,unevenlySpread,4.9,others,no,21.1,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,34.0,5.5,3.7,regularRowsGeneral,13.5,unevenlySpread,3.5,unevenlySpread,10.5,others,Yes,4.5,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,6.4,7.3,21.3,regularRowsGeneral,5.9,unevenlySpread,4.1,unevenlySpread,3.3,others,no,12.7,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,34.5,1.6,39.8,regularRowsGeneral,1.3,unevenlySpread,10.1,unevenlySpread,7.4,others,no,10.2,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,12.4,3.8,2.5,regularRowsGeneral,14.3,unevenlySpread,10.5,unevenlySpread,5.1,others,no,12.9,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,17.3,6.5,27.3,regularRowsGeneral,12.3,unevenlySpread,13.3,unevenlySpread,14.6,others,Yes,28.1,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,22.9,3.0,3.4,regularRowsGeneral,12.7,unevenlySpread,10.2,unevenlySpread,5.5,others,no,4.4,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,39.4,4.6,8.9,regularRowsGeneral,12.6,unevenlySpread,5.1,unevenlySpread,8.8,others,Yes,1.6,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,7.6,7.0,27.9,regularRowsGeneral,12.4,unevenlySpread,6.4,unevenlySpread,9.9,others,Yes,29.4,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,16.4,1.0,39.6,regularRowsGeneral,4.8,unevenlySpread,3.6,unevenlySpread,14.5,others,Yes,22.5,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,5.9,1.6,17.4,regularRowsGeneral,6.3,unevenlySpread,8.5,unevenlySpread,4.9,others,Yes,8.8,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,25.6,7.5,4.2,regularRowsGeneral,0.2,unevenlySpread,14.3,unevenlySpread,6.7,others,no,7.5,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,12.6,4.4,17.7,regularRowsGeneral,5.7,unevenlySpread,13.7,unevenlySpread,3.5,others,Yes,13.1,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,22.6,8.2,26.6,regularRowsGeneral,0.7,unevenlySpread,12.0,unevenlySpread,13.5,others,Yes,11.9,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,23.7,2.0,2.2,regularRowsGeneral,7.8,unevenlySpread,10.4,unevenlySpread,3.4,others,Yes,14.6,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,16.7,1.0,27.6,regularRowsGeneral,14.3,unevenlySpread,12.9,unevenlySpread,4.8,others,no,4.1,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,6.8,0.1,6.2,regularRowsGeneral,8.8,unevenlySpread,4.3,unevenlySpread,0.8,others,no,24.2,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,33.2,3.4,6.7,regularRowsGeneral,13.3,unevenlySpread,8.1,unevenlySpread,3.1,others,Yes,20.0,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,33.9,2.1,17.4,regularRowsGeneral,11.4,unevenlySpread,14.3,unevenlySpread,10.5,others,Yes,18.8,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,1.7,2.9,22.1,regularRowsGeneral,13.2,unevenlySpread,10.5,unevenlySpread,0.5,others,Yes,19.8,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,32.0,1.8,3.7,regularRowsGeneral,7.6,unevenlySpread,2.9,unevenlySpread,2.7,others,Yes,3.5,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,11.0,2.5,32.7,regularRowsGeneral,9.6,unevenlySpread,8.1,unevenlySpread,13.2,others,no,24.7,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,2.8,8.9,6.2,regularRowsGeneral,12.9,unevenlySpread,14.9,unevenlySpread,6.5,others,Yes,18.8,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,23.9,4.8,16.0,regularRowsGeneral,1.1,unevenlySpread,11.8,unevenlySpread,11.4,others,Yes,10.7,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,29.4,1.6,32.8,regularRowsGeneral,1.2,unevenlySpread,8.5,unevenlySpread,4.5,others,Yes,21.9,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,7.3,5.8,23.0,regularRowsGeneral,10.3,unevenlySpread,7.0,unevenlySpread,9.9,others,Yes,16.2,unevenlySpread,deciduous,no
+12,Pertanian lahan kering,29.3,8.2,30.4,regularRowsGeneral,8.9,unevenlySpread,5.2,unevenlySpread,6.5,others,Yes,18.8,unevenlySpread,deciduous,Yes
+12,Pertanian lahan kering,23.1,1.2,14.5,regularRowsGeneral,14.5,unevenlySpread,6.8,unevenlySpread,9.0,others,Yes,22.5,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,25.2,4.0,22.5,unevenlySpread,10.2,unevenlySpread,13.4,unevenlySpread,43.5,others,no,26.8,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,8.3,0.0,4.1,unevenlySpread,9.6,unevenlySpread,11.5,unevenlySpread,54.6,others,no,24.4,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,11.1,6.1,26.0,unevenlySpread,14.6,unevenlySpread,2.5,unevenlySpread,44.7,others,Yes,7.5,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,3.9,7.0,24.0,unevenlySpread,14.0,unevenlySpread,9.7,unevenlySpread,32.6,others,no,24.3,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,29.2,6.3,8.5,unevenlySpread,3.1,unevenlySpread,1.3,unevenlySpread,41.5,others,Yes,16.5,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,2.6,8.5,23.6,unevenlySpread,11.1,unevenlySpread,5.2,unevenlySpread,56.2,others,Yes,23.2,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,22.0,0.9,0.1,unevenlySpread,6.8,unevenlySpread,12.4,unevenlySpread,46.0,others,Yes,20.9,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,3.2,6.6,4.6,unevenlySpread,12.3,unevenlySpread,3.1,unevenlySpread,46.1,others,no,13.1,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,6.2,0.9,23.8,unevenlySpread,8.2,unevenlySpread,10.9,unevenlySpread,56.4,others,Yes,1.5,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,3.5,2.7,24.4,unevenlySpread,6.3,unevenlySpread,10.7,unevenlySpread,53.8,others,no,16.0,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,8.8,7.9,13.6,unevenlySpread,5.0,unevenlySpread,1.5,unevenlySpread,57.3,others,no,1.8,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,10.8,5.2,15.8,unevenlySpread,1.8,unevenlySpread,2.7,unevenlySpread,55.4,others,Yes,5.6,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,0.4,0.6,11.6,unevenlySpread,0.3,unevenlySpread,2.2,unevenlySpread,59.0,others,no,25.6,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,29.9,5.8,3.7,unevenlySpread,10.8,unevenlySpread,6.0,unevenlySpread,52.8,others,Yes,7.4,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,16.2,5.6,6.3,unevenlySpread,6.2,unevenlySpread,3.4,unevenlySpread,36.9,others,no,11.6,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,22.6,9.2,26.6,unevenlySpread,14.0,unevenlySpread,9.5,unevenlySpread,56.5,others,Yes,7.5,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,15.7,9.4,3.4,unevenlySpread,2.4,unevenlySpread,9.5,unevenlySpread,40.2,others,Yes,5.5,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,23.5,8.2,10.1,unevenlySpread,13.1,unevenlySpread,3.2,unevenlySpread,40.0,others,no,22.1,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,6.8,2.0,6.8,unevenlySpread,2.9,unevenlySpread,3.5,unevenlySpread,56.9,others,no,8.8,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,29.1,0.6,21.8,unevenlySpread,0.0,unevenlySpread,1.7,unevenlySpread,54.0,others,no,0.3,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,4.1,4.0,0.3,unevenlySpread,5.5,unevenlySpread,10.0,unevenlySpread,49.1,others,no,20.7,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,14.2,9.3,17.1,unevenlySpread,1.8,unevenlySpread,12.1,unevenlySpread,50.2,others,Yes,17.1,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,14.2,8.1,13.4,unevenlySpread,4.1,unevenlySpread,7.2,unevenlySpread,58.0,others,Yes,1.5,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,2.4,2.7,8.8,unevenlySpread,5.6,unevenlySpread,14.9,unevenlySpread,48.0,others,no,11.0,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,4.1,3.7,4.8,unevenlySpread,11.5,unevenlySpread,9.5,unevenlySpread,52.8,others,no,22.1,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,9.5,2.7,5.4,unevenlySpread,13.8,unevenlySpread,6.4,unevenlySpread,30.7,others,no,6.9,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,27.1,0.0,1.3,unevenlySpread,3.8,unevenlySpread,1.5,unevenlySpread,43.2,others,Yes,4.3,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,20.7,6.8,0.4,unevenlySpread,1.6,unevenlySpread,0.8,unevenlySpread,49.5,others,Yes,13.3,unevenlySpread,deciduous,no
+13,Pertanian Lahan Kering campur semak,11.4,10.0,18.1,unevenlySpread,3.3,unevenlySpread,2.6,unevenlySpread,36.4,others,no,21.6,unevenlySpread,deciduous,Yes
+13,Pertanian Lahan Kering campur semak,17.1,0.1,12.9,unevenlySpread,5.3,unevenlySpread,0.0,unevenlySpread,34.3,others,no,15.6,unevenlySpread,deciduous,no
+14,Sawah,11.5,1.8,41.2,regularRowsSingleElement,2.3,other,0,other,0.3,others,No,0.3,other,deciduous,Yes
+14,Sawah,7.0,1.1,59.2,regularRowsSingleElement,0.6,other,0,other,4.9,others,No,1.2,other,deciduous,Yes
+14,Sawah,13.5,0.9,43.9,regularRowsSingleElement,1.9,other,0,other,2.3,others,No,3.1,other,deciduous,Yes
+14,Sawah,4.9,0.5,40.1,regularRowsSingleElement,0.9,other,0,other,3.6,others,No,0.3,other,deciduous,Yes
+14,Sawah,2.5,0.2,73.4,regularRowsSingleElement,0.9,other,0,other,1.3,others,No,4.7,other,deciduous,Yes
+14,Sawah,7.6,2.4,69.6,regularRowsSingleElement,1.7,other,0,other,3.1,others,No,4.5,other,deciduous,Yes
+14,Sawah,4.2,0.6,76.1,regularRowsSingleElement,1.7,other,0,other,3.3,others,No,3.0,other,deciduous,Yes
+14,Sawah,11.4,4.6,70.7,regularRowsSingleElement,0.2,other,0,other,4.5,others,No,4.1,other,deciduous,Yes
+14,Sawah,9.6,2.0,43.8,regularRowsSingleElement,3.3,other,0,other,0.4,others,No,3.5,other,deciduous,Yes
+14,Sawah,11.6,4.2,76.3,regularRowsSingleElement,0.5,other,0,other,1.9,others,No,2.7,other,deciduous,Yes
+14,Sawah,11.6,4.4,53.8,regularRowsSingleElement,3.7,other,0,other,1.8,others,No,3.9,other,deciduous,Yes
+14,Sawah,6.6,3.5,40.9,regularRowsSingleElement,0.7,other,0,other,4.2,others,No,1.3,other,deciduous,Yes
+14,Sawah,3.2,3.6,69.9,regularRowsSingleElement,4.9,other,0,other,3.9,others,No,2.4,other,deciduous,Yes
+14,Sawah,14.9,4.9,41.4,regularRowsSingleElement,2.4,other,0,other,2.6,others,No,1.3,other,deciduous,Yes
+14,Sawah,6.4,4.6,64.7,regularRowsSingleElement,1.1,other,0,other,3.2,others,No,4.8,other,deciduous,Yes
+14,Sawah,14.7,1.5,77.0,regularRowsSingleElement,3.6,other,0,other,1.4,others,No,1.7,other,deciduous,Yes
+14,Sawah,11.3,1.3,39.3,regularRowsSingleElement,1.8,other,0,other,0.8,others,No,2.2,other,deciduous,Yes
+14,Sawah,3.6,0.6,76.2,regularRowsSingleElement,2.8,other,0,other,4.2,others,No,3.2,other,deciduous,Yes
+14,Sawah,5.1,1.3,36.9,regularRowsSingleElement,4.9,other,0,other,1.3,others,No,3.3,other,deciduous,Yes
+14,Sawah,3.6,1.1,60.6,regularRowsSingleElement,3.8,other,0,other,2.0,others,No,2.2,other,deciduous,Yes
+14,Sawah,7.9,1.1,43.0,regularRowsSingleElement,2.3,other,0,other,0.6,others,No,4.2,other,deciduous,Yes
+14,Sawah,10.2,2.9,74.4,regularRowsSingleElement,2.0,other,0,other,2.7,others,No,1.6,other,deciduous,Yes
+14,Sawah,14.5,4.1,50.5,regularRowsSingleElement,1.5,other,0,other,1.8,others,No,3.5,other,deciduous,Yes
+14,Sawah,14.2,3.9,74.3,regularRowsSingleElement,0.6,other,0,other,2.3,others,No,4.4,other,deciduous,Yes
+14,Sawah,3.5,3.2,74.0,regularRowsSingleElement,1.3,other,0,other,3.5,others,No,4.1,other,deciduous,Yes
+14,Sawah,14.5,1.5,79.6,regularRowsSingleElement,4.4,other,0,other,4.2,others,No,3.9,other,deciduous,Yes
+14,Sawah,9.2,2.1,76.1,regularRowsSingleElement,1.1,other,0,other,3.6,others,No,1.6,other,deciduous,Yes
+14,Sawah,13.1,0.6,33.3,regularRowsSingleElement,0.4,other,0,other,4.1,others,No,4.8,other,deciduous,Yes
+14,Sawah,7.9,0.5,77.4,regularRowsSingleElement,0.9,other,0,other,3.8,others,No,1.2,other,deciduous,Yes
+14,Sawah,1.0,1.7,36.5,regularRowsSingleElement,2.3,other,0,other,3.4,others,No,3.2,other,deciduous,Yes
+16,Permukiman/lahan terbangun,7.3,77.7,14.7,clusters,9.9,clusters,4.5,clusters,6.4,others,No,4.9,clusters,evergreen,No
+16,Permukiman/lahan terbangun,17.6,82.6,9.5,clusters,1.4,clusters,4.3,clusters,2.4,others,No,4.0,clusters,evergreen,No
+16,Permukiman/lahan terbangun,13.6,71.4,0.7,clusters,2.6,clusters,3.8,clusters,5.6,others,No,8.8,clusters,evergreen,No
+16,Permukiman/lahan terbangun,17.3,76.1,1.0,clusters,2.3,clusters,3.3,clusters,7.0,others,No,6.6,clusters,evergreen,No
+16,Permukiman/lahan terbangun,1.3,87.8,9.9,clusters,4.6,clusters,2.2,clusters,5.6,others,No,9.4,clusters,evergreen,No
+16,Permukiman/lahan terbangun,11.1,78.6,7.8,clusters,9.0,clusters,2.1,clusters,5.0,others,No,7.2,clusters,evergreen,No
+16,Permukiman/lahan terbangun,8.8,80.2,0.1,clusters,6.5,clusters,9.5,clusters,3.3,others,No,6.0,clusters,evergreen,No
+16,Permukiman/lahan terbangun,12.3,98.8,5.4,clusters,9.9,clusters,0.5,clusters,0.7,others,No,4.1,clusters,evergreen,No
+16,Permukiman/lahan terbangun,2.5,84.2,11.0,clusters,1.1,clusters,7.9,clusters,2.6,others,No,7.8,clusters,evergreen,No
+16,Permukiman/lahan terbangun,8.4,91.3,1.5,clusters,0.7,clusters,8.6,clusters,8.8,others,No,5.5,clusters,evergreen,No
+16,Permukiman/lahan terbangun,3.0,66.6,3.2,clusters,8.8,clusters,3.1,clusters,0.4,others,No,0.3,clusters,evergreen,No
+16,Permukiman/lahan terbangun,11.7,81.2,11.1,clusters,9.4,clusters,5.5,clusters,4.9,others,No,2.1,clusters,evergreen,No
+16,Permukiman/lahan terbangun,15.1,72.2,3.9,clusters,1.9,clusters,3.7,clusters,6.7,others,No,1.0,clusters,evergreen,No
+16,Permukiman/lahan terbangun,15.4,80.6,12.1,clusters,2.1,clusters,5.1,clusters,7.2,others,No,5.8,clusters,evergreen,No
+16,Permukiman/lahan terbangun,14.8,95.8,9.0,clusters,6.4,clusters,7.3,clusters,8.5,others,No,1.8,clusters,evergreen,No
+16,Permukiman/lahan terbangun,16.5,97.3,0.4,clusters,1.8,clusters,6.5,clusters,3.3,others,No,5.1,clusters,evergreen,No
+16,Permukiman/lahan terbangun,18.2,66.5,13.5,clusters,7.6,clusters,6.4,clusters,7.5,others,No,5.7,clusters,evergreen,No
+16,Permukiman/lahan terbangun,13.6,98.9,2.6,clusters,6.3,clusters,6.1,clusters,7.6,others,No,7.5,clusters,evergreen,No
+16,Permukiman/lahan terbangun,11.3,74.6,9.2,clusters,9.9,clusters,3.0,clusters,3.4,others,No,7.2,clusters,evergreen,No
+16,Permukiman/lahan terbangun,18.4,96.7,9.8,clusters,5.6,clusters,8.2,clusters,9.8,others,No,1.1,clusters,evergreen,No
+16,Permukiman/lahan terbangun,8.3,61.2,6.1,clusters,2.6,clusters,3.4,clusters,4.2,others,No,3.1,clusters,evergreen,No
+16,Permukiman/lahan terbangun,2.0,63.4,2.8,clusters,3.7,clusters,6.6,clusters,6.6,others,No,4.0,clusters,evergreen,No
+16,Permukiman/lahan terbangun,17.9,68.9,10.5,clusters,2.6,clusters,7.3,clusters,4.6,others,No,3.0,clusters,evergreen,No
+16,Permukiman/lahan terbangun,10.1,63.8,6.8,clusters,5.6,clusters,5.5,clusters,5.3,others,No,4.2,clusters,evergreen,No
+16,Permukiman/lahan terbangun,6.9,96.6,4.0,clusters,8.5,clusters,3.4,clusters,1.8,others,No,8.6,clusters,evergreen,No
+16,Permukiman/lahan terbangun,3.6,99.5,12.3,clusters,0.2,clusters,4.0,clusters,0.0,others,No,3.3,clusters,evergreen,No
+16,Permukiman/lahan terbangun,9.5,94.5,7.7,clusters,7.6,clusters,7.5,clusters,8.8,others,No,9.2,clusters,evergreen,No
+16,Permukiman/lahan terbangun,13.8,85.7,0.4,clusters,0.1,clusters,1.3,clusters,9.6,others,No,4.2,clusters,evergreen,No
+16,Permukiman/lahan terbangun,7.6,92.6,3.7,clusters,0.2,clusters,1.1,clusters,5.9,others,No,3.9,clusters,evergreen,No
+16,Permukiman/lahan terbangun,9.5,70.7,6.2,clusters,6.9,clusters,7.5,clusters,4.9,others,No,0.1,clusters,evergreen,No
+18,Tanah terbuka,70.1,6.9,1.8,other,7.6,other,0,other,4.2,others,No,0,other,deciduous,No
+18,Tanah terbuka,80.3,1.8,12.5,other,6.9,other,0,other,3.1,others,No,0,other,deciduous,No
+18,Tanah terbuka,97.6,8.8,2.0,other,3.4,other,0,other,0.7,others,No,0,other,deciduous,No
+18,Tanah terbuka,99.7,8.3,9.4,other,10.7,other,0,other,0.4,others,No,0,other,deciduous,No
+18,Tanah terbuka,66.1,0.8,12.4,other,9.4,other,0,other,4.4,others,No,0,other,deciduous,No
+18,Tanah terbuka,72.2,8.4,0.9,other,14.3,other,0,other,2.1,others,No,0,other,deciduous,No
+18,Tanah terbuka,80.1,8.3,2.0,other,4.3,other,0,other,4.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,92.1,6.5,18.6,other,3.5,other,0,other,4.3,others,No,0,other,deciduous,No
+18,Tanah terbuka,60.7,3.9,16.0,other,7.7,other,0,other,2.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,90.3,9.2,13.5,other,12.9,other,0,other,1.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,66.3,2.3,10.2,other,4.1,other,0,other,0.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,64.8,6.2,4.3,other,13.3,other,0,other,1.5,others,No,0,other,deciduous,No
+18,Tanah terbuka,69.9,1.1,18.6,other,7.5,other,0,other,3.0,others,No,0,other,deciduous,No
+18,Tanah terbuka,74.8,1.9,11.3,other,13.4,other,0,other,1.9,others,No,0,other,deciduous,No
+18,Tanah terbuka,70.8,4.5,1.2,other,2.9,other,0,other,3.0,others,No,0,other,deciduous,No
+18,Tanah terbuka,87.9,9.7,8.1,other,14.5,other,0,other,1.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,78.7,5.5,16.2,other,3.9,other,0,other,0.3,others,No,0,other,deciduous,No
+18,Tanah terbuka,95.8,1.4,5.0,other,12.2,other,0,other,2.5,others,No,0,other,deciduous,No
+18,Tanah terbuka,98.5,5.6,11.6,other,7.7,other,0,other,0.8,others,No,0,other,deciduous,No
+18,Tanah terbuka,81.9,7.7,7.7,other,5.3,other,0,other,0.1,others,No,0,other,deciduous,No
+18,Tanah terbuka,69.8,1.5,15.2,other,14.1,other,0,other,2.4,others,No,0,other,deciduous,No
+18,Tanah terbuka,93.0,3.9,1.6,other,7.0,other,0,other,4.1,others,No,0,other,deciduous,No
+18,Tanah terbuka,78.8,4.2,15.5,other,8.0,other,0,other,0.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,98.3,6.7,8.3,other,1.7,other,0,other,0.4,others,No,0,other,deciduous,No
+18,Tanah terbuka,69.7,9.7,9.3,other,12.7,other,0,other,1.7,others,No,0,other,deciduous,No
+18,Tanah terbuka,62.3,8.3,9.9,other,12.5,other,0,other,1.9,others,No,0,other,deciduous,No
+18,Tanah terbuka,82.1,0.5,18.8,other,0.0,other,0,other,1.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,78.4,4.2,18.7,other,5.2,other,0,other,4.8,others,No,0,other,deciduous,No
+18,Tanah terbuka,85.3,8.9,10.3,other,3.6,other,0,other,1.6,others,No,0,other,deciduous,No
+18,Tanah terbuka,81.0,8.7,11.9,other,9.1,other,0,other,4.8,others,No,0,other,deciduous,No
+19,Pertambangan,71.0,9.7,4.2,other,2.1,other,0,other,8.9,others,No,0,other,deciduous,No
+19,Pertambangan,76.8,1.1,0.2,other,1.0,other,0,other,5.0,others,No,0,other,deciduous,No
+19,Pertambangan,76.0,0.8,8.2,other,2.9,other,0,other,1.7,others,No,0,other,deciduous,No
+19,Pertambangan,70.1,7.6,1.2,other,0.2,other,0,other,8.4,others,No,0,other,deciduous,No
+19,Pertambangan,97.5,10.3,5.6,other,0.4,other,0,other,2.3,others,No,0,other,deciduous,No
+19,Pertambangan,92.5,4.4,2.0,other,0.5,other,0,other,9.6,others,No,0,other,deciduous,No
+19,Pertambangan,81.8,2.7,3.5,other,8.5,other,0,other,6.0,others,No,0,other,deciduous,No
+19,Pertambangan,72.1,9.5,9.1,other,5.5,other,0,other,11.8,others,No,0,other,deciduous,No
+19,Pertambangan,85.7,0.3,7.3,other,3.8,other,0,other,5.1,others,No,0,other,deciduous,No
+19,Pertambangan,80.6,14.4,3.4,other,0.8,other,0,other,12.8,others,No,0,other,deciduous,No
+19,Pertambangan,89.5,1.4,7.0,other,3.5,other,0,other,2.7,others,No,0,other,deciduous,No
+19,Pertambangan,72.8,3.6,7.2,other,2.1,other,0,other,10.4,others,No,0,other,deciduous,No
+19,Pertambangan,83.1,9.6,9.6,other,0.1,other,0,other,1.8,others,No,0,other,deciduous,No
+19,Pertambangan,96.7,2.3,4.1,other,4.0,other,0,other,8.1,others,No,0,other,deciduous,No
+19,Pertambangan,94.0,0.8,9.4,other,5.9,other,0,other,7.0,others,No,0,other,deciduous,No
+19,Pertambangan,71.3,14.8,6.7,other,3.9,other,0,other,6.4,others,No,0,other,deciduous,No
+19,Pertambangan,72.7,4.6,4.2,other,7.3,other,0,other,1.9,others,No,0,other,deciduous,No
+19,Pertambangan,86.0,9.6,9.5,other,0.0,other,0,other,6.2,others,No,0,other,deciduous,No
+19,Pertambangan,99.2,3.7,2.3,other,8.9,other,0,other,12.2,others,No,0,other,deciduous,No
+19,Pertambangan,77.5,1.0,0.2,other,8.0,other,0,other,3.2,others,No,0,other,deciduous,No
+19,Pertambangan,72.0,0.5,6.6,other,5.0,other,0,other,0.1,others,No,0,other,deciduous,No
+19,Pertambangan,85.3,12.6,9.5,other,2.5,other,0,other,3.6,others,No,0,other,deciduous,No
+19,Pertambangan,95.4,0.5,2.3,other,6.3,other,0,other,1.2,others,No,0,other,deciduous,No
+19,Pertambangan,95.7,9.4,4.6,other,5.5,other,0,other,7.4,others,No,0,other,deciduous,No
+19,Pertambangan,80.1,3.4,6.0,other,4.4,other,0,other,3.7,others,No,0,other,deciduous,No
+19,Pertambangan,81.1,15.0,6.6,other,6.5,other,0,other,5.0,others,No,0,other,deciduous,No
+19,Pertambangan,78.7,4.8,7.9,other,1.1,other,0,other,13.6,others,No,0,other,deciduous,No
+19,Pertambangan,84.3,12.6,6.9,other,7.6,other,0,other,2.6,others,No,0,other,deciduous,No
+19,Pertambangan,90.7,2.9,3.1,other,5.6,other,0,other,5.6,others,No,0,other,deciduous,No
+19,Pertambangan,75.5,3.8,3.4,other,0.1,other,0,other,9.6,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,8.8,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,6.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,5.0,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,1.5,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,2.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,1.5,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,1.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,0.7,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,8.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,1.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,3.7,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.8,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.7,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,2.8,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,4.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,3.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,0.2,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,3.2,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.2,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,5.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,2.1,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,8.0,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,2.4,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,6.0,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,7.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,9.1,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,7.9,other,0,other,0,other,0,others,No,0,other,deciduous,No
+20,Tubuh air,0,0,5.6,other,0,other,0,other,0,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,6.9,79.4,6.4,other,2.0,other,0,other,9.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,3.2,98.5,12.1,other,2.7,other,0,other,8.3,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,1.4,79.4,12.0,other,1.6,other,0,other,6.7,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,6.2,93.2,10.5,other,1.4,other,0,other,8.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,6.0,98.0,9.1,other,0.1,other,0,other,4.5,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,0.5,77.4,3.8,other,2.7,other,0,other,7.4,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,7.6,71.2,6.8,other,1.5,other,0,other,9.2,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,4.9,71.9,5.1,other,1.3,other,0,other,4.7,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,8.1,78.4,2.7,other,0.7,other,0,other,3.6,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,9.7,70.2,0.2,other,1.2,other,0,other,4.6,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,11.6,83.2,7.7,other,0.3,other,0,other,5.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,9.5,86.6,12.9,other,2.8,other,0,other,1.1,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,8.4,76.7,12.8,other,3.5,other,0,other,7.2,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,11.0,87.7,5.2,other,1.6,other,0,other,7.6,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,11.8,89.8,13.1,other,3.8,other,0,other,7.4,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,5.6,96.4,12.0,other,2.1,other,0,other,6.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,4.5,80.9,8.5,other,4.1,other,0,other,6.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,10.5,95.9,12.3,other,1.9,other,0,other,9.0,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,5.2,92.2,12.3,other,2.6,other,0,other,1.1,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,10.3,91.9,3.4,other,0.9,other,0,other,1.6,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,14.9,73.1,10.5,other,2.6,other,0,other,7.0,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,6.0,90.7,3.5,other,3.6,other,0,other,5.9,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,7.6,85.8,2.9,other,4.1,other,0,other,3.2,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,0.5,92.5,3.9,other,0.4,other,0,other,9.2,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,8.8,88.0,2.6,other,3.3,other,0,other,9.3,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,2.3,88.1,8.7,other,1.5,other,0,other,4.2,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,10.1,78.2,8.1,other,1.3,other,0,other,9.4,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,12.5,95.4,8.9,other,3.9,other,0,other,3.7,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,14.5,80.2,12.0,other,0.7,other,0,other,8.6,others,No,0,other,deciduous,No
+23,Bandara/Pelabuhan,5.9,88.8,9.4,other,4.7,other,0,other,7.0,others,No,0,other,deciduous,No
