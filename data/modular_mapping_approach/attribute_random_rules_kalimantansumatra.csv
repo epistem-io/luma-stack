@@ -1,0 +1,20 @@
+LULC_24,waterbody_cover,bareSoil_cover,builtup_cover,herb_cover,palm_cover,shrub_cover,mangrove_presence,rubber_presence,other_species_presence,coffee_presence,cacao_presence,oilpalm_presence,coconut_presence,graminoid_presence,timber_extraction,tree_cover,tree_horizonal_pattern,woody_leaf_phenology,agricultural_activity,mining
+Hutan lahan kering primer,0-5,0,0,0-10,0-10,0-10,0,0,0,0,0,0,0,0,0,90-100,unevenlySpread,evergreen/deciduous,0,0
+Hutan lahan kering sekunder,0-10,0,0-10,0-15,0-15,0-10,0,0,0,0,0,0,0,0,1/0,70-90,unevenlySpread,evergreen/deciduous,1/0,0
+Hutan rawa sekunder/bekas tebangan,0-10,0,0-10,0-15,0-15,0-10,1/0,0,0,0,0,0,0,0,1/0,70-90,unevenlySpread,evergreen/deciduous,1/0,0
+Hutan mangrove sekunder/bekas tebangan,0-10,0,0-5,0-5,0-15,0-10,1,0,0,0,0,0,0,0,1/0,70-90,clusters,evergreen,1/0,0
+Hutan tanaman,0-20,0-5,0-20,0-15,0-90,0-15,1/0,1/0,1/0,1/0,1/0,1/0,1/0,0,1,30-90,regularRowsSingleElement,evergreen/deciduous,0,0
+Perkebunan/Kebun,0-25,0-10,0-25,0-20,0-70,0-20,0,0,1/0,1/0,1/0,1/0,1/0,0,0,0-30,regularRowsGeneral,evergreen,1,0
+Semak belukar,0-20,0,0-20,0-10,0-10,50-90,0,0,1/0,1/0,1/0,0,,0,1/0,0-30,unevenlySpread,evergreen/deciduous,1/0,0
+Semak belukar rawa,0-10,0,0-10,0-10,0-10,40-80,0,0,1/0,1/0,1/0,0,,0,1/0,0-30,unevenlySpread,evergreen,1/0,0
+Pertanian lahan kering,0-40,0-10,0-40,0-15,0-15,0-15,0,0,1/0,1/0,1/0,0,,0,1/0,0-30,unevenlySpread,deciduous,1/0,0
+Pertanian Lahan Kering campur semak,0-30,0-10,0-30,0-15,0-15,30-60,0,0,1/0,1/0,1/0,0,,0,1/0,0-30,unevenlySpread,deciduous,1/0,0
+Sawah,0-15,0-5,30-80,0-5,0,0-5,0,0,1,0,0,0,0,1,0,0-5,clusters,deciduous,1,0
+Tambak,0-15,0-5,0-10,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+Permukiman/lahan terbangun,0-20,60-100,0-15,0-10,0-10,0-10,0,0,0,0,0,0,0,0,0,0-10,clusters,evergreen,0,0
+Transmigrasi,0-35,20-60,0-35,0-20,0-20,0-20,0,0,0,0,0,0,0,0,0,0-10,other,deciduous,0,0
+Tanah terbuka,60-100,0-10,0-20,0-15,0,0-5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+Pertambangan,70-100,0-15,0-10,0-10,0,0-15,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+Tubuh air,90-100,0,0-10,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+Rawa,0-10,0,20-50,0-5,0-15,50-90,0,0,0,0,0,0,0,0,0,0,unevenlySpread,evergreen,0,0
+Bandara/Pelabuhan,0-15,70-100,0-15,0-5,0,0-10,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
