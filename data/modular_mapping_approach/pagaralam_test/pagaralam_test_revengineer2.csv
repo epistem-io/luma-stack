@@ -1,0 +1,361 @@
+ID,LULC_24,geometry,waterbody_cover,bareSoil_cover,builtup_cover,herb_cover,palm_cover,shrub_cover,mangrove_presence,rubber_presence,other_species_presence,coffee_presence,cacao_presence,oilpalm_presence,coconut_presence,graminoid_presence,timber_extraction,tree_cover,tree_horizonal_pattern,woody_leaf_phenology,agricultural_activity,mining
+1,Hutan lahan kering primer,POINT (103.32029620009006 -4.2569886729821835),3.9,0,0,0.8,8.7,5.7,0,0,0,0,0,0,0,0,0,94.9,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.28830362629316 -4.259806397137992),4.4,0,0,6.5,6.4,6.4,0,0,0,0,0,0,0,0,0,98.2,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.32761909417405 -4.236753873706471),0.7,0,0,9.7,0.5,7.8,0,0,0,0,0,0,0,0,0,94.0,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.31851762298935 -4.219520902567694),4.2,0,0,4.0,2.7,9.6,0,0,0,0,0,0,0,0,0,96.4,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.25331174176345 -4.247016606435927),0.9,0,0,6.8,1.6,8.9,0,0,0,0,0,0,0,0,0,95.5,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.19739445547971 -4.220732398525614),4.5,0,0,9.4,3.7,6.6,0,0,0,0,0,0,0,0,0,95.0,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.2137239124843 -4.213968824916154),3.7,0,0,2.4,1.1,8.4,0,0,0,0,0,0,0,0,0,92.3,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.24564546984887 -4.218328512832515),4.3,0,0,3.6,9.1,1.6,0,0,0,0,0,0,0,0,0,98.2,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.19461573301162 -4.224003971090382),4.6,0,0,5.5,1.7,2.3,0,0,0,0,0,0,0,0,0,98.0,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.30615672102235 -4.202230965004623),0.1,0,0,6.3,1.5,4.7,0,0,0,0,0,0,0,0,0,93.4,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.25018129820444 -4.185267573322405),4.5,0,0,9.9,0.4,5.2,0,0,0,0,0,0,0,0,0,97.7,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.24705110238082 -4.244735078445753),4.3,0,0,9.8,0.6,3.8,0,0,0,0,0,0,0,0,0,93.1,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.33082187234959 -4.242519568744282),0.3,0,0,6.2,9.2,0.5,0,0,0,0,0,0,0,0,0,94.6,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.28646123220491 -4.199220409117859),3.3,0,0,2.5,0.8,8.2,0,0,0,0,0,0,0,0,0,91.0,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.34206223934486 -4.231337285489418),1.6,0,0,4.3,8.3,1.7,0,0,0,0,0,0,0,0,0,95.4,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.30210397702244 -4.256503399447444),3.1,0,0,1.1,3.1,4.5,0,0,0,0,0,0,0,0,0,99.9,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.2193333451194 -4.199300058281056),2.9,0,0,9.7,6.0,2.3,0,0,0,0,0,0,0,0,0,90.3,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.23543527741437 -4.223385712174657),2.6,0,0,0.1,4.1,5.0,0,0,0,0,0,0,0,0,0,97.5,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.30458546643668 -4.214082519266837),1.7,0,0,7.9,4.5,3.5,0,0,0,0,0,0,0,0,0,90.1,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.24997850041498 -4.192866159236546),4.6,0,0,8.0,4.9,7.4,0,0,0,0,0,0,0,0,0,92.8,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.30139982782998 -4.233371454624912),2.8,0,0,1.1,4.1,7.8,0,0,0,0,0,0,0,0,0,93.9,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.32913020050253 -4.212919117654792),3.8,0,0,3.2,8.4,6.8,0,0,0,0,0,0,0,0,0,96.8,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.28025242032697 -4.219886643273963),4.4,0,0,8.9,9.6,5.5,0,0,0,0,0,0,0,0,0,94.0,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.2166170751285 -4.2090706731513485),3.6,0,0,1.7,7.2,9.6,0,0,0,0,0,0,0,0,0,98.7,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.26080653982294 -4.220298946354658),2.7,0,0,1.9,0.0,8.0,0,0,0,0,0,0,0,0,0,97.4,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.35724936272297 -4.233634470854227),0.7,0,0,8.8,4.7,7.7,0,0,0,0,0,0,0,0,0,91.8,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.22734938538851 -4.206771232195432),2.0,0,0,0.6,9.7,6.7,0,0,0,0,0,0,0,0,0,94.3,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.2566638413416 -4.216578227468185),4.6,0,0,4.0,8.0,4.3,0,0,0,0,0,0,0,0,0,96.2,unevenlySpread,evergreen,0,0
+1,Hutan lahan kering primer,POINT (103.27792411315941 -4.226386255478438),3.5,0,0,7.4,6.8,8.7,0,0,0,0,0,0,0,0,0,97.8,unevenlySpread,deciduous,0,0
+1,Hutan lahan kering primer,POINT (103.3125134630493 -4.243435592135631),0.3,0,0,7.4,1.2,7.5,0,0,0,0,0,0,0,0,0,90.5,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.3039882855159 -4.186971566633545),1.3,0,3.9,2.5,13.5,1.5,0,0,0,0,0,0,0,0,1,83.0,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.22110246075817 -4.182147447987406),2.8,0,5.2,11.6,7.4,9.9,0,0,0,0,0,0,0,0,1,74.7,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.18889492782853 -4.158541948319343),3.9,0,9.3,10.7,7.2,9.9,0,0,0,0,0,0,0,0,0,73.3,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.34145932922188 -4.199900091960291),2.8,0,6.8,0.2,8.4,5.0,0,0,0,0,0,0,0,0,0,80.4,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.19416656779866 -4.1739680338132885),5.5,0,0.0,13.4,9.3,3.3,0,0,0,0,0,0,0,0,0,76.9,unevenlySpread,deciduous,1,0
+2,Hutan lahan kering sekunder,POINT (103.31730592200205 -4.188272377263779),6.5,0,4.6,12.8,1.1,7.3,0,0,0,0,0,0,0,0,1,75.9,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.29702783297023 -4.155537350422657),6.2,0,2.1,14.3,6.7,0.8,0,0,0,0,0,0,0,0,1,89.9,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.18997920197546 -4.15540221741463),6.9,0,2.0,4.2,4.4,1.0,0,0,0,0,0,0,0,0,0,78.8,unevenlySpread,deciduous,1,0
+2,Hutan lahan kering sekunder,POINT (103.29907724037199 -4.16901871757505),5.9,0,7.5,4.2,5.3,9.0,0,0,0,0,0,0,0,0,1,79.9,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.2599428990668 -4.185485304725464),5.6,0,3.7,12.7,7.9,1.3,0,0,0,0,0,0,0,0,1,76.2,unevenlySpread,deciduous,1,0
+2,Hutan lahan kering sekunder,POINT (103.3060122236127 -4.1917793673841794),8.3,0,8.3,1.0,11.1,6.1,0,0,0,0,0,0,0,0,0,89.1,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.32326188150444 -4.195945399827732),7.5,0,2.0,1.6,3.8,6.0,0,0,0,0,0,0,0,0,0,86.4,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.27093197639974 -4.186562384930306),2.1,0,2.3,4.4,1.3,5.4,0,0,0,0,0,0,0,0,1,81.4,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.31521282899323 -4.1652272633580685),7.1,0,0.7,10.0,7.6,1.7,0,0,0,0,0,0,0,0,1,83.2,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.27180893214344 -4.189394601317434),1.3,0,2.6,11.5,13.9,9.0,0,0,0,0,0,0,0,0,0,80.5,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.19920671228276 -4.192871378647391),4.1,0,4.7,0.7,2.7,4.6,0,0,0,0,0,0,0,0,0,81.9,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.30802724481039 -4.15717936485082),3.9,0,3.9,5.3,10.7,1.6,0,0,0,0,0,0,0,0,0,80.6,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.16597754099993 -4.007630900131076),2.3,0,7.1,12.6,1.4,0.4,0,0,0,0,0,0,0,0,0,81.2,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.21287569173458 -4.1824369223770415),4.5,0,2.6,8.5,13.5,3.3,0,0,0,0,0,0,0,0,1,80.3,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.35799945058591 -4.209629823186135),8.0,0,7.7,7.3,13.1,6.7,0,0,0,0,0,0,0,0,0,89.3,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.29637145840097 -4.1741990263810465),9.6,0,4.0,11.4,10.1,9.5,0,0,0,0,0,0,0,0,1,74.2,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.2079694004609 -4.176385206015904),8.5,0,8.1,8.9,10.7,6.9,0,0,0,0,0,0,0,0,1,88.6,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.3189944391867 -4.17942037779185),0.2,0,6.3,0.8,3.2,2.9,0,0,0,0,0,0,0,0,1,72.2,unevenlySpread,deciduous,0,0
+2,Hutan lahan kering sekunder,POINT (103.17662334848859 -4.125514530348787),5.6,0,8.6,0.0,1.5,4.8,0,0,0,0,0,0,0,0,1,79.8,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.19998264408102 -4.1857901969597515),8.2,0,9.1,4.9,6.8,9.9,0,0,0,0,0,0,0,0,1,85.5,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.23465592808753 -4.166437145313706),3.7,0,0.5,12.0,5.8,0.6,0,0,0,0,0,0,0,0,1,76.6,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.32534462667469 -4.180477284537012),10.0,0,1.5,7.9,4.2,2.0,0,0,0,0,0,0,0,0,0,73.6,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.20634137344229 -4.187989468073385),1.8,0,3.8,5.3,8.8,0.9,0,0,0,0,0,0,0,0,0,79.6,unevenlySpread,evergreen,1,0
+2,Hutan lahan kering sekunder,POINT (103.19693458262209 -4.144452471461884),9.0,0,1.4,3.1,0.8,1.1,0,0,0,0,0,0,0,0,0,71.0,unevenlySpread,evergreen,0,0
+2,Hutan lahan kering sekunder,POINT (103.29981522284979 -4.183720085380699),6.1,0,3.1,11.9,7.1,6.8,0,0,0,0,0,0,0,0,0,84.0,unevenlySpread,evergreen,0,0
+8,Perkebunan/Kebun,POINT (103.15094106516953 -4.045563249417707),6.0,0.8,11.9,2.9,37.9,0.5,0,0,1,0,1,0,1,0,0,29.9,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1399149332261 -4.063186826506063),24.6,5.3,16.9,1.1,39.0,0.8,0,0,0,1,1,0,1,0,0,13.2,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1625294682455 -4.033367776431938),7.3,7.9,18.7,0.5,25.9,7.1,0,0,0,1,0,1,0,0,0,3.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15623406661719 -4.046689678263384),11.1,7.0,13.5,2.2,18.4,12.8,0,0,1,0,0,0,0,0,0,5.5,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.16972226260864 -4.048198844931184),22.9,8.9,20.5,19.9,8.4,18.3,0,0,0,1,0,1,1,0,0,2.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17613066887466 -4.046034000233768),22.5,8.0,23.8,17.9,13.9,14.4,0,0,1,0,0,1,1,0,0,16.1,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.14680515829099 -4.06698103226022),15.2,4.5,0.5,4.4,57.5,8.9,0,0,1,1,1,0,0,0,0,5.4,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.16299892003099 -4.026303908922006),6.5,0.5,7.8,6.0,64.1,14.8,0,0,0,1,0,1,1,0,0,7.8,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1690239033809 -4.044199155768424),3.3,6.6,0.9,6.0,59.5,1.7,0,0,1,0,0,0,0,0,0,22.1,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15886368333243 -4.056424958288161),17.8,8.0,12.5,7.8,3.5,18.4,0,0,0,0,1,0,1,0,0,3.0,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.14744736142629 -4.056865905958915),1.9,3.1,22.1,16.2,56.7,0.4,0,0,1,1,1,1,1,0,0,9.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15595422121432 -4.042863759586851),12.0,0.9,17.6,5.2,50.3,10.4,0,0,0,0,1,1,1,0,0,28.6,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.14883058782256 -4.058315002466015),10.8,2.6,12.6,14.6,9.0,15.5,0,0,1,0,0,1,0,0,0,12.7,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.18694204015156 -4.041145507275678),11.3,3.9,3.7,0.1,36.6,12.1,0,0,1,0,1,1,1,0,0,28.6,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.14851917227752 -4.058369350978802),20.4,2.8,20.3,10.5,37.6,16.3,0,0,1,1,0,0,1,0,0,10.0,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.18689911169919 -4.033824080440801),22.3,0.2,22.9,2.0,31.7,0.3,0,0,1,0,0,0,0,0,0,2.4,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17047894345168 -4.0368706165035615),12.4,0.2,6.9,7.6,11.7,2.4,0,0,0,1,1,1,0,0,0,13.2,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17139716637215 -4.054837006507789),21.7,7.5,9.4,15.9,67.5,18.2,0,0,1,1,1,0,0,0,0,8.5,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17025659055284 -4.04763261513917),13.5,4.1,19.3,2.8,21.8,8.1,0,0,0,1,1,1,0,0,0,24.9,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1712417553147 -4.032634707025614),5.6,9.6,21.9,5.2,28.5,4.4,0,0,1,0,0,1,0,0,0,8.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15514632723587 -4.06343444150585),4.8,9.3,3.1,5.9,26.1,16.4,0,0,1,1,1,0,1,0,0,0.5,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.13004964076534 -4.017352110158559),21.7,6.8,13.9,1.5,42.4,16.8,0,0,1,1,1,0,1,0,0,8.9,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1592368341798 -4.064043962504479),20.4,1.0,13.7,9.0,66.9,6.3,0,0,0,1,1,1,1,0,0,5.9,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17188082366653 -4.026784309461974),6.2,8.0,10.1,9.4,35.1,17.5,0,0,1,1,1,0,1,0,0,13.1,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.17592854850182 -4.048289919465672),6.5,4.8,6.8,16.2,43.9,2.8,0,0,0,1,1,1,1,0,0,5.2,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.16236805004559 -4.049482624905711),23.5,9.8,17.9,11.2,51.7,1.0,0,0,1,0,1,1,1,0,0,14.2,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15917878364144 -4.053706137823729),10.2,0.2,21.5,2.7,49.8,6.6,0,0,1,1,1,0,1,0,0,26.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.14092709882192 -4.056331994626193),1.4,5.2,20.7,10.4,64.2,12.6,0,0,1,0,0,0,0,0,0,26.3,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.15420066340347 -4.056807110583094),4.8,6.6,2.8,18.2,37.0,11.1,0,0,1,1,1,0,1,0,0,29.2,regularRowsGeneral,evergreen,1,0
+8,Perkebunan/Kebun,POINT (103.1748201622757 -4.038296432980259),19.0,0.3,0.1,2.3,24.9,3.4,0,0,1,1,0,1,1,0,0,2.3,regularRowsGeneral,evergreen,1,0
+9,Semak belukar,POINT (103.28373518027999 -4.174745527497083),10.5,0,4.9,0.2,3.2,77.2,0,0,0,1,0,0,,0,0,20.0,unevenlySpread,deciduous,1,0
+9,Semak belukar,POINT (103.13512997579133 -4.021468288370063),8.0,0,15.5,8.3,1.8,76.3,0,0,1,0,0,0,,0,0,7.0,unevenlySpread,deciduous,0,0
+9,Semak belukar,POINT (103.35171669464837 -4.057235634254378),7.2,0,4.4,9.6,0.5,51.0,0,0,1,1,1,0,,0,1,14.3,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.27522311390902 -4.177375261033817),4.2,0,5.6,6.5,2.3,55.7,0,0,0,0,0,0,,0,1,15.1,unevenlySpread,deciduous,0,0
+9,Semak belukar,POINT (103.19445123833174 -4.153974158897573),6.0,0,10.7,3.1,4.9,64.8,0,0,1,0,1,0,,0,1,25.5,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.14030630091469 -4.025197355814386),11.1,0,9.5,8.7,4.9,57.0,0,0,0,0,0,0,,0,0,1.6,unevenlySpread,deciduous,1,0
+9,Semak belukar,POINT (103.365173339086 -4.1970113454108855),0.6,0,17.4,8.2,9.9,70.5,0,0,0,1,1,0,,0,0,25.8,unevenlySpread,deciduous,0,0
+9,Semak belukar,POINT (103.13353213403832 -4.017662855266107),2.0,0,15.7,7.2,9.2,77.4,0,0,0,0,1,0,,0,0,26.9,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.29594863498082 -4.186100279681964),17.4,0,16.5,1.6,6.3,65.4,0,0,0,1,1,0,,0,0,11.8,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.2801919800737 -4.171843774220892),4.4,0,13.3,10.0,5.3,73.0,0,0,0,0,1,0,,0,0,7.8,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.13930407265705 -4.020442769992139),7.6,0,16.9,2.8,0.1,50.5,0,0,0,1,1,0,,0,1,29.2,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.1267696887891 -4.021536429283676),5.3,0,11.5,3.3,4.2,51.8,0,0,1,1,1,0,,0,0,6.9,unevenlySpread,deciduous,1,0
+9,Semak belukar,POINT (103.2953868449793 -4.188410285683775),3.0,0,7.7,2.8,5.0,72.8,0,0,1,0,1,0,,0,0,12.7,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.30843439500299 -4.151775663274066),4.0,0,2.8,9.3,8.8,63.9,0,0,0,1,0,0,,0,0,21.4,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.1395127277972 -4.01920266533627),17.6,0,13.1,4.3,2.8,66.1,0,0,0,1,0,0,,0,1,28.1,unevenlySpread,deciduous,0,0
+9,Semak belukar,POINT (103.1298988729423 -4.02203485511099),6.0,0,1.7,8.4,6.8,64.7,0,0,0,1,0,0,,0,0,26.1,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.3636649212563 -4.22500569778926),6.8,0,11.8,0.2,7.3,57.6,0,0,1,1,0,0,,0,1,26.3,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.3074984542539 -4.154212833239948),8.2,0,2.0,9.9,3.2,59.5,0,0,1,0,1,0,,0,0,4.7,unevenlySpread,deciduous,0,0
+9,Semak belukar,POINT (103.1410751183806 -4.028564134095754),18.8,0,12.1,0.3,2.9,63.4,0,0,0,1,0,0,,0,1,11.2,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.18747000759393 -4.170156373561666),12.9,0,12.3,4.5,7.6,59.3,0,0,0,0,0,0,,0,0,22.1,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.3638517674947 -4.22548145036966),16.9,0,8.8,1.9,3.9,65.2,0,0,1,1,0,0,,0,1,17.8,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.36320268637428 -4.196450813960192),1.1,0,10.5,6.9,2.3,89.7,0,0,1,0,1,0,,0,1,12.5,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.35511284831094 -4.053775669717291),13.8,0,19.1,8.6,3.2,61.5,0,0,0,1,1,0,,0,1,1.8,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.18777994566477 -4.172698292324288),5.8,0,1.0,6.2,8.1,88.3,0,0,0,0,1,0,,0,1,19.3,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.28241271424442 -4.1728747423357255),10.3,0,13.4,1.7,1.0,52.6,0,0,0,0,0,0,,0,1,18.8,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.13207387930338 -4.018076439559819),13.5,0,19.4,4.5,7.2,54.1,0,0,1,1,1,0,,0,1,24.0,unevenlySpread,evergreen,0,0
+9,Semak belukar,POINT (103.28735169049996 -4.168275237929308),1.9,0,10.1,1.9,1.8,52.1,0,0,1,0,1,0,,0,0,12.1,unevenlySpread,deciduous,1,0
+9,Semak belukar,POINT (103.19610011627852 -4.153833280962864),1.4,0,17.9,1.5,8.6,89.8,0,0,0,1,1,0,,0,0,9.2,unevenlySpread,deciduous,1,0
+9,Semak belukar,POINT (103.13250932714652 -4.018170940973535),8.0,0,1.4,7.8,7.6,55.3,0,0,1,1,1,0,,0,0,24.6,unevenlySpread,evergreen,1,0
+9,Semak belukar,POINT (103.1984964118882 -4.151661481588999),11.3,0,5.9,7.8,9.0,79.4,0,0,1,1,1,0,,0,0,17.3,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.2743027930891 -4.0469098772144205),20.1,1.7,21.6,5.2,3.1,14.5,0,0,0,0,0,0,,0,0,12.9,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26864647270887 -4.045487317725879),25.1,0.5,21.1,0.7,3.8,11.3,0,0,1,1,1,0,,0,1,25.2,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.27083822667242 -4.0438814281492785),16.3,6.0,34.5,0.7,3.7,13.4,0,0,1,0,1,0,,0,0,4.1,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25713305446723 -4.044368813547936),30.8,8.2,35.0,8.9,13.4,5.9,0,0,1,0,1,0,,0,1,20.8,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25093483792108 -4.049429827466954),10.0,8.0,29.5,9.4,11.9,14.9,0,0,1,1,1,0,,0,1,9.1,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26578936719446 -4.039397915201484),38.9,6.3,11.3,3.1,1.3,5.7,0,0,1,0,0,0,,0,1,29.5,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.24847075928173 -4.045881376485821),31.4,7.4,14.0,13.1,8.9,3.3,0,0,0,1,1,0,,0,1,11.9,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26358951070344 -4.039877826265091),33.1,5.3,30.6,0.5,7.8,12.4,0,0,1,1,0,0,,0,1,22.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25812780324884 -4.045658454103522),8.3,5.4,37.0,4.6,8.2,7.2,0,0,0,1,0,0,,0,0,16.5,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.25476222540962 -4.046462268138674),35.2,1.0,15.3,2.2,12.9,11.3,0,0,1,0,1,0,,0,0,16.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26155957295214 -4.044217112307403),11.7,7.9,18.2,5.0,1.5,13.6,0,0,0,1,0,0,,0,0,4.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.24995870700052 -4.048996778575326),21.0,1.2,7.2,12.7,14.0,2.8,0,0,0,1,1,0,,0,1,3.1,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25603049508493 -4.045716732007291),1.0,6.3,14.3,12.8,0.8,2.8,0,0,1,0,0,0,,0,1,29.8,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.2600286240326 -4.043417429533045),22.6,5.4,22.4,3.2,6.2,3.4,0,0,1,0,0,0,,0,1,22.6,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.27046531866515 -4.043426746695194),25.3,8.8,8.3,6.6,14.8,7.8,0,0,1,1,0,0,,0,1,5.5,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26994194059479 -4.04082591472997),31.3,8.2,13.5,13.1,3.2,5.0,0,0,0,1,0,0,,0,1,7.5,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.27160065872047 -4.045644217101253),9.1,1.9,9.4,13.4,7.3,14.7,0,0,0,0,1,0,,0,1,21.8,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26206622070356 -4.041190405832687),2.0,2.5,36.9,10.0,9.7,10.0,0,0,1,1,1,0,,0,1,12.1,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.2709754665697 -4.039799563925665),31.5,0.6,32.6,0.6,10.4,5.5,0,0,0,0,0,0,,0,1,3.6,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.25491202507756 -4.04427008084528),27.0,8.8,22.8,3.8,11.0,5.1,0,0,0,0,0,0,,0,0,28.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26484559745411 -4.038603716988092),2.1,1.3,36.8,10.2,13.4,11.0,0,0,1,0,0,0,,0,0,12.8,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.26764323659906 -4.043428999064499),5.5,3.7,6.3,11.5,9.5,11.4,0,0,0,1,1,0,,0,0,10.1,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.2548408424438 -4.046262908410453),19.9,2.5,19.1,10.3,13.0,7.8,0,0,0,1,0,0,,0,0,0.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25603125364903 -4.042516428186203),1.1,8.4,37.7,6.3,13.3,1.8,0,0,0,1,0,0,,0,1,7.8,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.25567603982921 -4.046824766312311),2.1,6.5,0.8,12.8,9.9,5.7,0,0,1,1,0,0,,0,1,18.9,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.24585157318658 -4.047443237968383),28.8,6.4,35.9,2.1,0.4,14.7,0,0,1,0,1,0,,0,1,3.4,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.24693966594377 -4.04378203371261),20.7,2.5,37.5,7.2,5.2,6.8,0,0,1,0,1,0,,0,1,16.5,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26457676489623 -4.037010366398516),36.3,8.9,37.2,6.2,2.8,4.3,0,0,0,1,1,0,,0,1,6.0,unevenlySpread,deciduous,1,0
+12,Pertanian lahan kering,POINT (103.26529234027294 -4.037694311850125),29.2,0.7,14.2,5.9,0.0,1.1,0,0,0,0,0,0,,0,1,23.8,unevenlySpread,deciduous,0,0
+12,Pertanian lahan kering,POINT (103.25676710740322 -4.042272671042945),16.5,4.9,2.1,7.0,2.9,7.5,0,0,1,1,0,0,,0,1,1.1,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.2153812556448 -4.067767931978713),19.2,4.0,8.3,10.0,1.1,51.3,0,0,0,0,1,0,,0,0,11.2,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.24225072619485 -4.171739801063929),24.4,5.3,18.9,2.1,7.5,43.9,0,0,1,0,1,0,,0,1,11.4,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.1512767162749 -4.104766806956938),23.9,9.7,23.2,7.2,14.9,59.2,0,0,1,0,0,0,,0,1,15.6,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.27283510898405 -4.03887779853897),8.3,9.8,13.2,4.7,4.9,57.3,0,0,1,0,1,0,,0,1,21.3,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.3661405010777 -4.022990054622059),23.7,9.8,1.0,3.3,3.0,43.6,0,0,0,0,1,0,,0,1,3.8,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.18096413763817 -4.12968154346317),16.9,8.3,19.1,5.1,3.9,34.1,0,0,0,1,1,0,,0,0,18.4,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.33963510834741 -4.191069418727731),3.9,8.3,22.5,13.8,6.2,50.2,0,0,1,0,0,0,,0,1,11.8,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.204139914579 -4.016231701209265),9.8,9.7,24.8,6.2,4.4,40.8,0,0,1,0,1,0,,0,0,22.8,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.22777598513834 -4.064498350608339),7.0,6.3,26.4,4.0,10.4,54.4,0,0,0,0,0,0,,0,1,12.5,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.26595382436392 -4.096942384081147),4.8,1.7,5.9,6.9,2.9,40.3,0,0,1,0,1,0,,0,0,5.6,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.24264284137632 -4.1505410232211535),7.2,0.7,10.4,2.0,6.9,50.4,0,0,0,0,0,0,,0,1,29.4,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.32999353353912 -4.121360621432458),11.5,5.8,6.7,0.2,9.3,50.3,0,0,1,0,1,0,,0,0,12.1,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.25042635068422 -4.13793271408234),22.1,8.8,4.7,4.6,1.2,47.7,0,0,0,0,1,0,,0,1,11.7,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.18126380785765 -4.127861734175462),9.8,7.0,19.8,1.0,10.4,49.9,0,0,0,1,0,0,,0,0,18.1,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.28800492257218 -4.010219555151898),27.0,2.1,14.9,10.8,6.6,45.2,0,0,1,0,0,0,,0,0,13.0,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.34411835502958 -4.05803163674218),10.8,9.9,1.6,1.1,6.2,33.7,0,0,1,0,0,0,,0,0,29.7,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.30175590180366 -4.1378002436673516),3.0,0.7,25.7,13.2,8.2,34.5,0,0,1,1,0,0,,0,0,28.2,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.32297584938024 -4.121838890042099),1.0,5.9,15.9,11.1,14.1,46.6,0,0,0,1,0,0,,0,0,16.0,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.18153094080645 -4.053939886018694),16.1,7.6,8.6,4.1,4.8,59.3,0,0,1,0,1,0,,0,0,22.1,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.22871987046172 -4.13428246260975),19.1,7.3,25.6,2.7,12.4,58.0,0,0,1,1,0,0,,0,1,9.8,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.35457922094987 -4.034041083819304),16.2,3.6,12.3,6.0,9.8,44.7,0,0,1,1,0,0,,0,1,18.4,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.27157045016229 -4.102223702616908),17.0,3.7,18.4,14.8,4.5,40.2,0,0,1,1,0,0,,0,1,13.2,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.15616396677109 -4.0925404541827834),6.1,4.6,18.8,0.1,5.2,39.5,0,0,1,1,1,0,,0,0,8.5,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.34026514571573 -4.074111997944689),12.1,9.0,6.7,10.5,3.8,52.0,0,0,0,0,0,0,,0,1,4.1,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.35414782220764 -4.150017778526063),16.6,5.3,12.5,5.2,13.7,38.0,0,0,1,0,0,0,,0,1,10.6,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.27577864110282 -4.078254481208611),7.6,5.7,8.5,5.1,8.5,53.2,0,0,0,0,0,0,,0,0,26.3,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.29660920581757 -4.046797068728403),19.2,0.2,0.2,1.9,14.4,42.7,0,0,0,0,1,0,,0,1,0.7,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.16600456376686 -4.110280897915428),22.0,2.6,24.1,9.8,11.5,32.2,0,0,0,1,1,0,,0,0,25.8,unevenlySpread,deciduous,1,0
+13,Pertanian Lahan Kering campur semak,POINT (103.32716660356824 -4.169777721715966),8.0,6.0,26.1,4.1,8.1,53.6,0,0,0,1,1,0,,0,1,2.9,unevenlySpread,deciduous,0,0
+13,Pertanian Lahan Kering campur semak,POINT (103.25854171986305 -4.10672586691095),29.7,8.3,14.0,10.7,1.2,34.6,0,0,1,1,0,0,,0,0,12.8,unevenlySpread,deciduous,1,0
+14,Sawah,POINT (103.38699019661442 -4.044106664467319),10.1,3.2,46.0,1.9,0,2.4,0,0,1,0,0,0,0,1,0,0.2,clusters,deciduous,1,0
+14,Sawah,POINT (103.22275911856921 -4.033364169175841),3.2,3.4,44.6,0.0,0,3.1,0,0,1,0,0,0,0,1,0,3.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.34606624609417 -4.079834191775987),10.4,1.7,41.8,3.5,0,1.7,0,0,1,0,0,0,0,1,0,0.7,clusters,deciduous,1,0
+14,Sawah,POINT (103.18167328895807 -4.078089247616902),11.6,3.4,79.3,0.1,0,0.9,0,0,1,0,0,0,0,1,0,3.8,clusters,deciduous,1,0
+14,Sawah,POINT (103.41260748065936 -4.001249152814259),1.2,4.5,42.0,0.5,0,4.0,0,0,1,0,0,0,0,1,0,3.5,clusters,deciduous,1,0
+14,Sawah,POINT (103.25700671955585 -4.03889735250123),12.4,4.9,66.7,2.5,0,3.1,0,0,1,0,0,0,0,1,0,1.8,clusters,deciduous,1,0
+14,Sawah,POINT (103.2302375947055 -3.997445331519323),4.1,0.9,75.0,2.4,0,0.2,0,0,1,0,0,0,0,1,0,1.3,clusters,deciduous,1,0
+14,Sawah,POINT (103.369453245463 -4.077633037521988),13.1,1.8,52.3,0.6,0,4.0,0,0,1,0,0,0,0,1,0,3.2,clusters,deciduous,1,0
+14,Sawah,POINT (103.2231281410922 -3.9911116283013413),11.8,2.8,39.0,1.6,0,2.6,0,0,1,0,0,0,0,1,0,2.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.26394789634527 -4.025671254562344),1.0,1.3,73.6,3.7,0,2.5,0,0,1,0,0,0,0,1,0,0.3,clusters,deciduous,1,0
+14,Sawah,POINT (103.26942860765604 -4.063684212159108),0.6,4.7,35.3,0.7,0,3.0,0,0,1,0,0,0,0,1,0,0.0,clusters,deciduous,1,0
+14,Sawah,POINT (103.30131759258538 -4.066642656955646),9.8,4.4,35.7,3.2,0,2.9,0,0,1,0,0,0,0,1,0,4.1,clusters,deciduous,1,0
+14,Sawah,POINT (103.2462559149 -4.011623739949347),6.7,1.3,63.6,3.6,0,3.1,0,0,1,0,0,0,0,1,0,0.6,clusters,deciduous,1,0
+14,Sawah,POINT (103.30618780745034 -4.069201605424473),8.0,1.6,72.1,4.3,0,4.7,0,0,1,0,0,0,0,1,0,2.7,clusters,deciduous,1,0
+14,Sawah,POINT (103.24081731876143 -4.021487972447728),2.9,0.6,49.6,2.8,0,0.1,0,0,1,0,0,0,0,1,0,2.1,clusters,deciduous,1,0
+14,Sawah,POINT (103.30359902314979 -4.07498440765497),11.6,4.6,68.7,0.8,0,0.2,0,0,1,0,0,0,0,1,0,4.0,clusters,deciduous,1,0
+14,Sawah,POINT (103.24060365927524 -4.044767381140283),3.1,3.1,64.9,3.8,0,0.4,0,0,1,0,0,0,0,1,0,0.8,clusters,deciduous,1,0
+14,Sawah,POINT (103.21923552837664 -4.001652168772518),14.9,2.0,43.3,3.1,0,4.8,0,0,1,0,0,0,0,1,0,3.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.35333634262446 -4.088250968768328),3.8,0.0,62.9,4.9,0,4.8,0,0,1,0,0,0,0,1,0,4.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.22411297530526 -4.00162207574231),12.6,0.9,58.3,3.1,0,4.7,0,0,1,0,0,0,0,1,0,2.6,clusters,deciduous,1,0
+14,Sawah,POINT (103.38777221383852 -4.039552630468513),2.8,3.8,78.6,4.4,0,1.5,0,0,1,0,0,0,0,1,0,2.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.23572400671199 -4.015772697906797),9.1,1.2,59.6,2.2,0,0.2,0,0,1,0,0,0,0,1,0,4.3,clusters,deciduous,1,0
+14,Sawah,POINT (103.24614177223255 -4.019950561577911),2.3,0.4,66.9,3.2,0,2.8,0,0,1,0,0,0,0,1,0,3.9,clusters,deciduous,1,0
+14,Sawah,POINT (103.18164380818351 -4.0823465754514014),6.4,0.1,76.2,3.5,0,2.5,0,0,1,0,0,0,0,1,0,0.0,clusters,deciduous,1,0
+14,Sawah,POINT (103.22981885016812 -4.01033169583694),3.7,4.8,54.0,1.2,0,3.2,0,0,1,0,0,0,0,1,0,1.0,clusters,deciduous,1,0
+14,Sawah,POINT (103.17164320745277 -4.074103270213937),9.9,4.5,42.1,4.2,0,0.1,0,0,1,0,0,0,0,1,0,2.5,clusters,deciduous,1,0
+14,Sawah,POINT (103.40602310701216 -4.0219049516421865),2.5,4.8,49.5,1.9,0,2.2,0,0,1,0,0,0,0,1,0,3.4,clusters,deciduous,1,0
+14,Sawah,POINT (103.33007179693095 -4.1108761728086),11.0,2.0,34.4,2.9,0,4.4,0,0,1,0,0,0,0,1,0,0.3,clusters,deciduous,1,0
+14,Sawah,POINT (103.30407519264264 -4.116555752541444),9.2,1.8,44.5,0.5,0,2.8,0,0,1,0,0,0,0,1,0,3.0,clusters,deciduous,1,0
+14,Sawah,POINT (103.39713165699985 -4.022763282441887),11.1,4.5,47.9,4.4,0,4.8,0,0,1,0,0,0,0,1,0,0.4,clusters,deciduous,1,0
+16,Permukiman/lahan terbangun,POINT (103.24722454327183 -4.020972859929055),4.7,70.9,8.1,0.0,4.4,1.2,0,0,0,0,0,0,0,0,0,2.6,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.23261614555281 -4.021670255129716),2.4,62.2,10.3,6.9,3.9,7.2,0,0,0,0,0,0,0,0,0,1.7,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26301885630379 -4.128034918122335),3.6,70.8,5.9,3.5,8.3,1.1,0,0,0,0,0,0,0,0,0,4.8,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.30581107537978 -4.05803772570908),11.8,69.6,0.4,7.3,3.4,0.1,0,0,0,0,0,0,0,0,0,0.3,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26770694316949 -4.087841941029754),5.6,60.4,7.4,4.5,2.9,3.5,0,0,0,0,0,0,0,0,0,4.4,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.21119881479089 -4.042404818795894),4.7,87.4,7.3,4.7,3.1,0.1,0,0,0,0,0,0,0,0,0,6.7,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25542654892104 -4.020880006377646),9.4,81.7,7.9,0.2,5.0,3.8,0,0,0,0,0,0,0,0,0,2.9,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.24775246998976 -4.0536107279725595),18.1,79.8,1.7,0.2,8.5,8.7,0,0,0,0,0,0,0,0,0,3.4,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.23548273993897 -4.028124560842842),14.2,86.4,2.1,4.2,8.3,4.6,0,0,0,0,0,0,0,0,0,6.1,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25632523373349 -4.026893948427365),5.6,63.9,3.2,7.4,6.1,8.1,0,0,0,0,0,0,0,0,0,8.9,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.21442124991555 -4.043834471615607),7.3,67.9,14.4,3.5,5.8,5.3,0,0,0,0,0,0,0,0,0,6.3,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.24232780886324 -4.099362809382),7.3,73.3,12.4,6.3,4.0,7.0,0,0,0,0,0,0,0,0,0,6.6,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26383927218521 -4.124710258999495),4.5,83.1,0.1,8.9,7.0,1.6,0,0,0,0,0,0,0,0,0,3.0,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.34663044745926 -4.0851060747744565),9.2,73.4,10.9,8.7,5.9,4.5,0,0,0,0,0,0,0,0,0,3.5,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.23708086234623 -3.995890351127307),14.4,95.0,0.2,8.5,5.2,1.6,0,0,0,0,0,0,0,0,0,0.4,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26610663515297 -4.081294559806602),10.4,91.7,12.4,7.8,0.4,4.8,0,0,0,0,0,0,0,0,0,7.2,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.19486267103639 -4.038194565001902),18.5,61.4,5.8,2.7,6.2,4.6,0,0,0,0,0,0,0,0,0,2.0,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.31462542182364 -4.085515875409999),18.2,95.3,8.6,9.9,9.5,3.8,0,0,0,0,0,0,0,0,0,3.8,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.23840875641369 -3.9987178886832098),8.4,73.0,0.6,6.0,4.6,0.4,0,0,0,0,0,0,0,0,0,7.5,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.2422174985999 -4.002659680471451),6.4,67.2,4.3,5.1,8.5,7.6,0,0,0,0,0,0,0,0,0,7.4,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26993267122958 -4.090009221189948),9.0,85.1,1.7,6.2,3.9,4.3,0,0,0,0,0,0,0,0,0,8.0,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.26742731324046 -4.0874670087792095),4.7,72.8,12.1,2.8,3.7,9.7,0,0,0,0,0,0,0,0,0,2.5,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25094400737817 -4.012116528658826),10.9,65.6,10.0,6.7,7.5,0.4,0,0,0,0,0,0,0,0,0,0.2,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.23337330646692 -4.0284639180134105),10.3,61.4,6.0,6.2,9.0,4.0,0,0,0,0,0,0,0,0,0,5.6,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.21299605071087 -4.04231262795093),6.5,61.0,12.9,5.9,1.8,2.7,0,0,0,0,0,0,0,0,0,6.6,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25186856296953 -4.008913144636444),7.3,73.8,13.2,1.8,3.5,4.8,0,0,0,0,0,0,0,0,0,1.3,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25024689707075 -4.008725861682983),12.8,86.9,0.2,7.0,2.1,2.7,0,0,0,0,0,0,0,0,0,7.0,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.27149203589741 -4.038843404565307),5.8,74.9,7.2,0.4,1.2,8.1,0,0,0,0,0,0,0,0,0,2.6,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.24882339261475 -4.09063689297414),1.6,65.4,11.2,0.7,4.9,5.1,0,0,0,0,0,0,0,0,0,3.8,clusters,evergreen,0,0
+16,Permukiman/lahan terbangun,POINT (103.25072532662503 -4.0209922900556165),11.6,93.8,11.4,4.2,2.4,2.9,0,0,0,0,0,0,0,0,0,0.1,clusters,evergreen,0,0
+18,Tanah terbuka,POINT (103.12416988973094 -4.016600468586535),87.4,1.9,19.7,11.5,0,1.0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.1262449227161 -4.017013223713652),99.1,8.4,12.2,13.4,0,0.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12535541101713 -4.019812220012456),84.8,8.5,7.5,2.2,0,2.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12407088143334 -4.016036950787036),75.6,4.2,19.1,5.8,0,4.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12684919915858 -4.016758305045155),72.0,0.9,11.0,11.5,0,4.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.1261706787472 -4.017331304221894),62.8,5.1,3.8,4.0,0,4.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12586959015357 -4.0156507071873415),66.6,1.8,13.3,0.9,0,1.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.1227265243564 -4.01760798551286),68.5,0.3,17.7,8.3,0,3.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12531403537251 -4.019664891672257),95.4,4.9,0.4,13.0,0,4.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12745508919299 -4.015690144525192),86.8,7.4,11.3,9.5,0,1.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12696835648417 -4.0169180936554),91.9,5.9,15.7,13.6,0,2.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12734387428532 -4.017352911748559),92.1,4.8,1.7,6.2,0,1.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12562645551915 -4.016734095927257),81.3,7.8,14.6,6.2,0,0.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12759591706265 -4.017664692259432),72.5,5.1,13.8,1.9,0,0.9,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12799658062147 -4.017964326325524),68.3,9.7,4.9,3.2,0,4.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12387440563566 -4.017725927207442),99.1,2.4,4.3,9.5,0,1.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12348916592425 -4.0165956664765625),63.1,1.0,8.6,8.4,0,4.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12356473505763 -4.017984931827528),60.5,0.2,0.8,3.2,0,3.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.1254625377839 -4.019558508339526),93.2,2.3,14.7,9.2,0,3.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12643080561548 -4.017714995110963),73.6,9.5,13.1,7.7,0,4.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12394032456469 -4.016721617544094),95.1,4.6,9.3,11.5,0,1.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.31541833233246 -4.157800746407558),96.1,5.4,17.3,9.2,0,4.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12753978795382 -4.01799883594447),79.0,2.4,6.5,10.8,0,4.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12565409206887 -4.016279653108523),75.7,4.1,0.3,12.2,0,2.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12712129482618 -4.018519938544904),74.0,3.2,10.6,5.6,0,1.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12522791351368 -4.018082816482268),65.0,6.6,8.0,5.5,0,0.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12344003606563 -4.015731255719335),92.5,5.8,14.2,8.6,0,4.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12389544394404 -4.018321743414006),85.9,7.6,10.6,14.5,0,3.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12800232399293 -4.01580248208445),80.9,9.5,16.1,9.5,0,3.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+18,Tanah terbuka,POINT (103.12728281286955 -4.0163650950974175),65.3,6.3,17.2,5.0,0,3.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+19,Pertambangan,POINT (103.36670409991436 -4.232240343926246),84.7,3.3,1.3,4.7,0,2.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.37148050297705 -4.225146208034474),75.8,7.0,4.0,1.4,0,6.9,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.3667341127211 -4.231863628156265),89.2,7.2,8.2,3.9,0,7.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36817521697581 -4.2270543580928415),80.2,11.6,5.0,3.2,0,6.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36633254109408 -4.225879139597448),73.8,0.6,3.0,3.0,0,9.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36411237731353 -4.228284333062068),80.5,8.1,3.8,1.0,0,0.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36621782756512 -4.228400796180403),88.5,13.9,6.2,8.2,0,1.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36370993177061 -4.228922878292677),92.2,7.7,2.6,4.7,0,3.0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.3648985724537 -4.229306703069446),92.3,1.3,7.2,1.6,0,5.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36567106429432 -4.228777533325567),97.5,5.4,3.5,6.1,0,3.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.3650787662601 -4.229522908337138),81.8,14.2,6.4,9.4,0,0.0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36658977994624 -4.227143743226511),85.8,0.5,8.3,8.1,0,8.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.37179238603807 -4.225302580815202),80.9,0.1,2.9,6.8,0,8.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36606234062577 -4.2322340648183925),76.3,1.1,4.4,9.4,0,1.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36461958307184 -4.229503948524017),76.3,13.4,0.8,5.6,0,10.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.37102329251671 -4.225496362495957),81.0,14.2,9.0,1.1,0,2.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.3692035193765 -4.226823429903563),89.9,13.2,5.8,3.0,0,3.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36682782985167 -4.227468710344701),86.6,5.3,2.4,8.5,0,2.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36948371924535 -4.227461258071576),97.2,1.2,2.9,1.2,0,1.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36624835038901 -4.228979042249653),97.9,7.1,6.1,7.5,0,14.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.37049808190362 -4.225774856479358),85.4,9.9,7.9,6.3,0,14.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.363060159456 -4.228834806980535),82.1,1.9,1.4,1.9,0,12.0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36363300426045 -4.229158743703348),80.6,14.0,7.1,5.7,0,5.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.3644129793374 -4.2298204425417065),85.8,5.3,0.3,2.7,0,3.9,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36659996978344 -4.2276659593117545),84.2,1.4,8.9,3.7,0,3.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36487366794363 -4.231295311388849),92.8,14.0,9.2,0.4,0,4.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36687419431664 -4.22701906748291),98.0,9.5,8.1,9.2,0,9.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36382960941178 -4.22854473058173),85.0,10.0,3.3,4.5,0,13.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.37179420044484 -4.225076728124229),80.7,7.9,5.2,5.0,0,8.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+19,Pertambangan,POINT (103.36539825731793 -4.232766397396607),70.7,5.0,4.8,3.8,0,6.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,1
+20,Tubuh air,POINT (103.12093331364801 -4.015857444223778),92.4,0,8.5,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12308896100521 -4.016140673280246),90.5,0,8.0,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12275680279717 -4.015420840023502),99.7,0,0.6,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12043132362196 -4.01546340320725),92.3,0,5.8,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12209908127807 -4.016571403829389),97.4,0,1.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12066967638646 -4.01551748441743),91.4,0,4.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12240938125835 -4.016944210717661),96.7,0,4.5,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12107449187226 -4.016096794218431),90.6,0,1.7,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12294940346241 -4.016222906364662),90.3,0,1.9,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12285082787979 -4.016637797872687),95.1,0,1.3,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.1216664180047 -4.01654273083991),96.7,0,1.0,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12293608702593 -4.016453562977849),99.9,0,2.5,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12053578565968 -4.016108749707769),97.9,0,6.7,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12278720147998 -4.016148885082417),94.4,0,6.3,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12216831150045 -4.016557636572429),93.3,0,4.7,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.1223650520858 -4.015483961691605),95.5,0,0.9,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12275596663046 -4.015556256317477),97.0,0,8.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12215853343426 -4.016418666381717),93.1,0,1.7,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12193280764906 -4.0160221903707765),90.7,0,9.3,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12262570537146 -4.016376016266174),91.0,0,3.8,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12144756012347 -4.016878251844401),99.9,0,9.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12249876594763 -4.014878487797898),91.7,0,7.1,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12142013435319 -4.015494224825288),99.8,0,2.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12318437507938 -4.014975407000917),91.5,0,6.7,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12118791260143 -4.0151433989258205),94.8,0,9.4,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12272189677533 -4.016261194638352),90.6,0,7.1,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12122379132252 -4.016355604201346),95.5,0,4.3,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12075966351934 -4.015586812230424),96.1,0,1.1,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12218103157947 -4.01638832588703),97.4,0,4.5,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+20,Tubuh air,POINT (103.12212759709494 -4.016507865109568),97.9,0,3.0,0,0,0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37246598673107 -4.026233463286536),4.3,94.6,0.5,3.9,0,0.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38097871832778 -4.018856184508306),13.2,95.9,4.7,2.7,0,0.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37575633164374 -4.022222202638396),9.3,87.9,9.9,1.0,0,0.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38239988923843 -4.026635266739314),8.1,87.5,3.3,4.4,0,7.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.3718672141246 -4.026563809304228),1.1,75.6,4.8,2.0,0,5.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38526951651308 -4.018741555830049),12.2,90.6,8.2,0.5,0,2.0,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37522500707632 -4.022455649987932),6.7,83.9,4.2,1.3,0,2.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37686657443743 -4.025866309925411),6.7,81.4,7.8,3.5,0,5.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37956655819771 -4.02062498010516),14.9,72.9,10.0,4.4,0,6.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38280428696062 -4.017956150969998),7.9,74.5,9.2,2.4,0,2.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38210113904884 -4.025846522603093),9.4,97.8,2.3,4.0,0,2.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37865092791174 -4.020984922055632),9.2,73.5,5.0,1.6,0,3.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38704915857318 -4.019364549822309),9.2,79.5,0.1,2.5,0,7.3,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37835179649419 -4.0200787247206895),7.7,85.6,9.3,4.2,0,7.5,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38168971755478 -4.027562618270606),5.7,81.3,8.8,3.1,0,8.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38401883674402 -4.021154952586547),9.9,87.4,1.5,4.2,0,6.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38632469266106 -4.019210914981013),4.7,92.1,2.5,0.5,0,0.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37702324273883 -4.023480212106574),1.7,96.6,5.6,3.5,0,7.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37458042095942 -4.02511390245904),8.8,96.5,14.2,2.4,0,3.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.3747639167761 -4.02274200424424),4.9,88.6,8.0,1.4,0,1.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.3839760244684 -4.022040283402005),14.9,78.6,4.8,3.7,0,4.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37453414643724 -4.027592319363967),1.1,90.0,7.9,4.4,0,4.6,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37971340218769 -4.023663208401995),11.9,93.4,13.1,3.2,0,9.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.3793277383361 -4.024700189425212),11.3,74.9,7.3,1.4,0,5.1,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38521499196844 -4.016336308342561),5.7,95.1,1.9,4.3,0,8.4,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37473646561125 -4.025120712032644),7.5,81.2,1.5,3.7,0,5.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37506617946929 -4.027183925832812),2.2,86.6,11.0,4.1,0,7.2,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.38476446909186 -4.01961145681587),12.1,73.5,9.0,0.7,0,3.7,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37418648084079 -4.022550686728058),8.0,89.6,13.3,1.1,0,1.8,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0
+23,Bandara/Pelabuhan,POINT (103.37989915415949 -4.021241343517279),10.6,94.0,14.7,3.9,0,7.9,0,0,0,0,0,0,0,0,0,0,other,deciduous,0,0

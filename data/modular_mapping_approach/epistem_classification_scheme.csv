@@ -1,0 +1,25 @@
+﻿ID,Class Name,Color Code
+1,Primary Dryland Forest,#006400
+2,Secondary Dryland Forest,#228B22
+3,Primary Mangrove Forest,#4169E1
+4,Secondary Mangrove Forest,#87CEEB
+5,Primary Swamp Forest,#2E8B57
+6,Secondary Swamp Forest,#8FBC8F
+7,Plantation Forest,#32CD32
+8,Rubber Monoculture,#8B4513
+9,Oil palm Monoculture,#FF8C00
+10,Cacao Monoculture,#D2691E
+11,Coconut monoculture,#F4A460
+12,Other Monoculture,#DAA520
+13,Other Cropland,#FFFF00
+14,Coffee agroforestry,#6B8E23
+15,Rubber agroforestry,#9ACD32
+16,Mixed/home garden,#7CFC00
+17,Paddy field,#EEE8AA
+18,Grass or Savanna,#ADFF2F
+19,Shrub,#90EE90
+20,Settlement,#FF0000
+21,Cleared Land,#D2B48C
+22,Mining area,#808080
+23,Waterbody,#0000FF
+24,Fish pond,#00BFFF
