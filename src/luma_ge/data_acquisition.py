@@ -637,35 +637,44 @@ class Reflectance_Data:
 
     #Sharpening the 20m bands using multi resolution analysis, namely High Pass Filter (HPF)
     def sharpen_s2_bands(self, image: ee.Image, aoi=None,
-        crs: str = 'EPSG:3857', #legacy, might be remove 
+        crs: str = 'EPSG:3857',  # legacy; overridden when crs_transform is None
         crs_transform: Optional[List] = None,
         mod: float = 0.25,
         best_effort: bool = True,
-        tile_scale: float = 1.0,
+        tile_scale: float = 4.0,
         max_pixels: Optional[int] = None,
     ) -> Optional[ee.Image]:
         """
-        Sharpen 20m Sentinel-2 bands to 10m using High Pass Filter (HPF) Multi Resolution Anlaysis (MRA)
-        Summary of the HPF algoritm as follow
+        Sharpen 20m Sentinel-2 bands to 10m using High Pass Filter (HPF) Multi Resolution Analysis (MRA).
+
+        Summary of the HPF algorithm:
         ---------
-        1. Build pseudo-panchromatic band (PAN) from mean value of 10m bands
-        2. Snap PAN and 20m bands to a fixed UTM pixel grid.
-        3. Convolve PAN with a 5×5 Laplacian HPF kernel (centred at -2, -2).
-        4. Bilinear-resample 20m bands to 10m on the same UTM grid.
-        5. Compute injection weight from *native* 20m stdDev:
+        1. Build pseudo-panchromatic band (PAN) from mean of 10m Vis-NIR bands.
+        2. Convolve PAN with a 5×5 Laplacian HPF kernel.
+        3. Compute per-band injection weight from native 20m stdDev and HPF stdDev:
                W = σ_native20m / σ_HPF × mod
-        6. Inject: ``out = MS_resampled + HPF × W``. Cast to uint16.
-        7. Linear histogram stretch to restore original 20m mean/stdDev:
+        4. Bilinear-resample 20m bands to 10m.
+        5. Inject: ``out = MS_resampled + HPF × W``.
+        6. Linear histogram stretch to restore original 20m mean/stdDev:
                sharpened = (out − μ_out) / σ_out × σ_native20m + μ_native20m
-           Stats computed server-side via ``reduceRegion → toImage → regexpRename``.
-        8. Stack sharpened 20m bands with original 10m bands; copy image properties.
+           All stats are computed server-side via ``reduceRegion → toImage``.
+        7. Stack sharpened 20m bands with original 10m bands; copy image properties.
+
+        Notes
+        -----
+        ``reproject()`` is intentionally avoided on intermediate images to prevent
+        GEE from materializing full-resolution pixel grids in memory before
+        downstream operations.  The UTM CRS and scale are instead passed
+        directly to ``reduceRegion`` so GEE can apply lazy evaluation.  The
+        final reproject at step 4 is the only anchor, applied only to the
+        lightweight bilinear-resampled 20m image immediately before injection.
 
         Parameters
         ----------
         image : ee.Image
-            Output of ``rename_s2_bands`` — scaled reflectance 0.0–1.0, bands:
-            ``['BLUE','GREEN','RED','RED_EDGE1','RED_EDGE2','RED_EDGE3',
-            'NIR','RED_EDGE4','SWIR1','SWIR2']``.
+            Sentinel-2 image with standardized band names (output of
+            ``rename_s2_bands``).  Band values may be raw DN (0–10 000) or
+            scaled reflectance (0.0–1.0) — the algorithm is scale-agnostic.
         aoi : ee.Geometry or ee.FeatureCollection, optional
             Region for stat reductions. Falls back to ``image.geometry()`` if None.
         crs : str, optional
@@ -683,8 +692,9 @@ class Reflectance_Data:
             If the geometry exceeds ``max_pixels``, auto-increase scale to fit.
             Default: ``True``.
         tile_scale : float, optional
-            Aggregation tile-size scaling factor. Increase (e.g. 2 or 4) if
-            ``reduceRegion`` runs out of memory. Default: ``1.0``.
+            Aggregation tile-size scaling factor for ``reduceRegion``.
+            Increase (e.g. 4 or 8) for large AOIs to avoid memory errors.
+            Default: ``4.0``.
 
         Returns
         -------
@@ -702,21 +712,22 @@ class Reflectance_Data:
         >>> rd = Reflectance_Data()
         >>> collection, _ = rd.get_s2_optical_data(aoi, 2022, 2023)
         >>> img = final_Image().get_temporal_composite(collection, aoi)
-        >>> # Auto UTM zone derived from AOI centroid (recommended for composites)
+        >>> # Auto UTM zone derived from AOI centroid (recommended)
         >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi)
+        >>> # For a very large AOI increase tile_scale to avoid memory errors
+        >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi, tile_scale=8.0)
         >>> # Force a specific CRS and tile-grid origin (advanced override)
         >>> sharpened = rd.sharpen_s2_bands(img, aoi=aoi, crs='EPSG:32749',
         ...                                  crs_transform=[10, 0, 300000, 0, -10, 300000])
         """
         try:
-            #fall back system for aoi
+            # Resolve geometry for stat reductions
             if aoi is not None:
                 geometry = aoi.geometry() if isinstance(aoi, ee.FeatureCollection) else aoi
             else:
                 geometry = image.geometry()
 
-            #Manually define a way to retrieve UTM zone
-            #on image.select(0).projection(). Derive UTM zone from AOI centroid.
+            # Derive UTM zone from AOI centroid (single cheap getInfo call)
             if crs_transform is None:
                 centroid_coords = geometry.centroid(maxError=1000).getInfo()['coordinates']
                 lon, lat = centroid_coords[0], centroid_coords[1]
@@ -725,15 +736,17 @@ class Reflectance_Data:
                 crs = f'EPSG:{epsg_code}'
                 crs_transform = [10, 0, 300_000, 0, -10, 300_000]
                 self.logger.info(
-                    f"Retrieved UTM zone: {crs} "
+                    f"Auto-derived UTM zone: {crs} "
                     f"(centroid lon={lon:.4f}, lat={lat:.4f}, zone={zone})"
                 )
             else:
                 self.logger.info(f"Using caller-supplied crs_transform with CRS: {crs}")
 
-            crs_transform_20m = [20, 0, crs_transform[2], 0, -20, crs_transform[5]]
+            bands_10m = ['BLUE', 'GREEN', 'RED', 'NIR']
+            bands_20m = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
+                         'RED_EDGE4', 'SWIR1', 'SWIR2']
 
-            #Common reduceRegion kwargs, for reusability
+            # Common reduceRegion kwargs — crs/scale passed directly (no reproject anchor)
             rr_kwargs = dict(
                 geometry   = geometry,
                 bestEffort = best_effort,
@@ -742,27 +755,30 @@ class Reflectance_Data:
             if max_pixels is not None:
                 rr_kwargs['maxPixels'] = max_pixels
 
-            bands_10m = ['BLUE', 'GREEN', 'RED', 'NIR']
-            bands_20m = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3',
-                         'RED_EDGE4', 'SWIR1', 'SWIR2']
-
-            #1. Pseudo-panchromatic band: average value of Visible-NIR bands (10m), as suggested by Kaplan (2018)
+            # 1. Pseudo-panchromatic band from mean of 10m Vis-NIR bands.
+            #    No reproject here — let GEE evaluate lazily.
             pan = (
                 image.select(bands_10m)
                      .reduce(ee.Reducer.mean())
                      .rename('PAN')
-                     .reproject(crs=crs, crsTransform=crs_transform)
             )
 
-            #2. Native 20m bands snapped to their UTM grid ---
-            native_20m = (
-                image.select(bands_20m)
-                     .reproject(crs=crs, crsTransform=crs_transform_20m)
+            # 2. HPF kernel: 5×5 Laplacian centred at (-2, -2)
+            kernel = ee.Kernel.fixed(
+                5, 5,
+                [[-1, -1, -1, -1, -1],
+                 [-1, -1, -1, -1, -1],
+                 [-1, -1, 24, -1, -1],
+                 [-1, -1, -1, -1, -1],
+                 [-1, -1, -1, -1, -1]],
+                -2, -2, False,
             )
+            hpf = pan.convolve(kernel).rename('highPassFilter')
 
-            #3. Retrieve statistical information for 20m band
+            # 3. Native 20m band statistics — pass crs + scale to reduceRegion directly.
+            #    Avoid reproject() here to prevent premature full-resolution materialization.
             stats_20m = (
-                native_20m
+                image.select(bands_20m)
                 .reduceRegion(
                     reducer = ee.Reducer.stdDev().combine(
                         ee.Reducer.mean(), sharedInputs=True
@@ -776,19 +792,7 @@ class Reflectance_Data:
             mean_20m    = stats_20m.select('.*_mean').regexpRename('(.*)_mean', '$1')
             std_dev_20m = stats_20m.select('.*_stdDev').regexpRename('(.*)_stdDev', '$1')
 
-            #4. HPF kernel: 5×5 Laplacian, centred at (-2, -2) ---
-            kernel = ee.Kernel.fixed(
-                5, 5,
-                [[-1, -1, -1, -1, -1],
-                 [-1, -1, -1, -1, -1],
-                 [-1, -1, 24, -1, -1],
-                 [-1, -1, -1, -1, -1],
-                 [-1, -1, -1, -1, -1]],
-                -2, -2, False,
-            )
-            hpf = pan.convolve(kernel).rename('highPassFilter')
-
-            #5. stdDev of HPF at 10m (server-side scalar) ---
+            # 4. HPF stdDev at 10m — server-side scalar, no materialization
             std_dev_hpf = (
                 hpf
                 .reduceRegion(
@@ -800,44 +804,44 @@ class Reflectance_Data:
                 .getNumber('highPassFilter')
             )
 
-            # 6. Bilinear resample 20m → 10m on the same UTM grid
+            # 5. Bilinear resample 20m → 10m.
+            #    reproject() is applied only here — to the lightweight resampled
+            #    image, immediately before injection, minimising the materialized footprint.
+            crs_transform_20m = [20, 0, crs_transform[2], 0, -20, crs_transform[5]]
             resampled_20m = (
-                native_20m
-                .resample('bilinear')
-                .reproject(crs=crs, crsTransform=crs_transform)
+                image.select(bands_20m)
+                     .reproject(crs=crs, crsTransform=crs_transform_20m)
+                     .resample('bilinear')
+                     .reproject(crs=crs, crsTransform=crs_transform)
             )
 
-            #7. HPF injection per band + uint16 clamp ---
-            # W = σ_native20m / σ_HPF × mod  (weight per band)
-            # out = MS_resampled + HPF × W
-            def _inject(band_name):
-                band_name = ee.String(band_name)
+            # 6. HPF injection per band (Python loop — avoids ee.List.map serialization overhead)
+            # W = σ_native20m / σ_HPF × mod;  out = MS_resampled + HPF × W
+            injected_bands = []
+            for band in bands_20m:
                 w = ee.Image().expression(
                     'std_dev_20m / std_dev_hpf * mod', {
-                        'std_dev_20m' : std_dev_20m.select(band_name),
+                        'std_dev_20m' : std_dev_20m.select([band]),
                         'std_dev_hpf' : std_dev_hpf,
-                        'mod'         : mod,
+                        'mod'         : ee.Number(mod),
                     }
                 )
-                return (
+                injected = (
                     ee.Image().expression(
-                        'ms_resampled + (hpf * w)', {
-                            'ms_resampled' : resampled_20m.select(band_name),
-                            'hpf'          : hpf,
-                            'w'            : w,
+                        'ms + hpf * w', {
+                            'ms'  : resampled_20m.select([band]),
+                            'hpf' : hpf,
+                            'w'   : w,
                         }
                     )
-                    .uint16()  #clamp negatives → 0 before stretch stats
+                    .rename([band])
                 )
+                injected_bands.append(injected)
 
-            output = (
-                ee.ImageCollection(ee.List(bands_20m).map(_inject))
-                .toBands()
-                .rename(bands_20m)
-            )
+            output = ee.Image.cat(injected_bands)
 
-            #8. Linear histogram stretch (server-side via toImage) ---
-            # sharpened = (output − μ_out) / σ_out × σ_native20m + μ_native20m
+            # 7. Linear histogram stretch — crs + scale passed directly, no reproject
+            #    sharpened = (output − μ_out) / σ_out × σ_native20m + μ_native20m
             stats_output = (
                 output
                 .reduceRegion(
@@ -863,10 +867,9 @@ class Reflectance_Data:
                         'mean_20m'      : mean_20m,
                     }
                 )
-                .uint16()
             )
 
-            #9. Stack the sharpen band with Vis-NIR band and copy image prop
+            # 8. Stack sharpened 20m bands with original 10m bands and copy properties
             result = image.select(bands_10m).addBands(sharpened)
             return ee.Image(result.copyProperties(image, image.propertyNames()))
 
