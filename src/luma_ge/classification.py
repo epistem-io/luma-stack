@@ -243,8 +243,18 @@ class Generate_LULC:
             return prob_img.rename(band_name)
         # Map over classes to get probability bands
         prob_imgs = class_list.map(per_class)
-        prob_imgcol = ee.ImageCollection(prob_imgs)
-        prob_stack = prob_imgcol.toBands()
+        
+        # Use reduce to stack images while preserving band names
+        # This is more robust than manual loops
+        def stack_bands(img, prev_stack):
+            return ee.Image(prev_stack).addBands(img)
+        
+        # Start with first image and iteratively add bands
+        prob_stack = ee.ImageCollection(prob_imgs).iterate(stack_bands, ee.Image())
+        prob_stack = ee.Image(prob_stack)
+        
+        # VERIFY: Print band names to confirm they're correct
+        # print('Stacked probability bands:', prob_stack.bandNames().getInfo())
 
         #if final map  is not needed, the functin will return prob bands only
         if not include_final_map:
