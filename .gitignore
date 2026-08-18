@@ -218,3 +218,4 @@ notebooks/Module_3_Generate_ROI.ipynb
 **/report/
 .Rproj.user
 /.kiro
+/.agents
