@@ -1,0 +1,25 @@
+class_id,class_name,priority,waterbody_cover,artificial_waterbody,builtup_cover,bareSoil_cover,mining,tree_cover,tree_height,agricultural_activity,mangrove_presence,rubber_presence,other_species_presence,coffee_presence,cacao_presence,oilpalm_presence,coconut_presence,paddy_presence,timber_extraction
+23,Waterbody,1,>=1,==0,,,,,==0,,,,,,,,,,
+20,Fish Pond,2,>=1,==1,,,,,==0,,,,,,,,,,
+24,Settlement,3,,,==1,,,,==0,,,,,,,,,,
+21,Cleared Land,4,,,,>0.05,,,==0,,,,,,,,,,
+22,Mining area,5,,,,>0,==1,,==0,,,,,,,,,,
+9,Oil palm monoculture,6,,,,,,==0,,==40,,,,,,>=0.1,,,
+11,Coconut monoculture,7,,,,,,==0,,==40,,,,,,,==1,,
+15,Rubber agroforestry,8,,,,,,==0,,==40,,==1,==1,,,,,,
+8,Rubber monoculture,9,,,,,,==0,,==40,,==1,==0,,,,,,
+14,Coffee agroforestry,10,,,,,,==0,,==40,,,,>=0.28,,,,,
+10,Cacao monoculture,11,,,,,,==0,,==40,,,,,>=0.28,,,,
+16,Mixed/home garden,12,,,==1,,,,>=5,,,,,,,,,,
+7,Plantation forest,13,,,,,,==1,,,,,,,,,,,==1
+12,Other monoculture,14,,,,,,==1,,,,,==1,<0.28,<0.28,,==0,,
+17,Paddy field,15,,,,,,,<=5,==40,,,,,,,,>=30,
+13,Other Cropland,16,,,,,,,<=5,==40,,,,,,,,,
+18,Grass or Savanna,18,,,,,,,<=5,==0,,,,,,,,,
+19,Shrub,17,,,,,,==1,<=5,,,,,,,,,,
+3,Primary Mangrove Forest,19,,,,,,,>=17&<=30,==0,==1,,,,,,,,==0
+5,Primary Swamp Forest,20,>=1,,,,,,>=14&<=30,==0,==0,,,,,,,,==0
+4,Secondary Mangrove Forest,21,,,,,,,>5&<17,,==1,,,,,,,,
+6,Secondary Swamp Forest,22,>=1,,,,,,>5&<14,,==0,,,,,,,,
+1,Primary Dryland Forest,23,==0,,,,,,>=30,==0,,,,,,,,,==0
+2,Secondary Dryland Forest,24,==0,,,,,,>5&<30,,,,,,,,,,

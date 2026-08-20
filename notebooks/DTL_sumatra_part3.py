@@ -4,14 +4,16 @@ import geopandas as gpd
 from shapely.geometry import shape
 import geemap
 
+# ee.Authenticate(force=True)
 ee.Initialize(project='epistem2')
 
 # ---------------- Config ----------------
+VERSION = 'v6'
 CLASS_PROPERTY = 'label'
 N_TREES = 100
 MIN_LEAF = 5
 SEED = 42
-TRAIN_RATIO = 0.7
+TRAIN_RATIO = 0.9
 PROBABILITY_SCALE = 100
 EXPORT_SCALE = 100
 ASSET_FOLDER = 'projects/epistem2/assets'
@@ -25,7 +27,7 @@ TRAIN_VECT_PATH = (
     / "data"
     / "modular_mapping_approach"
     / "sumatra_test"
-    / "sumatra_td_DTL_result_v5_cleaned.shp"
+    / f"sumatra_td_DTL_result_{VERSION}_cleaned.shp"
 )
 
 POLL_INTERVAL_SEC = 30
@@ -67,7 +69,7 @@ def main():
     feature_extractor = FeatureExtraction()
     classifier = Generate_LULC()
 
-    stacked_landsat = ee.Image('projects/epistem2/assets/stacked_landsat_2020_Sumatera')
+    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_sumatra_{VERSION}')
     band_names = stacked_landsat.bandNames()
 
     provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Sumatra_Provinces')
@@ -169,27 +171,27 @@ def main():
         )
         probability_stack = probability_stack.rename(new_band_names)
 
-        # --- Export probability stack; wait before moving to the next province ---
+        # --- Export probability stack; optionally wait before moving to the next province ---
         prob_asset_id = (
-            f'{ASSET_FOLDER}/probability_stack_{province_name_clean}_2020_v5'
+            f'{ASSET_FOLDER}/probability_stack_{province_name_clean}_2020_{VERSION}'
         )
 
         if asset_exists(prob_asset_id):
-            print(f"  ✓ Already exists at {prob_asset_id} — skipping")
+            print(f" Already exists at {prob_asset_id} — skipping")
             continue
     
         prob_task = ee.batch.Export.image.toAsset(
             image=probability_stack,
-            description=f'probability_stack_{province_name_clean}_2020_v5',
+            description=f'probability_stack_{province_name_clean}_2020_{VERSION}',
             assetId=prob_asset_id,
             region=province_geom,
             scale=EXPORT_SCALE,
             maxPixels=1e13
         )
         prob_task.start()
-        wait_for_task(prob_task, label=f"probability export [{province_name}]")
+        wait_for_task(prob_task, label=f"probability export [{province_name}]") # avoid computation time out error
 
-        print(f"  ✓ {province_name} done")
+        print(f" {province_name} done")
 
     print("\nAll provinces processed.")
 
