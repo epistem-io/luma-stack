@@ -7,17 +7,15 @@ to enhance land cover classification. This version is revised to follow the late
 """
 import ee
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from .ee_config import ensure_ee_initialized
-
+import matplotlib.pyplot as plt
 # Configure logging for development
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO,
+format='%(asctime)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
 #=================================== Terrain Metrics ===================================
@@ -133,7 +131,7 @@ class terrain_calculator:
                     return dem
                 except Exception as fallback_e:
                     logger.error(f"Fallback to NASADEM also failed: {str(fallback_e)}")
-            return None
+            return None # type: ignore
 
     #calculate slope from elevation data 
     def calculate_slope(self, aoi: ee.Geometry, dem_source: str = "NASADEM") -> ee.Image:
@@ -644,7 +642,7 @@ class SpectralCalculator:
                 reduced_indices = indices_collection.min()
             
             # Step 3: Clip to AOI
-            reduced_indices = reduced_indices.clip(aoi)
+            reduced_indices = reduced_indices.clip(aoi) # type: ignore
             
             # Validate results
             if reduced_indices is not None:
@@ -1518,3 +1516,393 @@ class EECorrelationAnalysis:
         except Exception as e:
             logger.error(f"Failed to create visualization: {str(e)}")
             raise
+
+#=================================== Recursive Feature Elimination ===================================
+class RFEGEE:
+    """
+    Recursive Feature Elimination (RFE) using
+    Random Forest variable importance in Google Earth Engine.
+    Inspired by https://github.com/DanGeospatial/GEE_Wetland_Classification
+    """
+
+    def __init__(
+        self,
+        training_data: ee.FeatureCollection,
+        class_property: str,
+        features: List[str],
+        test_data: Optional[ee.FeatureCollection] = None,
+        n_features_to_select: Optional[int] = None,
+        step: int = 1,
+        n_trees: int = 50,
+        seed: int = 42,
+        track_accuracy: bool = False,
+        verbose: bool = True
+    ):
+        self.training_data = training_data
+        self.test_data = test_data
+        self.class_property = class_property
+        self.features = features.copy()
+        self.n_features_to_select = (
+            n_features_to_select or len(features) // 2
+        )
+        self.step = step
+        self.n_trees = n_trees
+        self.seed = seed
+        self.track_accuracy = track_accuracy
+        self.verbose = verbose
+
+        # Results
+        self.selected_features_ = None
+        self.elimination_order_ = []
+        self.accuracy_history_ = []
+        self.n_features_history_ = []
+        self.feature_importance_history_ = []
+
+        self._validate_inputs()
+
+    #Utilities
+    def _log(self, msg: str):
+        if self.verbose:
+            print(msg)
+    #Function to validate input, log error if something happen
+    def _validate_inputs(self):
+        if not isinstance(self.training_data, ee.FeatureCollection):
+            raise TypeError("training_data must be ee.FeatureCollection")
+
+        if self.test_data is not None and not isinstance(self.test_data, ee.FeatureCollection):
+            raise TypeError("test_data must be ee.FeatureCollection or None")
+
+        if self.track_accuracy and self.test_data is None:
+            raise ValueError("test_data is required when track_accuracy=True")
+
+        if self.n_features_to_select < 1:
+            raise ValueError("n_features_to_select must be >= 1")
+
+        if self.n_features_to_select > len(self.features):
+            raise ValueError("n_features_to_select exceeds feature count")
+
+        if self.step < 1:
+            raise ValueError("step must be >= 1")
+
+
+    #Pre-requisites for implementation
+    #1. Train classifier (RF)
+    def _train_classifier(self, feature_list: List[str]) -> ee.Classifier:
+        return ee.Classifier.smileRandomForest(
+            numberOfTrees=self.n_trees,
+            seed=self.seed
+        ).train(
+            features=self.training_data,
+            classProperty=self.class_property,
+            inputProperties=feature_list
+        )
+
+    #2. Get variable importance AND optional accuracy in a single getInfo() call
+    def _get_importance_and_accuracy(
+        self, classifier: ee.Classifier, feature_list: List[str]
+    ) -> Tuple[Dict[str, float], Optional[float]]:
+        """
+        Retrieve feature importance (and optionally test accuracy) in a
+        single round-trip to the Earth Engine servers.
+
+        Batching both server-side objects into one getInfo() call avoids
+        the cost of a second blocking HTTP request per RFE iteration.
+        """
+        try:
+            if self.track_accuracy and self.test_data is not None:
+                # Build both EE objects server-side, then fetch in one call.
+                accuracy_val = (
+                    self.test_data
+                    .classify(classifier)
+                    .errorMatrix(self.class_property, "classification")
+                    .accuracy()
+                )
+                result = ee.Dictionary({
+                    "explanation": classifier.explain(),
+                    "accuracy": accuracy_val,
+                }).getInfo()
+
+                explanation = result["explanation"]
+                accuracy = result["accuracy"]
+            else:
+                explanation = classifier.explain().getInfo()
+                accuracy = None
+
+            if "importance" not in explanation:
+                raise ValueError("Feature importance not available in model explanation")
+
+            return explanation["importance"], accuracy
+
+        except Exception as e:
+            raise RuntimeError(f"RF importance/accuracy extraction failed: {str(e)}")
+
+    def _adaptive_step(self, n_current: int) -> int:
+        """
+        Return the number of features to drop this iteration.
+
+        Uses a larger step when far from the target (to reduce total
+        iterations and therefore EE API calls) and falls back to the
+        user-configured ``self.step`` once within 2× of the target.
+
+        This is a conservative heuristic: it never drops more than half
+        the surplus in one go, so the importance ordering sampled at a
+        large-step iteration is still representative.
+        """
+        surplus = n_current - self.n_features_to_select
+        # Within the final stretch — use the configured fine-grained step.
+        if surplus <= 2 * self.step:
+            return min(self.step, surplus)
+        # Coarse phase: drop up to half the surplus per iteration, but
+        # always respect the user-configured step as a lower bound so
+        # that if step=1 is explicitly requested we honour it.
+        coarse = max(self.step, surplus // 2)
+        return min(coarse, surplus)
+
+    #Implement Recursive Feature Elimination
+    #Remove feature one by one, evaluate its accuracy after each removal
+    #backward selection by starting with all of the input features 
+    #iteratively remove each feature that did not contribute to the increase of accuracy
+    def fit(self):
+        current_features = self.features.copy()
+
+        self._log(f"Starting RFE with {len(current_features)} features")
+        self._log(f"Target: {self.n_features_to_select}")
+        self._log("-" * 50)
+
+        while len(current_features) > self.n_features_to_select:
+
+            classifier = self._train_classifier(current_features)
+
+            # Single getInfo() call retrieves importance + accuracy together
+            importance, acc = self._get_importance_and_accuracy(classifier, current_features)
+
+            # Store importance history for visualization
+            self.feature_importance_history_.append(importance.copy())
+
+            if self.track_accuracy and acc is not None:
+                self.accuracy_history_.append(acc)
+                self.n_features_history_.append(len(current_features))
+                self._log(f"Features: {len(current_features)} | Acc: {acc:.4f}")
+            else:
+                self._log(f"Features: {len(current_features)}")
+
+            # Sort features by ascending importance
+            ranked = sorted(importance.items(), key=lambda x: x[1])
+
+            n_remove = self._adaptive_step(len(current_features))
+            to_remove = [f for f, _ in ranked[:n_remove]]
+
+            self._log(f"Removing: {to_remove}")
+
+            for f in to_remove:
+                current_features.remove(f)
+                self.elimination_order_.append(f)
+
+        self.selected_features_ = current_features
+        self._log("-" * 50)
+        self._log(f"Selected features ({len(current_features)}):")
+        for f in current_features:
+            self._log(f"  - {f}")
+
+        return self
+    # ------------------------------------------------------------------
+    #Get the selected features
+    def get_selected_features(self) -> List[str]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.selected_features_.copy()
+    #Rank the result 
+    def get_ranking(self) -> Dict[str, int]:
+        """
+        Rank 1 = selected features
+        Higher rank = eliminated earlier
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        ranking = {}
+        for f in self.features:
+            if f in self.selected_features_:
+                ranking[f] = 1
+            else:
+                ranking[f] = self.elimination_order_.index(f) + 2
+
+        return ranking
+
+    def get_support(self) -> Dict[str, bool]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        return {f: f in self.selected_features_ for f in self.features}
+
+    # ------------------------------------------------------------------
+    # Visualization methods for Streamlit
+    # ------------------------------------------------------------------
+    def plot_accuracy_curve(self, figsize: Tuple[int, int] = (10, 6)):
+        """
+        Plot accuracy vs number of features curve.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if not self.accuracy_history_:
+            raise RuntimeError("No accuracy data. Set track_accuracy=True and call fit() first")
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        ax.plot(
+            self.n_features_history_, 
+            self.accuracy_history_, 
+            marker='o',
+            linewidth=2,
+            markersize=6,
+            color='#1f77b4'
+        )
+        
+        # Highlight selected number of features
+        ax.axvline(
+            x=self.n_features_to_select,
+            color='red',
+            linestyle='--',
+            linewidth=2,
+            label=f'Selected: {self.n_features_to_select} features'
+        )
+        
+        ax.set_xlabel('Number of Features', fontsize=12)
+        ax.set_ylabel('Accuracy', fontsize=12)
+        ax.set_title('RFE: Accuracy vs Number of Features', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        
+        plt.tight_layout()
+        return fig
+
+    def plot_feature_rankings(self, figsize: Tuple[int, int] = (10, 8)):
+        """
+        Plot feature rankings as horizontal bar chart.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        
+        ranking = self.get_ranking()
+        ranking_sorted = sorted(ranking.items(), key=lambda x: x[1])
+        features, ranks = zip(*ranking_sorted)
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Color selected features differently
+        colors = ['#2ca02c' if r == 1 else '#d62728' for r in ranks]
+        
+        bars = ax.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+        
+        ax.set_yticks(range(len(features)))
+        ax.set_yticklabels(features, fontsize=10)
+        ax.set_xlabel('Rank (1 = Selected)', fontsize=12)
+        ax.set_title('Feature Rankings', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='x')
+        
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='#2ca02c', alpha=0.7, label='Selected'),
+            Patch(facecolor='#d62728', alpha=0.7, label='Eliminated')
+        ]
+        ax.legend(handles=legend_elements, loc='lower right')
+        
+        plt.tight_layout()
+        return fig
+
+    def plot_rfe_summary(self, figsize: Tuple[int, int] = (15, 6)):
+        """
+        Combined plot showing both accuracy curve and feature rankings.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        
+        # Plot 1: Accuracy curve (if available)
+        if self.accuracy_history_:
+            ax1.plot(
+                self.n_features_history_, 
+                self.accuracy_history_, 
+                marker='o',
+                linewidth=2,
+                markersize=6,
+                color='#1f77b4'
+            )
+            ax1.axvline(
+                x=self.n_features_to_select,
+                color='red',
+                linestyle='--',
+                linewidth=2,
+                label=f'Selected: {self.n_features_to_select} features'
+            )
+            ax1.set_xlabel('Number of Features', fontsize=12)
+            ax1.set_ylabel('Accuracy', fontsize=12)
+            ax1.set_title('Accuracy vs Number of Features', fontsize=14)
+            ax1.grid(True, alpha=0.3)
+            ax1.legend()
+        else:
+            ax1.text(0.5, 0.5, 'No accuracy data\n(set track_accuracy=True)', 
+                    ha='center', va='center', transform=ax1.transAxes, fontsize=12)
+            ax1.set_title('Accuracy Tracking Disabled', fontsize=14)
+        
+        # Plot 2: Feature rankings
+        ranking = self.get_ranking()
+        ranking_sorted = sorted(ranking.items(), key=lambda x: x[1])
+        features, ranks = zip(*ranking_sorted)
+        
+        colors = ['#2ca02c' if r == 1 else '#d62728' for r in ranks]
+        ax2.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+        ax2.set_yticks(range(len(features)))
+        ax2.set_yticklabels(features, fontsize=9)
+        ax2.set_xlabel('Rank', fontsize=12)
+        ax2.set_title('Feature Rankings', fontsize=14)
+        ax2.grid(True, alpha=0.3, axis='x')
+        
+        plt.tight_layout()
+        return fig
+
+    def get_results_dataframe(self) -> pd.DataFrame:
+        """
+        Get comprehensive results as pandas DataFrame for Streamlit display.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        
+        ranking = self.get_ranking()
+        support = self.get_support()
+        
+        # Create base DataFrame
+        results_df = pd.DataFrame({
+            'Feature': list(ranking.keys()),
+            'Rank': list(ranking.values()),
+            'Selected': list(support.values()),
+            'Status': ['✅ Selected' if s else '❌ Eliminated' for s in support.values()]
+        })
+        
+        # Add final importance scores if available
+        if self.feature_importance_history_:
+            final_importance = self.feature_importance_history_[-1]
+            results_df['Final_Importance'] = results_df['Feature'].map(
+                lambda x: final_importance.get(x, 0)
+            )
+        
+        # Sort by rank
+        results_df = results_df.sort_values('Rank').reset_index(drop=True)
+        
+        return results_df
+
+    def get_accuracy_dataframe(self) -> pd.DataFrame:
+        """
+        Get accuracy history as pandas DataFrame for Streamlit display.
+        """
+        if not self.accuracy_history_:
+            raise RuntimeError("No accuracy data. Set track_accuracy=True and call fit() first")
+        
+        return pd.DataFrame({
+            'Iteration': range(1, len(self.accuracy_history_) + 1),
+            'Number_of_Features': self.n_features_history_,
+            'Accuracy': self.accuracy_history_
+        })
