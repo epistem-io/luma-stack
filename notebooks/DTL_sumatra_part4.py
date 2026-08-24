@@ -10,6 +10,7 @@ VERSION = 'v6'
 POLL_INTERVAL_SEC = 30
 EXPORT_FOLDER = 'GEE_exports'
 EXPORT_SCALE = 100
+ASSET_FOLDER = 'projects/epistem2/assets'
 
 def wait_for_task(task, label=""):
     """Block until an EE batch task finishes. Raises if it fails/cancels."""
@@ -26,6 +27,15 @@ def wait_for_task(task, label=""):
             return status
         print(f"  ... {label} state={state}, waiting {POLL_INTERVAL_SEC}s")
         time.sleep(POLL_INTERVAL_SEC)
+
+def asset_exists(asset_id):
+    """Check whether an EE asset already exists. Cheap metadata call,
+    not a heavy interactive computation — safe to call every iteration."""
+    try:
+        ee.data.getAsset(asset_id)
+        return True
+    except ee.ee_exception.EEException:
+        return False
 
 def main():
 
@@ -71,14 +81,19 @@ def main():
         
         # --- Export probability stack; wait before moving to the next province ---
 
-        # if asset_exists(prob_asset_id):
-        #     print(f"  ✓ Already exists at {prob_asset_id} — skipping")
-        #     continue
+        lulc_asset_id = (
+            f'{ASSET_FOLDER}/final_lulc_stack_{province_name_clean}_2020_{VERSION}'
+        )
+
+        if asset_exists(lulc_asset_id):
+            print(f"  ✓ Already exists at {lulc_asset_id} — skipping")
+            continue
     
-        prob_task = ee.batch.Export.image.toDrive(
+        prob_task = ee.batch.Export.image.toAsset(
             image=final_lulc_stack,
             description=f'final_lulc_stack_{province_name_clean}_2020_{VERSION}',
-            folder=EXPORT_FOLDER,
+            # folder=EXPORT_FOLDER,
+            assetId=lulc_asset_id,
             region=province_geom,
             scale=EXPORT_SCALE,
             maxPixels=1e13
