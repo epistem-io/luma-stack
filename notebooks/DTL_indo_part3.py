@@ -26,8 +26,8 @@ TRAIN_VECT_PATH = (
     BASE_DIR
     / "data"
     / "modular_mapping_approach"
-    / "sumatra_test"
-    / f"sumatra_td_DTL_result_{VERSION}_cleaned.shp"
+    / "kalimantan_test"
+    / f"kalimantan_td_DTL_result_{VERSION}.shp"
 )
 
 POLL_INTERVAL_SEC = 30
@@ -69,12 +69,12 @@ def main():
     feature_extractor = FeatureExtraction()
     classifier = Generate_LULC()
 
-    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_sumatra_{VERSION}')
+    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_kalimantan_{VERSION}')
     band_names = stacked_landsat.bandNames()
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Sumatra_Provinces')
+    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Kalimantan_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 10
+    n_provinces = 5 # kalimantan number of provinces
 
     # Local shapefile load — cheap, not EE compute, safe to do once
     TrainData = gpd.read_file(TRAIN_VECT_PATH)
