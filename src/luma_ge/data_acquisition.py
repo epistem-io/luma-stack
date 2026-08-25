@@ -281,7 +281,7 @@ class Reflectance_Data:
     #Function to retrive Landsat multispectral bands
     def get_optical_data(self, aoi, start_date, end_date, optical_data='L8_SR',
                         cloud_cover=30,
-                        verbose=True, compute_detailed_stats=True):
+                        verbose=True, compute_detailed_stats=True, scene_limit=250):
         """
         Get multispectral image collection for Landsat 1-9 with detailed information logging.
 
@@ -296,6 +296,7 @@ class Reflectance_Data:
         compute_detailed_stats : bool
             If True, compute detailed statistics 
             If False, return only basic information (default: True).
+        scene_limit : int. Maximum number of scene collection (default: 250)
 
         Returns
         -------
@@ -364,7 +365,7 @@ class Reflectance_Data:
         #Collection after cloud cover filter
         collection = initial_collection.filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
         #Limit to 250 scenes to avoid Earth Engine computation limits
-        collection = collection.limit(250)
+        collection = collection.limit(scene_limit)
         filtered_stats = stats_object.get_collection_statistics(collection, compute_detailed_stats)
         #Computing image statistics
         if verbose and compute_detailed_stats:
