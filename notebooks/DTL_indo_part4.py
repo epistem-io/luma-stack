@@ -39,12 +39,12 @@ def asset_exists(asset_id):
 
 def main():
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Sumatra_Provinces')
+    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Papua_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 10
+    n_provinces = 6
 
     # for i in range(n_provinces):
-    for i in range(2, n_provinces):
+    for i in range(0, n_provinces):
         province = ee.Feature(province_list.get(i))
         province_name = province.get('AoI').getInfo()
         province_name_clean = (
@@ -99,7 +99,7 @@ def main():
             maxPixels=1e13
         )
         prob_task.start()
-        wait_for_task(prob_task, label=f"final lulc export [{province_name}]")
+        # wait_for_task(prob_task, label=f"final lulc export [{province_name}]")
 
         print(f"  [OK] {province_name} done")
 
