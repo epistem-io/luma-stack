@@ -13,7 +13,7 @@ CLASS_PROPERTY = 'label'
 N_TREES = 100
 MIN_LEAF = 5
 SEED = 42
-TRAIN_RATIO = 0.5
+TRAIN_RATIO = 0.4
 PROBABILITY_SCALE = 100
 EXPORT_SCALE = 100
 ASSET_FOLDER = 'projects/epistem2/assets'
@@ -26,8 +26,8 @@ TRAIN_VECT_PATH = (
     BASE_DIR
     / "data"
     / "modular_mapping_approach"
-    / "sulawesi_test"
-    / f"sulawesi_td_DTL_result_{VERSION}.shp"
+    / "nusatenggara_test"
+    / f"nusatenggara_td_DTL_result_{VERSION}.shp"
 )
 
 POLL_INTERVAL_SEC = 30
@@ -69,19 +69,19 @@ def main():
     feature_extractor = FeatureExtraction()
     classifier = Generate_LULC()
 
-    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_sulawesi_{VERSION}')
+    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_nusatenggara_{VERSION}')
     band_names = stacked_landsat.bandNames()
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Sulawesi_Provinces')
+    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_NusaTenggara_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 6 # jawabali number of provinces
+    n_provinces = 2 # jawabali number of provinces
 
     # Local shapefile load — cheap, not EE compute, safe to do once
     TrainData = gpd.read_file(TRAIN_VECT_PATH)
     if TrainData.crs is None:
         TrainData = TrainData.set_crs("EPSG:4326")
 
-    for i in range(4, n_provinces):
+    for i in range(1, n_provinces):
         province = ee.Feature(province_list.get(i))
         province_name = province.get('AoI').getInfo()
         province_name_clean = (
