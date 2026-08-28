@@ -39,9 +39,9 @@ def asset_exists(asset_id):
 
 def main():
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Papua_Provinces')
+    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Maluku_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 6
+    n_provinces = 2
 
     # for i in range(n_provinces):
     for i in range(0, n_provinces):

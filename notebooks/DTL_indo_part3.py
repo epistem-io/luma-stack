@@ -13,7 +13,7 @@ CLASS_PROPERTY = 'label'
 N_TREES = 100
 MIN_LEAF = 5
 SEED = 42
-TRAIN_RATIO = 0.5
+TRAIN_RATIO = 0.1
 PROBABILITY_SCALE = 100
 EXPORT_SCALE = 100
 ASSET_FOLDER = 'projects/epistem2/assets'
@@ -26,8 +26,8 @@ TRAIN_VECT_PATH = (
     BASE_DIR
     / "data"
     / "modular_mapping_approach"
-    / "papua_test"
-    / f"papua_td_DTL_result_{VERSION}.shp"
+    / "maluku_test"
+    / f"maluku_td_DTL_result_{VERSION}.shp"
 )
 
 POLL_INTERVAL_SEC = 30
@@ -69,12 +69,12 @@ def main():
     feature_extractor = FeatureExtraction()
     classifier = Generate_LULC()
 
-    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_papua_{VERSION}')
+    stacked_landsat = ee.Image(f'projects/epistem2/assets/stacked_landsat_2020_maluku_{VERSION}')
     band_names = stacked_landsat.bandNames()
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Papua_Provinces')
+    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Maluku_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 6
+    n_provinces = 2
 
     # Local shapefile load — cheap, not EE compute, safe to do once
     TrainData = gpd.read_file(TRAIN_VECT_PATH)
@@ -159,17 +159,35 @@ def main():
             seed=SEED,
             probability_scale=PROBABILITY_SCALE
         )
-
-        # --- Rename bands to prob_[class_name] ---
+        
+        #  BAND RENAMING FIX
+        all_band_names = probability_stack.bandNames().getInfo()
         class_ids_ordered_local = sorted({int(f['properties'][CLASS_PROPERTY]) for f in raw_features})
-        n_classes = len(class_ids_ordered_local)
-        print(f"  Classes for this province: {class_ids_ordered_local} ({n_classes})")
+        expected_band_names = {f'prob_{c}' for c in class_ids_ordered_local}
 
-        class_ids_ordered = ee.List(class_ids_ordered_local)
-        new_band_names = class_ids_ordered.map(
-            lambda cid: ee.String('prob_').cat(ee.Number(cid).int().format())
-        )
-        probability_stack = probability_stack.rename(new_band_names)
+        # Keep only bands that actually match an expected class band name
+        
+        stray_bands = [b for b in all_band_names if b not in expected_band_names]
+        if stray_bands:
+            print(f"  Dropping stray non-class band(s): {stray_bands}")
+            probability_stack = probability_stack.select(
+                probability_stack.bandNames().filter(
+                    ee.Filter.inList('item', list(expected_band_names))
+                )
+            )
+
+        kept_band_names = probability_stack.bandNames().getInfo()
+        print(f"  probability_stack bands after cleanup: {kept_band_names}")
+        print(f"  {len(class_ids_ordered_local)} distinct classes: {class_ids_ordered_local}")
+
+        if set(kept_band_names) != expected_band_names:
+            missing = expected_band_names - set(kept_band_names)
+            unexpected = set(kept_band_names) - expected_band_names
+            raise RuntimeError(
+                f"Band/class mismatch for {region_name}/{province_name}: "
+                f"missing={missing}, unexpected={unexpected}. "
+                f"Aborting rather than exporting a potentially mislabeled stack."
+            )
 
         # --- Export probability stack; optionally wait before moving to the next province ---
         prob_asset_id = (
