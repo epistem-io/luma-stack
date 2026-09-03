@@ -16,13 +16,8 @@ import ee
 from typing import List, Optional, Union
 from .ee_config import ensure_ee_initialized
 
-# ---------------------------------------------------------------------------
-# Module 1.5: Imagery Correction
-## System Response 1.5.1 – Topographic Correction (SCSc)
-# ---------------------------------------------------------------------------
-
+#IMAGERY CORRECTION MODULES
 logger = logging.getLogger(__name__)
-
 
 class Topographic_Correction:
     """
@@ -57,18 +52,26 @@ class Topographic_Correction:
     Example
     -------
     >>> tc = Topographic_Correction()
-    >>> dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
     >>>
-    >>> # Correct a single image (Landsat, 30 m)
-    >>> corrected_img = tc.correct_image(image, dem, scale=30)
+    >>> # Correct a single image (Landsat, 30 m) — uses NASADEM by default
+    >>> corrected_img = tc.correct_image(image, scale=30)
+    >>>
+    >>> # Override with a custom DEM
+    >>> custom_dem = ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')
+    >>> corrected_img = tc.correct_image(image, dem=custom_dem, scale=30)
     >>>
     >>> # Correct an entire collection (Sentinel-2, 10 m)
-    >>> corrected_col = tc.correct_collection(collection, dem, scale=10)
+    >>> corrected_col = tc.correct_collection(collection, scale=10)
     """
 
-    # Bands that receive topographic correction.
-    # Landsat 4-9 SR and Sentinel-2 share these standardised
-    
+    #Use NASADEM as default option
+    #Override by passing dem= to any method when a higher-resolution or
+    #region-specific DEM is available (e.g. ALOS World 3D, a custom asset).
+    DEFAULT_DEM_ASSET: str = 'NASA/NASADEM_HGT/001'
+    DEFAULT_DEM_BAND: str  = 'elevation'
+
+    #Bands that receive topographic correction.
+    #Landsat 4-9 SR and Sentinel-2 share these standardised names after
     DEFAULT_OPTICAL_BANDS: List[str] = [
         'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'
     ]
@@ -88,13 +91,12 @@ class Topographic_Correction:
         self.logger.info("Topographic_Correction initialised.")
 
     # ------------------------------------------------------------------
-    # Step 1: Illumination condition
+    # Step 1: Define Illumination condition
     # ------------------------------------------------------------------
-
     def compute_illumination_condition(
         self,
         image: ee.Image,
-        dem: ee.Image,
+        dem: Optional[ee.Image] = None,
         buffer_m: int = 10_000,
     ) -> ee.Image:
         """
@@ -103,9 +105,9 @@ class Topographic_Correction:
         The IC represents the cosine of the angle between the solar illumination
         vector and the terrain surface normal. It is computed as:
 
-            IC = cos(Z)·cos(S) + sin(Z)·sin(S)·cos(φ_sun − φ_aspect)
+            IC = cos(Z)*cos(S) + sin(Z)*sin(S)*cos(phi_sun - phi_aspect)
 
-        where Z is the solar zenith, S is the terrain slope, and φ denotes azimuths.
+        where Z is the solar zenith, S is the terrain slope, and phi denotes azimuths.
 
         Parameters
         ----------
@@ -113,9 +115,9 @@ class Topographic_Correction:
             Single image carrying ``'SOLAR_ZENITH_ANGLE'`` and
             ``'SOLAR_AZIMUTH_ANGLE'`` properties (in degrees). Present on all
             Landsat Collection-2 and Sentinel-2 images.
-        dem : ee.Image
-            Digital elevation model covering the image footprint (e.g.
-            ``ee.Image('NASA/NASADEM_HGT/001').select('elevation')``).
+        dem : ee.Image, optional
+            Defaults to ``NASA/NASADEM_HGT/001`` (30 m global).
+            Override with a higher-resolution or region-specific DEM when needed.
         buffer_m : int, optional
             Buffer in metres applied to the image geometry before clipping
             terrain layers. Prevents edge artefacts. Default: ``10 000``.
@@ -129,10 +131,14 @@ class Topographic_Correction:
         Example
         -------
         >>> tc = Topographic_Correction()
-        >>> dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
-        >>> img_with_ic = tc.compute_illumination_condition(image, dem)
+        >>> img_with_ic = tc.compute_illumination_condition(image)
+        >>> # Override DEM
+        >>> custom_dem = ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')
+        >>> img_with_ic = tc.compute_illumination_condition(image, dem=custom_dem)
         """
         try:
+            if dem is None:
+                dem = ee.Image(self.DEFAULT_DEM_ASSET).select(self.DEFAULT_DEM_BAND)
             buffer_geom = image.geometry().buffer(buffer_m)
 
             # --- Solar geometry: degrees to radians (server-side constants) ---
@@ -180,22 +186,17 @@ class Topographic_Correction:
             raise
 
     # ------------------------------------------------------------------
-    # Step 2: SCSc correction
+    # Step 2: Applied SCSc correction
     # ------------------------------------------------------------------
 
-    def apply_scsc_correction(
-        self,
-        image: ee.Image,
-        scale: int = 30,
+    def apply_scsc_correction(self, image: ee.Image, scale: int = 30,
         band_list: Optional[List[str]] = None,
         slope_threshold: float = 5.0,
         max_pixels: int = 1_000_000_000,
     ) -> ee.Image:
         """
         Apply the SCSc topographic correction to an image that already carries
-        the IC, cosZ, cosS, and slope bands (output of
-        ``compute_illumination_condition``).
-
+        the IC, cosZ, cosS, and slope bands (output of ``compute_illumination_condition``).
         For each band *b* in ``band_list`` the correction is:
 
             c  = b / a                   (regression offset / slope)
@@ -295,7 +296,7 @@ class Topographic_Correction:
                 .select(band_list)                  # drop IC from final output
             )
 
-            # Pass through non-corrected bands (thermal, QA, extra indices, etc.)
+            #Pass through non-corrected bands
             all_bands     = image.bandNames()
             ancillary_names = (
                 all_bands
@@ -318,15 +319,10 @@ class Topographic_Correction:
             self.logger.error(f"Unexpected error in apply_scsc_correction: {e}")
             raise
 
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------
     # Step 3: Single-image convenience wrapper
-    # ------------------------------------------------------------------
-
-    def correct_image(
-        self,
-        image: ee.Image,
-        dem: ee.Image,
-        scale: int = 30,
+    # ----------------------------------------------------------------
+    def correct_image(self, image: ee.Image, dem: Optional[ee.Image] = None, scale: int = 30,
         band_list: Optional[List[str]] = None,
         slope_threshold: float = 5.0,
         buffer_m: int = 10_000,
@@ -344,8 +340,10 @@ class Topographic_Correction:
             Pre-processed image with standardised band names (output of
             ``rename_landsat_bands`` or ``rename_s2_bands``).  Must carry
             ``'SOLAR_ZENITH_ANGLE'`` and ``'SOLAR_AZIMUTH_ANGLE'`` properties.
-        dem : ee.Image
+        dem : ee.Image, optional
             Digital elevation model covering the image footprint.
+            Defaults to ``NASA/NASADEM_HGT/001`` (30 m global).
+            Override with a higher-resolution or region-specific DEM when needed.
         scale : int, optional
             Pixel resolution in metres. ``30`` for Landsat, ``10`` for
             Sentinel-2. Default: ``30``.
@@ -353,7 +351,7 @@ class Topographic_Correction:
             Optical bands to correct. Defaults to
             ``['BLUE','GREEN','RED','NIR','SWIR1','SWIR2']``.
         slope_threshold : float, optional
-            Minimum slope (°) for correction to be applied. Default: ``5.0``.
+            Minimum slope (degrees) for correction to be applied. Default: ``5.0``.
         buffer_m : int, optional
             DEM buffer around the image geometry (metres). Default: ``10 000``.
         verbose : bool, optional
@@ -367,8 +365,11 @@ class Topographic_Correction:
         Example
         -------
         >>> tc = Topographic_Correction()
-        >>> dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
-        >>> corrected = tc.correct_image(image, dem, scale=30)
+        >>> # Uses NASADEM by default
+        >>> corrected = tc.correct_image(image, scale=30)
+        >>> # Override with a custom DEM
+        >>> custom_dem = ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')
+        >>> corrected = tc.correct_image(image, dem=custom_dem, scale=30)
         """
         if verbose:
             self.logger.info(
@@ -393,11 +394,7 @@ class Topographic_Correction:
     # Step 4: Collection-level wrapper
     # ------------------------------------------------------------------
 
-    def correct_collection(
-        self,
-        collection: ee.ImageCollection,
-        dem: ee.Image,
-        scale: int = 30,
+    def correct_collection(self, collection: ee.ImageCollection, dem: Optional[ee.Image] = None, scale: int = 30,
         band_list: Optional[List[str]] = None,
         slope_threshold: float = 5.0,
         buffer_m: int = 10_000,
@@ -415,10 +412,11 @@ class Topographic_Correction:
         collection : ee.ImageCollection
             Filtered and pre-processed image collection (output of
             ``Reflectance_Data.get_optical_data`` or ``get_s2_optical_data``).
-        dem : ee.Image
+        dem : ee.Image, optional
             Digital elevation model covering the full collection footprint.
-            ``ee.Image('NASA/NASADEM_HGT/001').select('elevation')`` is a
-            reliable global choice at 30 m resolution.
+            Defaults to ``NASA/NASADEM_HGT/001`` (30 m global NASADEM).
+            Override with a higher-resolution or region-specific DEM when needed
+            (e.g. ``ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')``).
         scale : int, optional
             Pixel resolution in metres. ``30`` for Landsat, ``10`` for
             Sentinel-2. Default: ``30``.
@@ -426,7 +424,7 @@ class Topographic_Correction:
             Optical bands to correct. Defaults to
             ``['BLUE','GREEN','RED','NIR','SWIR1','SWIR2']``.
         slope_threshold : float, optional
-            Minimum slope (°) for a pixel to be included in the regression
+            Minimum slope (degrees) for a pixel to be included in the regression
             and receive a correction. Default: ``5.0``.
         buffer_m : int, optional
             DEM buffer around each image geometry in metres. Default: ``10 000``.
@@ -445,17 +443,24 @@ class Topographic_Correction:
         >>>
         >>> rd = Reflectance_Data()
         >>> tc = Topographic_Correction()
-        >>> dem = ee.Image('NASA/NASADEM_HGT/001').select('elevation')
         >>>
         >>> # 1. Acquire
         >>> collection, stats = rd.get_optical_data(aoi, 2020, 2023, 'L8_SR')
         >>>
-        >>> # 2. Correct
-        >>> corrected_col = tc.correct_collection(collection, dem, scale=30)
+        >>> # 2. Correct — NASADEM used by default, no dem= argument needed
+        >>> corrected_col = tc.correct_collection(collection, scale=30)
+        >>>
+        >>> # 2b. Override with a custom DEM
+        >>> custom_dem = ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')
+        >>> corrected_col = tc.correct_collection(collection, dem=custom_dem, scale=30)
         >>>
         >>> # 3. Composite
         >>> result = final_Image().get_temporal_composite(corrected_col, aoi)
         """
+        if dem is None:
+            dem = ee.Image(self.DEFAULT_DEM_ASSET).select(self.DEFAULT_DEM_BAND)
+            if verbose:
+                self.logger.info(f"Using default DEM: {self.DEFAULT_DEM_ASSET} (band: {self.DEFAULT_DEM_BAND})")
         if verbose:
             size = collection.size().getInfo()
             self.logger.info(
