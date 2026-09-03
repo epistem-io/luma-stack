@@ -191,5 +191,9 @@ __all__ = [
     'print_auth_instructions',
     'setup_earth_engine',
     'reset_ee_initialization',
-    'auto_initialize'
+    'auto_initialize',
+    # Imagery correction
+    'Topographic_Correction',
 ]
+
+from .imagery_correction import Topographic_Correction
