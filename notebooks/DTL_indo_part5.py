@@ -20,7 +20,7 @@ from luma_ge.ee_config import initialize_earth_engine
 # B. Configuration
 # ============================================================
 
-VERSION = 'v6'
+VERSION = 'v7'
 
 POLL_INTERVAL_SEC = 30
 
@@ -51,16 +51,7 @@ SKIP_EXISTING_EXPORTS = True
 # C. Earth Engine initialization
 # ============================================================
 
-initialize_earth_engine(
-    project='epistem-lumastack',
-    force_reinit=True
-)
-
-# Explicitly use the intended Cloud API user project.
-ee.data.setCloudApiUserProject(
-    'epistem-lumastack'
-)
-
+ee.Initialize(project='epistem2')
 
 # ============================================================
 # D. LULC class definitions
@@ -607,7 +598,7 @@ def validate_province(
 
         f'{province_name_clean}_'
 
-        f'2020_{VERSION}'
+        f'2021_{VERSION}'
     )
 
 

@@ -1,0 +1,688 @@
+(base) PS C:\Users\widijanto\Documents\pyprojects\luma-stack> & C:\Users\widijanto\AppData\Local\Programs\Python\Python313\python.exe c:/Users/widijanto/Documents/pyprojects/luma-stack/notebooks/DTL_indo_part5.py
+
+Found 10 provinces.
+
+[1/10] Processing Aceh
+
+============================================================
+=== Validation: Aceh ===
+============================================================
+  Validation points: 150
+  Prediction class distribution:
+    classification=1: 27 (Primary Dryland Forest)
+    classification=2: 43 (Secondary Dryland Forest)
+    classification=4: 1 (Secondary Mangrove Forest)
+    classification=6: 15 (Secondary Swamp Forest)
+    classification=9: 26 (Oil palm Monoculture)
+    classification=18: 16 (Grass or Savanna)
+    classification=23: 21 (Waterbody)
+  Usable samples: 149
+  NoData / excluded: 1
+  Validation coverage: 99.33%
+  Predictions accounted for: 149
+  Predictions outside inventory: 0
+  Correct predictions: 14
+  Incorrect predictions: 135
+  Observed accuracy: 9.40%
+INFO:luma_ge.ee_config:Earth Engine initialized successfully
+  Overall accuracy: 9.40%
+  Kappa: 0.049
+  Sample size: 149
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000040
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[2/10] Processing Bengkulu
+
+============================================================
+=== Validation: Bengkulu ===
+============================================================
+  Validation points: 49
+  Prediction class distribution:
+    classification=1: 10 (Primary Dryland Forest)
+    classification=2: 14 (Secondary Dryland Forest)
+    classification=6: 5 (Secondary Swamp Forest)
+    classification=9: 14 (Oil palm Monoculture)
+    classification=16: 5 (Mixed/home garden)
+  Usable samples: 48
+  NoData / excluded: 1
+  Validation coverage: 97.96%
+  Predictions accounted for: 48
+  Predictions outside inventory: 0
+  Correct predictions: 4
+  Incorrect predictions: 44
+  Observed accuracy: 8.33%
+  Overall accuracy: 8.33%
+  Kappa: 0.015
+  Sample size: 48
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000033
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[3/10] Processing Jambi
+
+============================================================
+=== Validation: Jambi ===
+============================================================
+  Validation points: 205
+  Prediction class distribution:
+    classification=1: 26 (Primary Dryland Forest)
+    classification=2: 101 (Secondary Dryland Forest)
+    classification=3: 1 (Primary Mangrove Forest)
+    classification=4: 3 (Secondary Mangrove Forest)
+    classification=7: 18 (Plantation Forest)
+    classification=18: 29 (Grass or Savanna)
+    classification=21: 25 (Cleared Land)
+  Usable samples: 203
+  NoData / excluded: 2
+  Validation coverage: 99.02%
+  Predictions accounted for: 203
+  Predictions outside inventory: 0
+  Correct predictions: 3
+  Incorrect predictions: 200
+  Observed accuracy: 1.48%
+WARNING:googleapiclient.http:Sleeping 0.43 seconds before retry 1 of 5 for request: POST https://earthengine.googleapis.com/v1/projects/397031820099/value:compute?prettyPrint=false&alt=json, after 503
+  Overall accuracy: 1.48%
+  Kappa: 0.001
+  Sample size: 203
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000022
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[4/10] Processing Kepulauan Bangka Belitung
+
+============================================================
+=== Validation: Kepulauan Bangka Belitung ===
+============================================================
+  Validation points: 136
+  Prediction class distribution:
+    classification=0: 58 (Outside expected class domain)
+    classification=1: 1 (Primary Dryland Forest)
+    classification=2: 18 (Secondary Dryland Forest)
+    classification=3: 17 (Primary Mangrove Forest)
+    classification=4: 1 (Secondary Mangrove Forest)
+    classification=6: 7 (Secondary Swamp Forest)
+    classification=9: 21 (Oil palm Monoculture)
+    classification=18: 7 (Grass or Savanna)
+    classification=23: 3 (Waterbody)
+  Usable samples: 133
+  NoData / excluded: 3
+  Validation coverage: 97.79%
+  Predictions accounted for: 133
+  Predictions outside inventory: 0
+  Correct predictions: 6
+  Incorrect predictions: 127
+  Observed accuracy: 4.51%
+  Overall accuracy: 4.51%
+  Kappa: 0.029
+  Sample size: 133
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000013
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[5/10] Processing Kepulauan Riau
+
+============================================================
+=== Validation: Kepulauan Riau ===
+============================================================
+  [SKIP] Final LULC asset not found: projects/epistem2/assets/final_lulc_stack_Kepulauan_Riau_2021_v7
+
+[6/10] Processing Lampung
+
+============================================================
+=== Validation: Lampung ===
+============================================================
+  Validation points: 137
+  Prediction class distribution:
+    classification=1: 3 (Primary Dryland Forest)
+    classification=2: 45 (Secondary Dryland Forest)
+    classification=4: 5 (Secondary Mangrove Forest)
+    classification=6: 4 (Secondary Swamp Forest)
+    classification=9: 38 (Oil palm Monoculture)
+    classification=16: 1 (Mixed/home garden)
+    classification=17: 18 (Paddy field)
+    classification=18: 11 (Grass or Savanna)
+    classification=23: 8 (Waterbody)
+  Usable samples: 133
+  NoData / excluded: 4
+  Validation coverage: 97.08%
+  Predictions accounted for: 133
+  Predictions outside inventory: 0
+  Correct predictions: 5
+  Incorrect predictions: 128
+  Observed accuracy: 3.76%
+  Overall accuracy: 3.76%
+  Kappa: 0.013
+  Sample size: 133
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000006
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[7/10] Processing Riau
+
+============================================================
+=== Validation: Riau ===
+============================================================
+  Validation points: 450
+  Prediction class distribution:
+    classification=1: 46 (Primary Dryland Forest)
+    classification=2: 65 (Secondary Dryland Forest)
+    classification=3: 6 (Primary Mangrove Forest)
+    classification=4: 49 (Secondary Mangrove Forest)
+    classification=5: 3 (Primary Swamp Forest)
+    classification=7: 39 (Plantation Forest)
+    classification=9: 200 (Oil palm Monoculture)
+    classification=18: 19 (Grass or Savanna)
+    classification=23: 21 (Waterbody)
+  Usable samples: 448
+  NoData / excluded: 2
+  Validation coverage: 99.56%
+  Predictions accounted for: 448
+  Predictions outside inventory: 0
+  Correct predictions: 87
+  Incorrect predictions: 361
+  Observed accuracy: 19.42%
+  Overall accuracy: 19.42%
+  Kappa: 0.126
+  Sample size: 448
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000004
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[8/10] Processing Sumatera Barat
+
+============================================================
+=== Validation: Sumatera Barat ===
+============================================================
+  Validation points: 98
+  Prediction class distribution:
+    classification=1: 24 (Primary Dryland Forest)
+    classification=2: 34 (Secondary Dryland Forest)
+    classification=3: 5 (Primary Mangrove Forest)
+    classification=4: 4 (Secondary Mangrove Forest)
+    classification=5: 6 (Primary Swamp Forest)
+    classification=18: 22 (Grass or Savanna)
+    classification=23: 3 (Waterbody)
+  Usable samples: 98
+  NoData / excluded: 0
+  Validation coverage: 100.00%
+  Predictions accounted for: 98
+  Predictions outside inventory: 0
+  Correct predictions: 10
+  Incorrect predictions: 88
+  Observed accuracy: 10.20%
+  Overall accuracy: 10.20%
+  Kappa: 0.044
+  Sample size: 98
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000041
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[9/10] Processing Sumatera Selatan
+
+============================================================
+=== Validation: Sumatera Selatan ===
+============================================================
+  Validation points: 2018
+  Prediction class distribution:
+    classification=1: 85 (Primary Dryland Forest)
+    classification=2: 987 (Secondary Dryland Forest)
+    classification=3: 15 (Primary Mangrove Forest)
+    classification=4: 13 (Secondary Mangrove Forest)
+    classification=7: 16 (Plantation Forest)
+    classification=9: 40 (Oil palm Monoculture)
+    classification=17: 457 (Paddy field)
+    classification=18: 345 (Grass or Savanna)
+    classification=20: 12 (Settlement)
+    classification=23: 24 (Waterbody)
+  Usable samples: 1994
+  NoData / excluded: 24
+  Validation coverage: 98.81%
+  Predictions accounted for: 1994
+  Predictions outside inventory: 0
+  Correct predictions: 30
+  Incorrect predictions: 1964
+  Observed accuracy: 1.50%
+  Overall accuracy: 1.50%
+  Kappa: 0.012
+  Sample size: 1994
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000045
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+[10/10] Processing Sumatera Utara
+
+============================================================
+=== Validation: Sumatera Utara ===
+============================================================
+  Validation points: 210
+  Prediction class distribution:
+    classification=1: 23 (Primary Dryland Forest)
+    classification=2: 93 (Secondary Dryland Forest)
+    classification=3: 2 (Primary Mangrove Forest)
+    classification=4: 3 (Secondary Mangrove Forest)
+    classification=6: 1 (Secondary Swamp Forest)
+    classification=7: 2 (Plantation Forest)
+    classification=9: 1 (Oil palm Monoculture)
+    classification=16: 1 (Mixed/home garden)
+    classification=18: 49 (Grass or Savanna)
+    classification=21: 15 (Cleared Land)
+    classification=23: 20 (Waterbody)
+  Usable samples: 210
+  NoData / excluded: 0
+  Validation coverage: 100.00%
+  Predictions accounted for: 210
+  Predictions outside inventory: 0
+  Correct predictions: 18
+  Incorrect predictions: 192
+  Observed accuracy: 8.57%
+  Overall accuracy: 8.57%
+  Kappa: 0.066
+  Sample size: 210
+  [WARNING] Observed accuracy and luma_ge accuracy differ by 0.000014
+  [OK] Started GEE Asset export
+  [OK] Started Google Drive export
+
+============================================================
+PROVINCE VALIDATION SUMMARY
+============================================================
+                 province            status  validation_points  usable_samples  nodata_points  coverage_percent  correct_predictions  incorrect_predictions  observed_accuracy overall_accuracy kappa confidence_interval
+                     Aceh         completed                150             149              1         99.333333                 14.0                  135.0           0.093960      9.40% 0.049      4.71% - 14.08%
+                 Bengkulu         completed                 49              48              1         97.959184                  4.0                   44.0           0.083333      8.33% 0.015      0.51% - 16.15%
+                    Jambi         completed                205             203              2         99.024390                  3.0                  200.0           0.014778      1.48% 0.001       0.00% - 3.14%
+Kepulauan Bangka Belitung         completed                136             133              3         97.794118                  6.0                  127.0           0.045113      4.51% 0.029       0.98% - 8.04%
+           Kepulauan Riau missing_final_map                  0               0              0               NaN                  NaN                    NaN                NaN       None  None                None
+                  Lampung         completed                137             133              4         97.080292                  5.0                  128.0           0.037594      3.76% 0.013       0.53% - 6.99%
+                     Riau         completed                450             448              2         99.555556                 87.0                  361.0           0.194196     19.42% 0.126     15.76% - 23.08%
+           Sumatera Barat         completed                 98              98              0        100.000000                 10.0                   88.0           0.102041     10.20% 0.044      4.21% - 16.20%
+         Sumatera Selatan         completed               2018            1994             24         98.810704                 30.0                 1964.0           0.015045      1.50% 0.012       0.97% - 2.04%
+           Sumatera Utara         completed                210             210              0        100.000000                 18.0                  192.0           0.085714      8.57% 0.066      4.79% - 12.36%
+
+============================================================
+PROVINCE PREDICTION INVENTORY
+============================================================
+                 province  classification                    class_name  prediction_n  expected_class
+                     Aceh               1        Primary Dryland Forest            27            True
+                     Aceh               2      Secondary Dryland Forest            43            True
+                     Aceh               4     Secondary Mangrove Forest             1            True
+                     Aceh               6        Secondary Swamp Forest            15            True
+                     Aceh               9          Oil palm Monoculture            26            True
+                     Aceh              18              Grass or Savanna            16            True
+                     Aceh              23                     Waterbody            21            True
+                 Bengkulu               1        Primary Dryland Forest            10            True
+                 Bengkulu               2      Secondary Dryland Forest            14            True
+                 Bengkulu               6        Secondary Swamp Forest             5            True
+                 Bengkulu               9          Oil palm Monoculture            14            True
+                 Bengkulu              16             Mixed/home garden             5            True
+                    Jambi               1        Primary Dryland Forest            26            True
+                    Jambi               2      Secondary Dryland Forest           101            True
+                    Jambi               3       Primary Mangrove Forest             1            True
+                    Jambi               4     Secondary Mangrove Forest             3            True
+                    Jambi               7             Plantation Forest            18            True
+                    Jambi              18              Grass or Savanna            29            True
+                    Jambi              21                  Cleared Land            25            True
+Kepulauan Bangka Belitung               0 Outside expected class domain            58           False
+Kepulauan Bangka Belitung               1        Primary Dryland Forest             1            True
+Kepulauan Bangka Belitung               2      Secondary Dryland Forest            18            True
+Kepulauan Bangka Belitung               3       Primary Mangrove Forest            17            True
+Kepulauan Bangka Belitung               4     Secondary Mangrove Forest             1            True
+Kepulauan Bangka Belitung               6        Secondary Swamp Forest             7            True
+Kepulauan Bangka Belitung               9          Oil palm Monoculture            21            True
+Kepulauan Bangka Belitung              18              Grass or Savanna             7            True
+Kepulauan Bangka Belitung              23                     Waterbody             3            True
+                  Lampung               1        Primary Dryland Forest             3            True
+                  Lampung               2      Secondary Dryland Forest            45            True
+                  Lampung               4     Secondary Mangrove Forest             5            True
+                  Lampung               6        Secondary Swamp Forest             4            True
+                  Lampung               9          Oil palm Monoculture            38            True
+                  Lampung              16             Mixed/home garden             1            True
+                  Lampung              17                   Paddy field            18            True
+                  Lampung              18              Grass or Savanna            11            True
+                  Lampung              23                     Waterbody             8            True
+                     Riau               1        Primary Dryland Forest            46            True
+                     Riau               2      Secondary Dryland Forest            65            True
+                     Riau               3       Primary Mangrove Forest             6            True
+                     Riau               4     Secondary Mangrove Forest            49            True
+                     Riau               5          Primary Swamp Forest             3            True
+                     Riau               7             Plantation Forest            39            True
+                     Riau               9          Oil palm Monoculture           200            True
+                     Riau              18              Grass or Savanna            19            True
+                     Riau              23                     Waterbody            21            True
+           Sumatera Barat               1        Primary Dryland Forest            24            True
+           Sumatera Barat               2      Secondary Dryland Forest            34            True
+           Sumatera Barat               3       Primary Mangrove Forest             5            True
+           Sumatera Barat               4     Secondary Mangrove Forest             4            True
+           Sumatera Barat               5          Primary Swamp Forest             6            True
+           Sumatera Barat              18              Grass or Savanna            22            True
+           Sumatera Barat              23                     Waterbody             3            True
+         Sumatera Selatan               1        Primary Dryland Forest            85            True
+         Sumatera Selatan               2      Secondary Dryland Forest           987            True
+         Sumatera Selatan               3       Primary Mangrove Forest            15            True
+         Sumatera Selatan               4     Secondary Mangrove Forest            13            True
+         Sumatera Selatan               7             Plantation Forest            16            True
+         Sumatera Selatan               9          Oil palm Monoculture            40            True
+         Sumatera Selatan              17                   Paddy field           457            True
+         Sumatera Selatan              18              Grass or Savanna           345            True
+         Sumatera Selatan              20                    Settlement            12            True
+         Sumatera Selatan              23                     Waterbody            24            True
+           Sumatera Utara               1        Primary Dryland Forest            23            True
+           Sumatera Utara               2      Secondary Dryland Forest            93            True
+           Sumatera Utara               3       Primary Mangrove Forest             2            True
+           Sumatera Utara               4     Secondary Mangrove Forest             3            True
+           Sumatera Utara               6        Secondary Swamp Forest             1            True
+           Sumatera Utara               7             Plantation Forest             2            True
+           Sumatera Utara               9          Oil palm Monoculture             1            True
+           Sumatera Utara              16             Mixed/home garden             1            True
+           Sumatera Utara              18              Grass or Savanna            49            True
+           Sumatera Utara              21                  Cleared Land            15            True
+           Sumatera Utara              23                     Waterbody            20            True
+
+============================================================
+CLASS-LEVEL VALIDATION SUMMARY
+============================================================
+                 province  class_id                class_name  reference_n  predicted_n  correct_n  producer_accuracy  user_accuracy  f1_score  omission_error  commission_error
+                     Aceh         1    Primary Dryland Forest           11           27          9           0.818182       0.333333  0.473684        0.181818          0.666667
+                     Aceh         2  Secondary Dryland Forest            5           43          2           0.400000       0.046512  0.083333        0.600000          0.953488
+                     Aceh         3   Primary Mangrove Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh         4 Secondary Mangrove Forest            2            1          1           0.500000       1.000000  0.666667        0.500000          0.000000
+                     Aceh         5      Primary Swamp Forest            7            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh         6    Secondary Swamp Forest            1           15          0           0.000000       0.000000       NaN        1.000000          1.000000
+                     Aceh         7         Plantation Forest            2            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh         8        Rubber Monoculture           14            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh         9      Oil palm Monoculture           13           26          1           0.076923       0.038462  0.051282        0.923077          0.961538
+                     Aceh        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh        11       Coconut monoculture            2            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh        13            Other Cropland            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh        16         Mixed/home garden            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        17               Paddy field           14            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        18          Grass or Savanna            9           16          0           0.000000       0.000000       NaN        1.000000          1.000000
+                     Aceh        19                     Shrub           15            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        20                Settlement           15            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        21              Cleared Land            4            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Aceh        22               Mining area            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Aceh        23                 Waterbody            2           21          1           0.500000       0.047619  0.086957        0.500000          0.952381
+                     Aceh        24                 Fish pond           27            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu         1    Primary Dryland Forest            5           10          3           0.600000       0.300000  0.400000        0.400000          0.700000
+                 Bengkulu         2  Secondary Dryland Forest            2           14          0           0.000000       0.000000       NaN        1.000000          1.000000
+                 Bengkulu         3   Primary Mangrove Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu         4 Secondary Mangrove Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu         5      Primary Swamp Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu         6    Secondary Swamp Forest            0            5          0                NaN       0.000000       NaN             NaN          1.000000
+                 Bengkulu         7         Plantation Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu         8        Rubber Monoculture            8            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu         9      Oil palm Monoculture            4           14          0           0.000000       0.000000       NaN        1.000000          1.000000
+                 Bengkulu        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        11       Coconut monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        13            Other Cropland            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        16         Mixed/home garden            5            5          1           0.200000       0.200000  0.200000        0.800000          0.800000
+                 Bengkulu        17               Paddy field            4            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        18          Grass or Savanna            0            0          0                NaN            NaN       NaN             NaN               NaN
+                 Bengkulu        19                     Shrub            6            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        20                Settlement            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        21              Cleared Land            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        22               Mining area            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        23                 Waterbody            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                 Bengkulu        24                 Fish pond            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi         1    Primary Dryland Forest            4           26          2           0.500000       0.076923  0.133333        0.500000          0.923077
+                    Jambi         2  Secondary Dryland Forest            1          101          0           0.000000       0.000000       NaN        1.000000          1.000000
+                    Jambi         3   Primary Mangrove Forest            1            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+                    Jambi         4 Secondary Mangrove Forest            2            3          1           0.500000       0.333333  0.400000        0.500000          0.666667
+                    Jambi         5      Primary Swamp Forest            7            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi         6    Secondary Swamp Forest            2            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi         7         Plantation Forest           12           18          0           0.000000       0.000000       NaN        1.000000          1.000000
+                    Jambi         8        Rubber Monoculture           39            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi         9      Oil palm Monoculture           26            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                    Jambi        11       Coconut monoculture           22            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                    Jambi        13            Other Cropland            7            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                    Jambi        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                    Jambi        16         Mixed/home garden            8            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        17               Paddy field            0            0          0                NaN            NaN       NaN             NaN               NaN
+                    Jambi        18          Grass or Savanna            0           29          0                NaN       0.000000       NaN             NaN          1.000000
+                    Jambi        19                     Shrub           31            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        20                Settlement           22            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        21              Cleared Land            6           25          0           0.000000       0.000000       NaN        1.000000          1.000000
+                    Jambi        22               Mining area            8            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        23                 Waterbody            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+                    Jambi        24                 Fish pond            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung         1    Primary Dryland Forest            0            1          0                NaN       0.000000       NaN             NaN          1.000000
+Kepulauan Bangka Belitung         2  Secondary Dryland Forest            0           18          0                NaN       0.000000       NaN             NaN          1.000000
+Kepulauan Bangka Belitung         3   Primary Mangrove Forest            7           17          6           0.857143       0.352941  0.500000        0.142857          0.647059
+Kepulauan Bangka Belitung         4 Secondary Mangrove Forest            7            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+Kepulauan Bangka Belitung         5      Primary Swamp Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung         6    Secondary Swamp Forest            2            7          0           0.000000       0.000000       NaN        1.000000          1.000000
+Kepulauan Bangka Belitung         7         Plantation Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung         8        Rubber Monoculture            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung         9      Oil palm Monoculture            7           21          0           0.000000       0.000000       NaN        1.000000          1.000000
+Kepulauan Bangka Belitung        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        11       Coconut monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        13            Other Cropland            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        16         Mixed/home garden            7            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        17               Paddy field            0            0          0                NaN            NaN       NaN             NaN               NaN
+Kepulauan Bangka Belitung        18          Grass or Savanna            2            7          0           0.000000       0.000000       NaN        1.000000          1.000000
+Kepulauan Bangka Belitung        19                     Shrub           17            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        20                Settlement           11            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        21              Cleared Land            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        22               Mining area           64            0          0           0.000000            NaN       NaN        1.000000               NaN
+Kepulauan Bangka Belitung        23                 Waterbody            0            3          0                NaN       0.000000       NaN             NaN          1.000000
+Kepulauan Bangka Belitung        24                 Fish pond            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung         1    Primary Dryland Forest            1            3          0           0.000000       0.000000       NaN        1.000000          1.000000
+                  Lampung         2  Secondary Dryland Forest            0           45          0                NaN       0.000000       NaN             NaN          1.000000
+                  Lampung         3   Primary Mangrove Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung         4 Secondary Mangrove Forest            1            5          0           0.000000       0.000000       NaN        1.000000          1.000000
+                  Lampung         5      Primary Swamp Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung         6    Secondary Swamp Forest            0            4          0                NaN       0.000000       NaN             NaN          1.000000
+                  Lampung         7         Plantation Forest            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung         8        Rubber Monoculture           29            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung         9      Oil palm Monoculture            6           38          2           0.333333       0.052632  0.090909        0.666667          0.947368
+                  Lampung        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung        11       Coconut monoculture            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung        13            Other Cropland           29            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung        16         Mixed/home garden           11            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+                  Lampung        17               Paddy field            9           18          2           0.222222       0.111111  0.148148        0.777778          0.888889
+                  Lampung        18          Grass or Savanna            0           11          0                NaN       0.000000       NaN             NaN          1.000000
+                  Lampung        19                     Shrub            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung        20                Settlement           18            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung        21              Cleared Land            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                  Lampung        22               Mining area            0            0          0                NaN            NaN       NaN             NaN               NaN
+                  Lampung        23                 Waterbody            3            8          1           0.333333       0.125000  0.181818        0.666667          0.875000
+                  Lampung        24                 Fish pond           14            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau         1    Primary Dryland Forest            1           46          0           0.000000       0.000000       NaN        1.000000          1.000000
+                     Riau         2  Secondary Dryland Forest            0           65          0                NaN       0.000000       NaN             NaN          1.000000
+                     Riau         3   Primary Mangrove Forest            0            6          0                NaN       0.000000       NaN             NaN          1.000000
+                     Riau         4 Secondary Mangrove Forest           37           49         21           0.567568       0.428571  0.488372        0.432432          0.571429
+                     Riau         5      Primary Swamp Forest            3            3          0           0.000000       0.000000       NaN        1.000000          1.000000
+                     Riau         6    Secondary Swamp Forest           44            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau         7         Plantation Forest           54           39         13           0.240741       0.333333  0.279570        0.759259          0.666667
+                     Riau         8        Rubber Monoculture           62            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau         9      Oil palm Monoculture           57          200         40           0.701754       0.200000  0.311284        0.298246          0.800000
+                     Riau        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Riau        11       Coconut monoculture           59            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Riau        13            Other Cropland            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Riau        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Riau        16         Mixed/home garden           16            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        17               Paddy field            0            0          0                NaN            NaN       NaN             NaN               NaN
+                     Riau        18          Grass or Savanna            0           19          0                NaN       0.000000       NaN             NaN          1.000000
+                     Riau        19                     Shrub           39            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        20                Settlement           33            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        21              Cleared Land           12            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        22               Mining area           11            0          0           0.000000            NaN       NaN        1.000000               NaN
+                     Riau        23                 Waterbody           18           21         13           0.722222       0.619048  0.666667        0.277778          0.380952
+                     Riau        24                 Fish pond            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat         1    Primary Dryland Forest            5           24          4           0.800000       0.166667  0.275862        0.200000          0.833333
+           Sumatera Barat         2  Secondary Dryland Forest           13           34          2           0.153846       0.058824  0.085106        0.846154          0.941176
+           Sumatera Barat         3   Primary Mangrove Forest            1            5          1           1.000000       0.200000  0.333333        0.000000          0.800000
+           Sumatera Barat         4 Secondary Mangrove Forest            0            4          0                NaN       0.000000       NaN             NaN          1.000000
+           Sumatera Barat         5      Primary Swamp Forest            0            6          0                NaN       0.000000       NaN             NaN          1.000000
+           Sumatera Barat         6    Secondary Swamp Forest            2            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat         7         Plantation Forest            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat         8        Rubber Monoculture           13            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat         9      Oil palm Monoculture            6            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Barat        11       Coconut monoculture            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Barat        13            Other Cropland           18            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Barat        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Barat        16         Mixed/home garden            8            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        17               Paddy field           10            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        18          Grass or Savanna            0           22          0                NaN       0.000000       NaN             NaN          1.000000
+           Sumatera Barat        19                     Shrub            4            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        20                Settlement            2            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        21              Cleared Land            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Barat        22               Mining area            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Barat        23                 Waterbody            5            3          3           0.600000       1.000000  0.750000        0.400000          0.000000
+           Sumatera Barat        24                 Fish pond            0            0          0                NaN            NaN       NaN             NaN               NaN
+         Sumatera Selatan         1    Primary Dryland Forest            4           85          2           0.500000       0.023529  0.044944        0.500000          0.976471
+         Sumatera Selatan         2  Secondary Dryland Forest            3          987          2           0.666667       0.002026  0.004040        0.333333          0.997974
+         Sumatera Selatan         3   Primary Mangrove Forest           15           15         10           0.666667       0.666667  0.666667        0.333333          0.333333
+         Sumatera Selatan         4 Secondary Mangrove Forest           16           13          5           0.312500       0.384615  0.344828        0.687500          0.615385
+         Sumatera Selatan         5      Primary Swamp Forest            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan         6    Secondary Swamp Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+         Sumatera Selatan         7         Plantation Forest           35           16          0           0.000000       0.000000       NaN        1.000000          1.000000
+         Sumatera Selatan         8        Rubber Monoculture         1073            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan         9      Oil palm Monoculture           20           40          1           0.050000       0.025000  0.033333        0.950000          0.975000
+         Sumatera Selatan        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+         Sumatera Selatan        11       Coconut monoculture           16            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+         Sumatera Selatan        13            Other Cropland           18            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        14       Coffee agroforestry          490            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        15       Rubber agroforestry           37            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        16         Mixed/home garden           34            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        17               Paddy field           17          457          7           0.411765       0.015317  0.029536        0.588235          0.984683
+         Sumatera Selatan        18          Grass or Savanna            0          345          0                NaN       0.000000       NaN             NaN          1.000000
+         Sumatera Selatan        19                     Shrub           65            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        20                Settlement           83           12          1           0.012048       0.083333  0.021053        0.987952          0.916667
+         Sumatera Selatan        21              Cleared Land            8            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        22               Mining area            9            0          0           0.000000            NaN       NaN        1.000000               NaN
+         Sumatera Selatan        23                 Waterbody           14           24          2           0.142857       0.083333  0.105263        0.857143          0.916667
+         Sumatera Selatan        24                 Fish pond           36            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara         1    Primary Dryland Forest            2           23          1           0.500000       0.043478  0.080000        0.500000          0.956522
+           Sumatera Utara         2  Secondary Dryland Forest            5           93          0           0.000000       0.000000       NaN        1.000000          1.000000
+           Sumatera Utara         3   Primary Mangrove Forest            0            2          0                NaN       0.000000       NaN             NaN          1.000000
+           Sumatera Utara         4 Secondary Mangrove Forest            3            3          1           0.333333       0.333333  0.333333        0.666667          0.666667
+           Sumatera Utara         5      Primary Swamp Forest            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Utara         6    Secondary Swamp Forest            1            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+           Sumatera Utara         7         Plantation Forest            8            2          1           0.125000       0.500000  0.200000        0.875000          0.500000
+           Sumatera Utara         8        Rubber Monoculture           30            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara         9      Oil palm Monoculture           28            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+           Sumatera Utara        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Utara        11       Coconut monoculture            5            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Utara        13            Other Cropland           45            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        14       Coffee agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Utara        15       Rubber agroforestry            0            0          0                NaN            NaN       NaN             NaN               NaN
+           Sumatera Utara        16         Mixed/home garden           14            1          0           0.000000       0.000000       NaN        1.000000          1.000000
+           Sumatera Utara        17               Paddy field           11            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        18          Grass or Savanna            0           49          0                NaN       0.000000       NaN             NaN          1.000000
+           Sumatera Utara        19                     Shrub           14            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        20                Settlement           21            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        21              Cleared Land            2           15          0           0.000000       0.000000       NaN        1.000000          1.000000
+           Sumatera Utara        22               Mining area            1            0          0           0.000000            NaN       NaN        1.000000               NaN
+           Sumatera Utara        23                 Waterbody           17           20         15           0.882353       0.750000  0.810811        0.117647          0.250000
+           Sumatera Utara        24                 Fish pond            3            0          0           0.000000            NaN       NaN        1.000000               NaN
+
+============================================================
+SUMATRA POOLED VALIDATION
+============================================================
+Reference points   : 3453
+Usable samples     : 3416
+NoData / excluded  : 37
+Coverage           : 98.93%
+Correct predictions: 177
+Incorrect predictions: 3239
+Overall accuracy   : 5.18%
+Kappa              : 0.038
+Predictions accounted for: 3416
+Predictions outside inventory: 0
+
+============================================================
+SUMATRA POOLED CLASS SUMMARY
+============================================================
+province  class_id                class_name  reference_n  predicted_n  correct_n  producer_accuracy  user_accuracy  f1_score  omission_error  commission_error
+ Sumatra         1    Primary Dryland Forest           33          245         21           0.636364       0.085714  0.151079        0.363636          0.914286
+ Sumatra         2  Secondary Dryland Forest           29         1400          6           0.206897       0.004286  0.008397        0.793103          0.995714
+ Sumatra         3   Primary Mangrove Forest           24           46         17           0.708333       0.369565  0.485714        0.291667          0.630435
+ Sumatra         4 Secondary Mangrove Forest           68           79         29           0.426471       0.367089  0.394558        0.573529          0.632911
+ Sumatra         5      Primary Swamp Forest           18            9          0           0.000000       0.000000       NaN        1.000000          1.000000
+ Sumatra         6    Secondary Swamp Forest           52           32          0           0.000000       0.000000       NaN        1.000000          1.000000
+ Sumatra         7         Plantation Forest          115           75         14           0.121739       0.186667  0.147368        0.878261          0.813333
+ Sumatra         8        Rubber Monoculture         1273            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra         9      Oil palm Monoculture          167          340         44           0.263473       0.129412  0.173570        0.736527          0.870588
+ Sumatra        10         Cacao Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+ Sumatra        11       Coconut monoculture          114            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        12         Other Monoculture            0            0          0                NaN            NaN       NaN             NaN               NaN
+ Sumatra        13            Other Cropland          127            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        14       Coffee agroforestry          490            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        15       Rubber agroforestry           37            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        16         Mixed/home garden          106            7          1           0.009434       0.142857  0.017699        0.990566          0.857143
+ Sumatra        17               Paddy field           65          475          9           0.138462       0.018947  0.033333        0.861538          0.981053
+ Sumatra        18          Grass or Savanna           11          498          0           0.000000       0.000000       NaN        1.000000          1.000000
+ Sumatra        19                     Shrub          196            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        20                Settlement          210           12          1           0.004762       0.083333  0.009009        0.995238          0.916667
+ Sumatra        21              Cleared Land           40           40          0           0.000000       0.000000       NaN        1.000000          1.000000
+ Sumatra        22               Mining area           94            0          0           0.000000            NaN       NaN        1.000000               NaN
+ Sumatra        23                 Waterbody           65          100         35           0.538462       0.350000  0.424242        0.461538          0.650000
+ Sumatra        24                 Fish pond           82            0          0           0.000000            NaN       NaN        1.000000               NaN
+
+============================================================
+SUMATRA PREDICTION INVENTORY
+============================================================
+province  classification                    class_name  prediction_n  expected_class
+ Sumatra               0 Outside expected class domain            58           False
+ Sumatra               1        Primary Dryland Forest           245            True
+ Sumatra               2      Secondary Dryland Forest          1400            True
+ Sumatra               3       Primary Mangrove Forest            46            True
+ Sumatra               4     Secondary Mangrove Forest            79            True
+ Sumatra               5          Primary Swamp Forest             9            True
+ Sumatra               6        Secondary Swamp Forest            32            True
+ Sumatra               7             Plantation Forest            75            True
+ Sumatra               9          Oil palm Monoculture           340            True
+ Sumatra              16             Mixed/home garden             7            True
+ Sumatra              17                   Paddy field           475            True
+ Sumatra              18              Grass or Savanna           498            True
+ Sumatra              20                    Settlement            12            True
+ Sumatra              21                  Cleared Land            40            True
+ Sumatra              23                     Waterbody           100            True
+
+[OK] Saved province summary: validation_summary_Sumatra_2020_v7.csv
+[OK] Saved class summary: validation_class_summary_Sumatra_2020_v7.csv
+[OK] Saved prediction summary: validation_prediction_summary_Sumatra_2020_v7.csv
+[OK] Saved province confusion summary: validation_confusion_summary_Sumatra_2020_v7.csv
+[OK] Saved Sumatra summary: validation_Sumatra_summary_2020_v7.csv
+[OK] Saved Sumatra class summary: validation_Sumatra_pooled_class_summary_2020_v7.csv
+[OK] Saved Sumatra prediction summary: validation_Sumatra_prediction_summary_2020_v7.csv
+[OK] Saved Sumatra confusion matrix: validation_Sumatra_confusion_matrix_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_province_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_class_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_prediction_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_confusion_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_pooled_class_summary_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_prediction_inventory_2020_v7.csv
+  [OK] Started summary export: validation_Sumatra_confusion_matrix_2020_v7.csv
+
+============================================================
+BATCH VALIDATION COMPLETED
+============================================================
+Processed provinces : 10
+Missing final maps  : 1
+Completed provinces : 9
+============================================================
+(base) PS C:\Users\widijanto\Documents\pyprojects\luma-stack> 

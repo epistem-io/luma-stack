@@ -6,7 +6,9 @@ import geemap
 
 ee.Initialize(project='epistem2')
 
-VERSION = 'v6'
+VERSION = 'v7'
+REGION = 'Sumatra'
+
 POLL_INTERVAL_SEC = 30
 EXPORT_FOLDER = 'GEE_exports'
 EXPORT_SCALE = 100
@@ -39,12 +41,12 @@ def asset_exists(asset_id):
 
 def main():
 
-    provinces = ee.FeatureCollection('projects/epistem2/assets/AOI_Maluku_Provinces')
+    provinces = ee.FeatureCollection(f'projects/epistem2/assets/AOI_{REGION}_Provinces')
     province_list = provinces.toList(provinces.size())
-    n_provinces = 2
+    n_provinces = 10 # CHANGE THIS MANUALLY
 
     # for i in range(n_provinces):
-    for i in range(0, n_provinces):
+    for i in range(5, n_provinces):
         province = ee.Feature(province_list.get(i))
         province_name = province.get('AoI').getInfo()
         province_name_clean = (
@@ -56,7 +58,7 @@ def main():
 
         # Load probability stack from asset
 
-        prob_stack = ee.Image(f'projects/epistem2/assets/probability_stack_{province_name_clean}_2020_{VERSION}')
+        prob_stack = ee.Image(f'projects/epistem2/assets/probability_stack_{province_name_clean}_2021_{VERSION}')
 
         # Derive class_ids directly from prob_stack's band names — guaranteed to match
         prob_band_names = prob_stack.bandNames().getInfo()  # e.g. ['prob_18', 'prob_2', ...]
@@ -82,7 +84,7 @@ def main():
         # --- Export probability stack; wait before moving to the next province ---
 
         lulc_asset_id = (
-            f'{ASSET_FOLDER}/final_lulc_stack_{province_name_clean}_2020_{VERSION}'
+            f'{ASSET_FOLDER}/final_lulc_stack_{province_name_clean}_2021_{VERSION}'
         )
 
         if asset_exists(lulc_asset_id):
@@ -91,7 +93,7 @@ def main():
     
         prob_task = ee.batch.Export.image.toAsset(
             image=final_lulc_stack,
-            description=f'final_lulc_stack_{province_name_clean}_2020_{VERSION}',
+            description=f'final_lulc_stack_{province_name_clean}_2021_{VERSION}',
             # folder=EXPORT_FOLDER,
             assetId=lulc_asset_id,
             region=province_geom,
