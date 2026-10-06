@@ -1,0 +1,25 @@
+class_id,class_name,priority,waterbody_dominance,aquaculture_presence,builtup_dominance,baresoil_dominance,mining_presence,grass_dominance,palm_dominance,tree_dominance,vegetation_height,agricultural_activity_presence,mangrove_presence,rubber_presence,other_species_presence,coffee_presence,cacao_presence,oilpalm_presence,coconut_presence,paddy_presence,timber_extraction,vegetation_canopy_cover,elevation,road_presence,wetland_presence,plant_horizonal_spreading
+20,Fish Pond,1,==1,==1,,,,,,,,,,,,,,,,,,,,,,
+23,Waterbody,2,==1,,,,,,,,,,,,,,,,,,,,,,,
+24,Settlement,3,,,==1,,,,,,,,,,,,,,,,,,,,,
+21,Cleared Land,4,,,,==1,==0,,,,,,,,,,,,,,,,,,,
+22,Mining area,5,,,,==1,==1,,,,,,,,,,,,,,,,,,,
+9,Oil palm monoculture,6,,,,,,,==1,,>=1&<=20,,,,==0,==0,==0,==1,==0,==0,,>=0.7&<=1,,,,regularRows
+11,Coconut monoculture,7,,,,,,,==1,,>=1&<=20,,,,==0,==0,==0,==0,==1,==0,,>=0.4&<=0.6,,,,unevenlySpread
+10,Cacao monoculture,8,,,,,,,,==1,>=4&<=6,,,,,,==1,,,,,>=0.6&<=0.9,,,,
+8,Rubber monoculture,9,,,,,,,,==1,>=5&<=25,,,==1,==0,==0,==0,==0,==0,==0,,,,,,regularRows
+14,Coffee agroforestry,10,,,,,,,,==1,>=1&<=4,==1,,==0,==1,==1,,,,,,>=0.6&<=0.9,,,,
+15,Rubber agroforestry,11,,,,,,,,==1,,==1,,==1,==1,,,,,,,>=0.4,,,,unevenlySpread
+12,Other monoculture,12,,,,,,,,==1,>=5,,,==0,==1,,==0,==0,==0,,,>=0.7&<=1,,,,regularRows
+17,Paddy field,13,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==1,,,,,,regularRows
+13,Other Cropland,14,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==0,,,,,,
+19,Shrub,15,,,,,,,,==0,>=2&<=5,==0,,,,,,,,,,,,,,
+18,Grass or Savanna,16,,,,,,==1,,,,==0,,,,,,,,,,,,,,
+3,Primary Mangrove Forest,17,,,,,,,,==1,>=5&<=30,,==1,,,,,,,,,>=0.7,,==0,,
+5,Primary Swamp Forest,18,,,,,,,,==1,>=10&<=15,,,,,,,,,,,>=0.7,,,==1,
+4,Secondary Mangrove Forest,19,,,,,,,,==1,>=5&<=15,,==1,,,,,,,,,>=0.4&<=0.7,,,,
+6,Secondary Swamp Forest,20,,,,,,,,==1,>=5&<=10,,,,,,,,,,,>=0.4&<=0.7,,,==1,
+7,Plantation forest,21,,,,,,,,==1,,,,,,,,,,,==1,,,,,regularRows
+1,Primary Dryland Forest,22,,,,,,,,==1,>=25,,,,,,,,,,,>=0.7,,==0,,
+2,Secondary Dryland Forest,23,,,,,,,,==1,>=5&<=25,,,,,,,,,,,>=0.4&<=0.7,,,,
+16,Mixed/home garden,24,,,,,,,,,,==1,,,,,,,,,,,,,,unevenlySpread
