@@ -15,11 +15,11 @@ class_id,class_name,priority,waterbody_dominance,aquaculture_presence,builtup_do
 13,Other Cropland,14,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==0,,,,,,
 19,Shrub,15,,,,,,,,==0,>=2&<=5,==0,,,,,,,,,,,,,,
 18,Grass or Savanna,16,,,,,,==1,,,,==0,,,,,,,,,,,,,,
-3,Primary Mangrove Forest,17,,,,,,,,==1,>=5&<=30,,==1,,,,,,,,,>=0.7,,==0,,
+3,Primary Mangrove Forest,17,,,,,,,,==1,>=5&<=30,,==1,,,,,,,,,>=0.7,,==0,==1,
 5,Primary Swamp Forest,18,,,,,,,,==1,>=10&<=15,,,,,,,,,,,>=0.7,,,==1,
-4,Secondary Mangrove Forest,19,,,,,,,,==1,>=5&<=15,,==1,,,,,,,,,>=0.4&<=0.7,,,,
+4,Secondary Mangrove Forest,19,,,,,,,,==1,>=5&<=15,,==1,,,,,,,,,>=0.4&<=0.7,,,==1,
 6,Secondary Swamp Forest,20,,,,,,,,==1,>=5&<=10,,,,,,,,,,,>=0.4&<=0.7,,,==1,
-7,Plantation forest,21,,,,,,,,==1,,,,,,,,,,,==1,,,,,regularRows
-1,Primary Dryland Forest,22,,,,,,,,==1,>=25,,,,,,,,,,,>=0.7,,==0,,
-2,Secondary Dryland Forest,23,,,,,,,,==1,>=5&<=25,,,,,,,,,,,>=0.4&<=0.7,,,,
+7,Plantation forest,21,,,,,,,,==1,,,,,,,,,,,==1,,,,==1,regularRows
+1,Primary Dryland Forest,22,,,,,,,,==1,>=25,,,,,,,,,,,>=0.7,,==0,==0,
+2,Secondary Dryland Forest,23,,,,,,,,==1,>=5&<=25,,,,,,,,,,,>=0.4&<=0.7,,,==0,
 16,Mixed/home garden,24,,,,,,,,,,==1,,,,,,,,,,,,,,unevenlySpread
