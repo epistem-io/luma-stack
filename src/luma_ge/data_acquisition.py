@@ -1,10 +1,9 @@
 import ee
 from datetime import datetime
 import logging
-from typing import Union
+from typing import Union, Optional, List
 from .ee_config import ensure_ee_initialized
-# Do not initialize Earth Engine at import time. Initialize when an instance is created.
-
+#Do not initialize Earth Engine at import time. Initialize when an instance is created.
 #input date pasring function, used by data retrieval functions to allow flexible date input (year or full date)
 def parse_date_input(date_input: Union[int, str], is_start: bool = True) -> str:
     """
@@ -424,10 +423,10 @@ class Reflectance_Data:
             return ee.Image(masked.copyProperties(image, image.propertyNames()))
         except ee.EEException as e:
             self.logger.error(f"EEException in mask_s2_clouds: {e}")
-            return None
+            return None # type: ignore
         except Exception as e:
             self.logger.error(f"Unexpected error in mask_s2_clouds: {e}")
-            return None
+            return None # type: ignore
     #Band renaming for Sentinel-2. Standarized band name for later use
     def rename_s2_bands(self, image: ee.Image) -> ee.Image:
         """
@@ -585,7 +584,7 @@ class Reflectance_Data:
 
             # Derive UTM zone from AOI centroid (single cheap getInfo call)
             if crs_transform is None:
-                centroid_coords = geometry.centroid(maxError=1000).getInfo()['coordinates']
+                centroid_coords = geometry.centroid(maxError=1000).getInfo()['coordinates'] # type: ignore
                 lon, lat = centroid_coords[0], centroid_coords[1]
                 zone = int((lon + 180) / 6) + 1
                 epsg_code = 32600 + zone if lat >= 0 else 32700 + zone
@@ -1235,7 +1234,15 @@ class Reflectance_Stats:
         self.logger.setLevel(log_level)
 
         self.logger.info("Reflectance Stats initialized.")
-    def get_collection_statistics(self, collection, compute_stats=True, print_report=False, cloud_property='CLOUD_COVER_LAND'):
+    def get_collection_statistics(
+        self,
+        collection,
+        compute_stats=True,
+        print_report=False,
+        cloud_property='CLOUD_COVER_LAND',
+        stats_properties=None,
+        dataset_key=None,
+    ):
         """
         Get comprehensive statistics about an Earth Engine image collection retrival.
 
@@ -1255,6 +1262,12 @@ class Reflectance_Stats:
             The image property name used to retrieve cloud cover values
             (default: ``'CLOUD_COVER_LAND'`` for Landsat). Pass
             ``'CLOUDY_PIXEL_PERCENTAGE'`` for Sentinel-2 collections.
+        stats_properties : list[str], optional
+            Image properties to aggregate. When omitted, the standard
+            properties for ``dataset_key`` are used, or the default set.
+        dataset_key : str, optional
+            Optical dataset key used to select its configured statistics
+            properties.
 
         Returns
         -------
@@ -1277,18 +1290,17 @@ class Reflectance_Stats:
         >>> print(stats['total_images'], stats['date_range'])
         """
         # Resolve the list of properties to aggregate in a single batched call.
-        # Priority: explicit stats_properties > dataset_key lookup > hardcoded fallback
+        # Priority: explicit stats_properties > dataset_key lookup > defaults.
         if stats_properties is not None:
             props = stats_properties
         elif dataset_key is not None:
             config = Reflectance_Data.OPTICAL_DATASETS.get(dataset_key, {})
             props = config.get('stats_properties', [
-                'CLOUD_COVER_LAND', 'system:time_start', 'system:index',
+                cloud_property, 'system:time_start', 'system:index',
                 'WRS_PATH', 'WRS_ROW'
             ])
         else:
-            # Backward-compatible default: standard Landsat properties
-            props = ['CLOUD_COVER_LAND', 'system:time_start', 'system:index',
+            props = [cloud_property, 'system:time_start', 'system:index',
                      'WRS_PATH', 'WRS_ROW']
 
         try:
@@ -1301,7 +1313,7 @@ class Reflectance_Stats:
                     aggregated = ee.Dictionary(agg_dict).getInfo()
 
                     #Unpack with safe defaults (empty list if a property is missing)
-                    raw = {prop: aggregated.get(prop, []) for prop in props}
+                    raw = {prop: aggregated.get(prop, []) for prop in props} # type: ignore
 
                     #Derive the fields expected by the rest of the codebase
                     cloud_prop = next(
@@ -1513,7 +1525,7 @@ class final_Image:
             #Calculate pixel area
             pixel_area = ee.Image.pixelArea()
             #Total area in AOI
-            total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels,
+            total_area = pixel_area.reduceRegion(reducer=ee.Reducer.sum(),geometry=geometry,scale=scale,maxPixels=max_pixels, # type: ignore
                 bestEffort=True,
                 tileScale=DEFAULT_TILE_SCALE
             )
@@ -1529,8 +1541,8 @@ class final_Image:
                 'valid_area': valid_area.get('valid_area')
             }).getInfo()
 
-            total_val = area_results.get('area')
-            valid_val = area_results.get('valid_area')
+            total_val = area_results.get('area') # type: ignore
+            valid_val = area_results.get('valid_area') # type: ignore 
 
             #Null valid area handling: default to 0 and warn
             if valid_val is None:
@@ -1585,8 +1597,9 @@ class final_Image:
             raise
     #Quality mosaic for stacking multiple scene and then clip them. This procedure stacked all of the imagery regardless of the pixel value
     #if not used in the future, this function should be removed
-    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI', 
-                          calculate_coverage=False, coverage_scale=30, verbose=True):
+    def get_quality_mosaic(self, collection, aoi, quality_band='NDVI',
+                          calculate_coverage=False, coverage_scale=30,
+                          sharpen: bool = False, verbose=True):
         """
         Create a mosaic that selects the best available pixels across the AOI.
         Uses qualityMosaic to automatically select pixels with highest quality metric.
@@ -1691,11 +1704,11 @@ class final_Image:
             end_str = end_date.getInfo()
             self.logger.info(f"Mosaic date range: {start_str} to {end_str}")
 
-        # --- Optional HPF sharpening (Sentinel-2 only) ---
+        # Optional HPF sharpening (Sentinel-2 only) ---
         if sharpen:
             s2_bands = ['RED_EDGE1', 'RED_EDGE2', 'RED_EDGE3', 'RED_EDGE4', 'SWIR1', 'SWIR2']
             band_names = clipped.bandNames().getInfo()
-            if all(b in band_names for b in s2_bands):
+            if all(b in band_names for b in s2_bands): # type: ignore
                 rd = Reflectance_Data.__new__(Reflectance_Data)
                 rd.logger = self.logger
                 clipped = rd.sharpen_s2_bands(clipped, aoi=aoi)
@@ -1838,6 +1851,13 @@ class final_Image:
             'composite_count': size_server,
             'composite_reducer': str(reducer)
         })
+
+        metadata = {
+            'composite_start_date': start_date,
+            'composite_end_date': end_date,
+            'composite_count': size_server,
+            'composite_reducer': str(reducer),
+        }
         
         if verbose:
             #Only call the client side info if needed
