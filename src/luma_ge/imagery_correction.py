@@ -75,6 +75,10 @@ class Topographic_Correction:
     DEFAULT_OPTICAL_BANDS: List[str] = [
         'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'
     ]
+    S2_OPTICAL_BANDS: List[str] = [
+        'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2',
+        'RED_EDGE3', 'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2'
+    ]
 
     def __init__(self, log_level: int = logging.INFO) -> None:
         """
@@ -113,9 +117,10 @@ class Topographic_Correction:
         ----------
         image : ee.Image
             Single image carrying solar-angle properties (in degrees).
-            Landsat Collection-2: ``'SOLAR_ZENITH_ANGLE'`` / ``'SOLAR_AZIMUTH_ANGLE'``.
+            Landsat Collection-2: ``'SUN_ELEVATION'`` (converted via 90 - SUN_ELEVATION) / ``'SUN_AZIMUTH'``.
+            Landsat Collection-1: ``'SOLAR_ZENITH_ANGLE'`` / ``'SOLAR_AZIMUTH_ANGLE'``.
             Sentinel-2: ``'MEAN_SOLAR_ZENITH_ANGLE'`` / ``'MEAN_SOLAR_AZIMUTH_ANGLE'``.
-            Both naming conventions are resolved automatically.
+            All naming conventions are resolved automatically.
         dem : ee.Image, optional
             Defaults to ``NASA/NASADEM_HGT/001`` (30 m global).
             Override with a higher-resolution or region-specific DEM when needed.
@@ -140,34 +145,43 @@ class Topographic_Correction:
         try:
             if dem is None:
                 dem = ee.Image(self.DEFAULT_DEM_ASSET).select(self.DEFAULT_DEM_BAND)
-            buffer_geom = image.geometry().buffer(buffer_m)
+            buffer_geom = image.geometry().buffer(buffer_m, 100)
 
             # --- Solar geometry: degrees to radians (server-side constants) ---
-            # Landsat Collection 2 uses SOLAR_ZENITH_ANGLE / SOLAR_AZIMUTH_ANGLE.
             # Sentinel-2 uses MEAN_SOLAR_ZENITH_ANGLE / MEAN_SOLAR_AZIMUTH_ANGLE.
-            # Resolve whichever is present; raises an ee.EEException at compute
-            # time if neither property exists on the image.
-            sz_deg = ee.Number(image.get('SOLAR_ZENITH_ANGLE')).aside(
-                lambda v: v  # no-op; just forces server-side evaluation chain
+            # Landsat Collection 2 uses SUN_ELEVATION (zenith = 90 - SUN_ELEVATION) / SUN_AZIMUTH.
+            # Landsat Collection 1 uses SOLAR_ZENITH_ANGLE / SOLAR_AZIMUTH_ANGLE.
+            # Resolve whichever is present safely on the server without null arithmetic errors.
+            prop_names = image.propertyNames()
+            sun_elev = ee.Number(
+                ee.List([image.get('SUN_ELEVATION'), 0]).reduce(ee.Reducer.firstNonNull())
             )
-            sz_deg = ee.Algorithms.If(
-                sz_deg,
-                sz_deg,
-                ee.Number(image.get('MEAN_SOLAR_ZENITH_ANGLE'))
+            sz_from_elev = ee.Number(90).subtract(sun_elev)
+            sz_direct = ee.List([
+                image.get('MEAN_SOLAR_ZENITH_ANGLE'),
+                image.get('SOLAR_ZENITH_ANGLE'),
+            ]).reduce(ee.Reducer.firstNonNull())
+
+            sz_deg = ee.Number(
+                ee.Algorithms.If(
+                    prop_names.contains('SUN_ELEVATION'),
+                    sz_from_elev,
+                    sz_direct,
+                )
             )
-            sa_deg = ee.Number(image.get('SOLAR_AZIMUTH_ANGLE'))
-            sa_deg = ee.Algorithms.If(
-                sa_deg,
-                sa_deg,
-                ee.Number(image.get('MEAN_SOLAR_AZIMUTH_ANGLE'))
+            sa_deg = ee.Number(
+                ee.List([
+                    image.get('MEAN_SOLAR_AZIMUTH_ANGLE'),
+                    image.get('SUN_AZIMUTH'),
+                    image.get('SOLAR_AZIMUTH_ANGLE'),
+                ]).reduce(ee.Reducer.firstNonNull())
             )
             sz_rad = (
-                ee.Image.constant(ee.Number(sz_deg))
-                .multiply(math.pi / 180)
+                ee.Image.constant(sz_deg.multiply(math.pi / 180))
                 .clip(buffer_geom)
             )
             sa_rad = (
-                ee.Image.constant(ee.Number(sa_deg).multiply(math.pi / 180))
+                ee.Image.constant(sa_deg.multiply(math.pi / 180))
                 .clip(buffer_geom)
             )
 
@@ -209,6 +223,7 @@ class Topographic_Correction:
         band_list: Optional[List[str]] = None,
         slope_threshold: float = 5.0,
         max_pixels: int = 1_000_000_000,
+        tile_scale: int = 4,
     ) -> ee.Image:
         """
         Apply the SCSc topographic correction to an image that already carries
@@ -230,9 +245,10 @@ class Topographic_Correction:
         -----
         **Red Edge bands (Sentinel-2):** ``RED_EDGE1``, ``RED_EDGE2``,
         ``RED_EDGE3``, ``RED_EDGE4`` are not in ``DEFAULT_OPTICAL_BANDS`` and
-        therefore pass through uncorrected but intact as ancillary bands.  This
-        is intentional — the SCSc regression is fit on the six common optical
-        bands; applying the same c-value to Red Edge bands would introduce
+        therefore pass through uncorrected but intact as ancillary bands unless
+        ``band_list=Topographic_Correction.S2_OPTICAL_BANDS`` is explicitly supplied.
+        This is intentional — the SCSc regression is fit on the six common optical
+        bands by default; applying the same c-value to Red Edge bands would introduce
         sensor-specific bias.
 
         **NIR validity mask:** uses ``NIR > 0`` which correctly excludes fill
@@ -255,6 +271,9 @@ class Topographic_Correction:
             regression and correction. Default: ``5.0``.
         max_pixels : int, optional
             ``maxPixels`` argument passed to ``reduceRegion``. Default: ``1e9``.
+        tile_scale : int, optional
+            ``tileScale`` argument passed to ``reduceRegion`` to prevent memory
+            errors on high-resolution scenes (e.g. 10 m Sentinel-2). Default: ``4``.
 
         Returns
         -------
@@ -290,19 +309,29 @@ class Topographic_Correction:
             img_masked = ee.Image(image.updateMask(mask))
 
             # Geometry slightly inset to avoid edge noise in regression
-            reg_geometry = ee.Geometry(image.geometry().buffer(-100))
+            reg_geometry = ee.Geometry(image.geometry().buffer(-100, 10))
 
             # --- Per-band SCSc correction (Python loop — avoids ee.List overhead) ---
             def _scsc_band(band: str) -> ee.Image:
                 regression = img_masked.select('IC', band).reduceRegion(
-                    reducer   = ee.Reducer.linearFit(),
-                    geometry  = reg_geometry,
-                    scale     = scale,
-                    maxPixels = max_pixels,
+                    reducer    = ee.Reducer.linearFit(),
+                    geometry   = reg_geometry,
+                    scale      = scale,
+                    maxPixels  = max_pixels,
+                    bestEffort = True,
+                    tileScale  = tile_scale,
                 )
-                a = ee.Number(regression.get('scale'))    # slope
-                b = ee.Number(regression.get('offset'))   # intercept
-                c = b.divide(a)                           # empirical c-value
+                # Guard against null (e.g. completely flat or cloud-masked scenes)
+                # and division by zero (a == 0)
+                a = ee.Number(
+                    ee.List([regression.get('scale'), 1]).reduce(ee.Reducer.firstNonNull())
+                )
+                b = ee.Number(
+                    ee.List([regression.get('offset'), 0]).reduce(ee.Reducer.firstNonNull())
+                )
+                a_safe = ee.Number(ee.Algorithms.If(a.eq(0), 1, a))
+                c_num  = ee.Number(ee.Algorithms.If(a.eq(0), 0, b.divide(a_safe)))
+                c      = ee.Image.constant(c_num)         # empirical c-value as constant image
 
                 return img_masked.expression(
                     '(image * (cosB * cosZ + c)) / (ic + c)',
@@ -317,29 +346,19 @@ class Topographic_Correction:
 
             corrected_bands = ee.Image([_scsc_band(b) for b in band_list])
 
-            # Add IC band so unmask can fill from original IC-band image
-            corrected_with_ic = corrected_bands.addBands(image.select('IC'))
-            fill_bands = band_list + ['IC']
-
             # Fill flat / negative-IC pixels with original reflectance
-            corrected_filled = (
-                corrected_with_ic
-                .unmask(image.select(fill_bands))
-                .select(band_list)                  # drop IC from final output
-            )
+            corrected_filled = corrected_bands.unmask(image.select(band_list))
 
-            #Pass through non-corrected bands
-            all_bands     = image.bandNames()
-            ancillary_names = (
-                all_bands
-                .removeAll(ee.List(band_list))
-                .removeAll(ee.List(['IC', 'cosZ', 'cosS', 'slope']))
-            )
+            #Pass through non-corrected bands and preserve original band order
+            all_bands  = image.bandNames()
+            orig_bands = all_bands.removeAll(ee.List(['IC', 'cosZ', 'cosS', 'slope']))
+            ancillary_names = orig_bands.removeAll(ee.List(band_list))
             ancillary = image.select(ancillary_names)
 
             return (
                 corrected_filled
                 .addBands(ancillary)
+                .select(orig_bands)
                 .setMulti(props)
                 .set('system:time_start', st)
             )
@@ -371,7 +390,9 @@ class Topographic_Correction:
         image : ee.Image
             Pre-processed image with standardised band names (output of
             ``rename_landsat_bands`` or ``rename_s2_bands``).  Must carry
-            ``'SOLAR_ZENITH_ANGLE'`` and ``'SOLAR_AZIMUTH_ANGLE'`` properties.
+            solar angle properties (Landsat C2 ``'SUN_ELEVATION'`` / ``'SUN_AZIMUTH'``,
+            Landsat C1 ``'SOLAR_ZENITH_ANGLE'`` / ``'SOLAR_AZIMUTH_ANGLE'``, or
+            Sentinel-2 ``'MEAN_SOLAR_ZENITH_ANGLE'`` / ``'MEAN_SOLAR_AZIMUTH_ANGLE'``).
         dem : ee.Image, optional
             Digital elevation model covering the image footprint.
             Defaults to ``NASA/NASADEM_HGT/001`` (30 m global).
@@ -499,9 +520,8 @@ class Topographic_Correction:
             if verbose:
                 self.logger.info(f"Using default DEM: {self.DEFAULT_DEM_ASSET} (band: {self.DEFAULT_DEM_BAND})")
         if verbose:
-            size = collection.size().getInfo()
             self.logger.info(
-                f"Applying SCSc topographic correction to {size} images "
+                f"Applying SCSc topographic correction to collection "
                 f"(scale={scale}m, slope_threshold={slope_threshold} deg)"
             )
             if scale == 30:
