@@ -1,8 +1,8 @@
 """
-EpistemX - Earth Observation Data Processing Package
+Luma Geospatial Engine
 
 A comprehensive package for processing and analyzing Earth observation data
-using Google Earth Engine and other remote sensing tools.
+using Google Earth Engine.
 """
 
 from .ee_config import (
@@ -178,7 +178,7 @@ def auto_initialize():
         return False
 
 __version__ = "0.1.0"
-__author__ = "EpistemX Team"
+__author__ = "Luma Development Team"
 
 # Make key functions available at package level
 __all__ = [
@@ -192,7 +192,7 @@ __all__ = [
     'setup_earth_engine',
     'reset_ee_initialization',
     'auto_initialize',
-    # Imagery correction
+    #Imagery correction (not yet available)
     'Topographic_Correction',
 ]
 

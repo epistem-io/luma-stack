@@ -243,6 +243,12 @@ class Topographic_Correction:
 
         Notes
         -----
+        **Single-pass multi-band regression:** Uses a single
+        ``ee.Reducer.linearRegression(numX=2, numY=len(band_list))`` call per
+        image rather than one ``reduceRegion`` per band, preventing GEE's
+        ``Too many concurrent aggregations`` error when mapped over large
+        image collections.
+
         **Red Edge bands (Sentinel-2):** ``RED_EDGE1``, ``RED_EDGE2``,
         ``RED_EDGE3``, ``RED_EDGE4`` are not in ``DEFAULT_OPTICAL_BANDS`` and
         therefore pass through uncorrected but intact as ancillary bands unless
@@ -261,7 +267,7 @@ class Topographic_Correction:
             ``'IC'``, ``'cosZ'``, ``'cosS'``, and ``'slope'`` bands alongside
             the optical reflectance bands.
         scale : int, optional
-            Pixel resolution (metres) used for the ``reduceRegion`` regression.
+            Pixel resolution (metres) of the input imagery.
             Use ``30`` for Landsat, ``10`` for Sentinel-2. Default: ``30``.
         band_list : list of str, optional
             Bands to correct. Defaults to ``DEFAULT_OPTICAL_BANDS``
@@ -293,9 +299,6 @@ class Topographic_Correction:
             band_list = self.DEFAULT_OPTICAL_BANDS
 
         try:
-            props = image.toDictionary()
-            st    = image.get('system:time_start')
-
             # Mask to sloped pixels with positive IC and valid NIR.
             # Threshold is 0 rather than -0.1 so it works correctly for both:
             #   - Landsat / S2 scaled reflectance (0.0–1.0): excludes nodata fill
@@ -311,56 +314,67 @@ class Topographic_Correction:
             # Geometry slightly inset to avoid edge noise in regression
             reg_geometry = ee.Geometry(image.geometry().buffer(-100, 10))
 
-            # --- Per-band SCSc correction (Python loop — avoids ee.List overhead) ---
-            def _scsc_band(band: str) -> ee.Image:
-                regression = img_masked.select('IC', band).reduceRegion(
-                    reducer    = ee.Reducer.linearFit(),
-                    geometry   = reg_geometry,
-                    scale      = scale,
-                    maxPixels  = max_pixels,
-                    bestEffort = True,
-                    tileScale  = tile_scale,
-                )
-                # Guard against null (e.g. completely flat or cloud-masked scenes)
-                # and division by zero (a == 0)
-                a = ee.Number(
-                    ee.List([regression.get('scale'), 1]).reduce(ee.Reducer.firstNonNull())
-                )
-                b = ee.Number(
-                    ee.List([regression.get('offset'), 0]).reduce(ee.Reducer.firstNonNull())
-                )
-                a_safe = ee.Number(ee.Algorithms.If(a.eq(0), 1, a))
-                c_num  = ee.Number(ee.Algorithms.If(a.eq(0), 0, b.divide(a_safe)))
-                c      = ee.Image.constant(c_num)         # empirical c-value as constant image
+            # --- Single-pass multi-band SCSc regression ----------------------
+            # Fit all bands in a single reduceRegion call (X = [1, IC], Y = band_list)
+            # to avoid triggering "Too many concurrent aggregations" across collections.
+            # Sampling at reg_scale >= 300m (~134k pixels per S2 tile) accurately
+            # estimates the two scalar linear-fit parameters (a, b) while the
+            # pixel-level SCSc correction below is applied at full native resolution.
+            reg_scale = max(scale * 10, 300)
+            reg_input = (
+                ee.Image.constant(1).rename('constant')
+                .addBands(img_masked.select(['IC'] + band_list))
+                .updateMask(mask)
+            )
+            lr = reg_input.reduceRegion(
+                reducer    = ee.Reducer.linearRegression(numX=2, numY=len(band_list)),
+                geometry   = reg_geometry,
+                scale      = reg_scale,
+                maxPixels  = max_pixels,
+                bestEffort = True,
+                tileScale  = tile_scale,
+            )
 
-                return img_masked.expression(
-                    '(image * (cosB * cosZ + c)) / (ic + c)',
-                    {
-                        'image': img_masked.select(band),
-                        'ic'   : img_masked.select('IC'),
-                        'cosB' : img_masked.select('cosS'),
-                        'cosZ' : img_masked.select('cosZ'),
-                        'c'    : c,
-                    },
-                ).rename(band)
+            # Fallback 2xN array (b=0, a=1 -> c=0) when all pixels in scene are masked/flat
+            default_coeffs = ee.Array([[0.0] * len(band_list), [1.0] * len(band_list)])
+            coeffs = ee.Array(
+                ee.List([lr.get('coefficients'), default_coeffs]).reduce(ee.Reducer.firstNonNull())
+            )
+            coeffs = ee.Array(
+                ee.Algorithms.If(coeffs.length().get([0]).eq(2), coeffs, default_coeffs)
+            )
 
-            corrected_bands = ee.Image([_scsc_band(b) for b in band_list])
+            # Row 0: intercept (b), Row 1: slope (a); c = b / a
+            b_arr  = coeffs.slice(0, 0, 1).project([1])
+            a_arr  = coeffs.slice(0, 1, 2).project([1])
+            a_safe = a_arr.add(a_arr.eq(0))
+            c_arr  = b_arr.divide(a_safe).multiply(a_arr.neq(0))
+
+            # Build multi-band constant image with statically known band names
+            c_img = ee.Image.cat([
+                ee.Image.constant(c_arr.get([i])).rename(b)
+                for i, b in enumerate(band_list)
+            ])
+
+            bands_img = img_masked.select(band_list)
+            cos_sz    = img_masked.select('cosS').multiply(img_masked.select('cosZ'))
+            ic_img    = img_masked.select('IC')
+
+            corrected_bands = (
+                bands_img.multiply(cos_sz.add(c_img))
+                .divide(ic_img.add(c_img))
+                .rename(band_list)
+            )
 
             # Fill flat / negative-IC pixels with original reflectance
             corrected_filled = corrected_bands.unmask(image.select(band_list))
 
-            #Pass through non-corrected bands and preserve original band order
-            all_bands  = image.bandNames()
-            orig_bands = all_bands.removeAll(ee.List(['IC', 'cosZ', 'cosS', 'slope']))
-            ancillary_names = orig_bands.removeAll(ee.List(band_list))
-            ancillary = image.select(ancillary_names)
-
-            return (
-                corrected_filled
-                .addBands(ancillary)
+            # Overwrite corrected bands on original image and drop helper IC bands
+            orig_bands = image.bandNames().removeAll(ee.List(['IC', 'cosZ', 'cosS', 'slope']))
+            return ee.Image(
+                image
+                .addBands(corrected_filled, band_list, True)
                 .select(orig_bands)
-                .setMulti(props)
-                .set('system:time_start', st)
             )
 
         except ee.EEException as e:
@@ -424,6 +438,9 @@ class Topographic_Correction:
         >>> custom_dem = ee.Image('JAXA/ALOS/AW3D30/V3_2').select('DSM')
         >>> corrected = tc.correct_image(image, dem=custom_dem, scale=30)
         """
+        if band_list is None:
+            band_list = self.DEFAULT_OPTICAL_BANDS
+
         if verbose:
             self.logger.info(
                 f"Applying SCSc topographic correction "
@@ -446,7 +463,8 @@ class Topographic_Correction:
         if verbose:
             self.logger.info("SCSc correction applied to single image.")
 
-        return corrected
+        # Overwrite band_list directly on input image so band names are statically known
+        return ee.Image(image.addBands(corrected.select(band_list), band_list, True))
 
     # ------------------------------------------------------------------
     # Step 4: Collection-level wrapper
@@ -515,6 +533,9 @@ class Topographic_Correction:
         >>> # 3. Composite
         >>> result = final_Image().get_temporal_composite(corrected_col, aoi)
         """
+        if band_list is None:
+            band_list = self.DEFAULT_OPTICAL_BANDS
+
         if dem is None:
             dem = ee.Image(self.DEFAULT_DEM_ASSET).select(self.DEFAULT_DEM_BAND)
             if verbose:
@@ -532,12 +553,14 @@ class Topographic_Correction:
 
         def _correct(img: ee.Image) -> ee.Image:
             img_with_ic = self.compute_illumination_condition(img, dem, buffer_m=buffer_m)
-            return self.apply_scsc_correction(
+            corrected = self.apply_scsc_correction(
                 img_with_ic,
                 scale           = scale,
                 band_list       = band_list,
                 slope_threshold = slope_threshold,
             )
+            # Overwrite band_list directly on img so band names and properties remain static
+            return ee.Image(img.addBands(corrected.select(band_list), band_list, True))
 
         corrected = collection.map(_correct)
 
