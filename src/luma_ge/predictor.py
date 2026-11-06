@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from .ee_config import ensure_ee_initialized
+from .sar import get_sar_data
 
 # Configure logging for development
 logging.basicConfig(
@@ -897,8 +898,9 @@ class PredictorCalculation:
         # Initialize calculator backends
         self.terrain_calc = terrain_calculator()
         self.spectral_calc = SpectralCalculator()
+        self.sar_calc = get_sar_data()
         
-        logger.info("Predictor Calculation initialized with terrain and spectral calculators")
+        logger.info("Predictor Calculation initialized with terrain, spectral and SAR calculators")
     #Input validation
     def validate_prerequisites(self, composite: ee.Image, aoi: ee.Geometry, 
                              collection: ee.ImageCollection = None) -> Dict[str, Any]:
@@ -959,6 +961,93 @@ class PredictorCalculation:
                 "errors": [f"Validation failed: {str(e)}"],
                 "warnings": []
             }
+    def _resolve_date_range(self, predictor_config: Dict[str, Any],
+                            collection: ee.ImageCollection = None,
+                            composite: ee.Image = None):
+        """
+        Resolve the (start_date, end_date) selected in Module 1 / Step 1.
+
+        Priority: predictor_config -> collection 'query_start_date'/'query_end_date'
+        -> composite 'composite_start_date'/'composite_end_date' ->
+        min/max 'system:time_start' of the collection.
+
+        Returns:
+        --------
+        tuple : (start_date, end_date) as strings, or (None, None) if unresolved.
+        """
+        start = predictor_config.get("start_date")
+        end = predictor_config.get("end_date")
+        if start is not None and end is not None:
+            return str(start), str(end)
+
+        def _get_props(obj, start_key, end_key):
+            try:
+                info = ee.Dictionary({
+                    "s": obj.get(start_key),
+                    "e": obj.get(end_key),
+                }).getInfo()
+                if info.get("s") and info.get("e"):
+                    return str(info["s"]), str(info["e"])
+            except Exception as e:
+                logger.debug(f"Could not read date properties {start_key}/{end_key}: {e}")
+            return None
+
+        if collection is not None:
+            found = _get_props(collection, "query_start_date", "query_end_date")
+            if found:
+                return found
+        if composite is not None:
+            found = _get_props(composite, "composite_start_date", "composite_end_date")
+            if found:
+                return found
+        if collection is not None:
+            try:
+                rng = collection.reduceColumns(
+                    ee.Reducer.minMax(), ["system:time_start"]
+                ).getInfo()
+                if rng and rng.get("min") is not None and rng.get("max") is not None:
+                    fmt = lambda ms: ee.Date(ms).format("YYYY-MM-dd").getInfo()
+                    return fmt(rng["min"]), fmt(rng["max"])
+            except Exception as e:
+                logger.debug(f"Could not derive date range from collection: {e}")
+        return None, None
+
+    def _resolve_sar_selection(self, predictor_config: Dict[str, Any], spectral_indices: list):
+        """
+        Determine which Sentinel-1 bands were requested.
+
+        Sentinel-1 can be requested via:
+        - predictor_config["sentinel1"] / predictor_config["individual_predictors"]["sentinel1"]
+          set to True (all bands) or a list of band names
+        - band names (S1_VV, S1_VH, S1_VV_VH) mixed into the spectral index list
+          (luma-be forwards every non-terrain predictor in "spectral_indices")
+
+        Returns:
+        --------
+        tuple : (selected_s1_bands: list, remaining_spectral_indices: list)
+        """
+        all_s1 = self.sar_calc.SAR_DATASETS["S1_GRD"]["output_bands"]
+        selected = []
+
+        def _collect(value):
+            if value is True:
+                selected.extend(all_s1)
+            elif isinstance(value, (list, tuple, set)):
+                selected.extend(str(v).upper() for v in value)
+
+        _collect(predictor_config.get("sentinel1"))
+        _collect(predictor_config.get("individual_predictors", {}).get("sentinel1"))
+
+        remaining = []
+        for idx in spectral_indices or []:
+            if str(idx).upper() in all_s1:
+                selected.append(str(idx).upper())
+            else:
+                remaining.append(idx)
+
+        selected = [b for b in all_s1 if b in set(selected)]
+        return selected, remaining
+
     #core function: Compute Predictor
     def compute_predictors(self, composite: ee.Image,aoi: ee.Geometry,predictor_config: Dict[str, Any],collection: ee.ImageCollection = None,
                           progress_callback: callable = None) -> Dict[str, Any]:
@@ -1115,6 +1204,9 @@ class PredictorCalculation:
                 spectral_indices = predictor_config.get("spectral_indices", [])
                 index_coefficients = predictor_config.get("index_coefficients", None)
             
+            # Separate Sentinel-1 band selections from spectral indices
+            s1_bands, spectral_indices = self._resolve_sar_selection(predictor_config, spectral_indices)
+            
             if spectral_indices:
                 if progress_callback:
                     progress_callback(65, "Computing spectral indices...")
@@ -1147,6 +1239,45 @@ class PredictorCalculation:
                         result["warnings"].append("Failed to compute spectral indices")
                 except Exception as e:
                     error_msg = f"Error computing spectral indices: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+            
+            # Step 4b: Compute Sentinel-1 SAR predictors (if selected)
+            if s1_bands:
+                if progress_callback:
+                    progress_callback(80, "Computing Sentinel-1 SAR predictors...")
+                try:
+                    start_date, end_date = self._resolve_date_range(
+                        predictor_config, collection=collection, composite=composite
+                    )
+                    if start_date is None or end_date is None:
+                        result["warnings"].append(
+                            "Sentinel-1 skipped: could not resolve date range from Module 1"
+                        )
+                    else:
+                        s1_opts = predictor_config.get("sentinel1_options", {}) or {}
+                        s1_image = self.sar_calc.get_sentinel1(
+                            aoi=aoi,
+                            start_date=start_date,
+                            end_date=end_date,
+                            orbit_pass=s1_opts.get("orbit_pass", "BOTH"),
+                            reducer=s1_opts.get("reducer", "median"),
+                            speckle_filter=s1_opts.get("speckle_filter", "focal_median"),
+                            filter_radius_m=s1_opts.get("filter_radius_m", 30.0),
+                            include_ratio=True,
+                        )
+                        if s1_image is None:
+                            result["warnings"].append(
+                                f"Sentinel-1 data unavailable for {start_date} to {end_date}"
+                            )
+                        else:
+                            result["predictors"]["sentinel1"] = s1_image.select(s1_bands)
+                            result["predictor_info"].append(
+                                f"Sentinel-1 SAR ({len(s1_bands)} band: {', '.join(s1_bands)})"
+                            )
+                            logger.info(f"Added Sentinel-1 bands: {s1_bands}")
+                except Exception as e:
+                    error_msg = f"Error computing Sentinel-1 predictors: {str(e)}"
                     result["warnings"].append(error_msg)
                     logger.warning(error_msg)
             
