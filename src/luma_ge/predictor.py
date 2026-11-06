@@ -233,7 +233,81 @@ class terrain_calculator:
         except Exception as e:
             logger.error(f"Failed to calculate aspect using {dem_source}: {str(e)}")
             return None
+    def get_landform(self, aoi: ee.Geometry, landform_source: str = "ALOS") -> ee.Image:
+        """
+        Retrieve global landform classification data.
 
+        Landform data describes the shape and structure of the terrain surface
+        (e.g. peak, ridge, slope, valley, plain) derived from DEM analysis.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry
+            Area of interest geometry for clipping the result.
+        landform_source : str, default="ALOS"
+            Landform dataset to use. Supported options:
+
+            - ``"ALOS"``  : Global ALOS Landform
+              (``CSP/ERGo/1_0/Global/ALOS_landforms``, ~90 m)
+            - ``"SRTM"``  : Global SRTM Landform
+              (``CSP/ERGo/1_0/Global/SRTM_landforms``, ~90 m)
+
+        Returns
+        -------
+        ee.Image or None
+            Single-band image with band name ``'landform'`` containing
+            landform class codes (11–62). Returns ``None`` if retrieval fails.
+
+        Example
+        -------
+        >>> calc = terrain_calculator()
+        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
+        >>> lf = calc.get_landform(aoi, landform_source="ALOS")
+        >>> # Class 11 = Peak/Ridge top, 41 = Slope, 51 = Valley, etc.
+
+        References
+        ----------
+        Theobald et al. (2015) *Ecologically-Relevant Maps of Landforms and
+        Physiographic Diversity for Climate Adaptation Planning.*
+        https://doi.org/10.1371/journal.pone.0143619
+        """
+        # Map human-readable keys to GEE asset IDs
+        LANDFORM_SOURCES = {
+            "ALOS": "CSP/ERGo/1_0/Global/ALOS_landforms",
+            "SRTM": "CSP/ERGo/1_0/Global/SRTM_landforms",
+        }
+
+        source_upper = landform_source.upper()
+        if source_upper not in LANDFORM_SOURCES:
+            logger.error(
+                f"Unsupported landform_source '{landform_source}'. "
+                f"Choose from: {list(LANDFORM_SOURCES.keys())}"
+            )
+            return None
+
+        asset_id = LANDFORM_SOURCES[source_upper]
+
+        try:
+            logger.info(f"Retrieving landform layer from {asset_id}...")
+
+            landform = (
+                ee.Image(asset_id)
+                .select("constant")          # only band in both datasets
+                .clip(aoi)
+                .rename("landform")
+            )
+
+            logger.info(
+                f"Successfully retrieved landform layer using {landform_source} source"
+            )
+            return landform
+
+        except ee.EEException as e:
+            logger.error(f"Earth Engine error retrieving landform ({landform_source}): {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to retrieve landform ({landform_source}): {str(e)}")
+            return None
 #=================================== Spectral Calculator Backend ===================================
 #reference for the use of spectral index in LC mapping: https://doi.org/10.3390/rs12183062
 class SpectralCalculator:
