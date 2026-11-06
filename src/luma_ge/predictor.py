@@ -1014,39 +1014,47 @@ class PredictorCalculation:
 
     def _resolve_sar_selection(self, predictor_config: Dict[str, Any], spectral_indices: list):
         """
-        Determine which Sentinel-1 bands were requested.
+        Determine which Sentinel-1 and PALSAR bands were requested.
 
-        Sentinel-1 can be requested via:
+        SAR predictors can be requested via:
         - predictor_config["sentinel1"] / predictor_config["individual_predictors"]["sentinel1"]
-          set to True (all bands) or a list of band names
-        - band names (S1_VV, S1_VH, S1_VV_VH) mixed into the spectral index list
-          (luma-be forwards every non-terrain predictor in "spectral_indices")
+        - predictor_config["palsar"] / predictor_config["individual_predictors"]["palsar"]
+        - band names (S1_VV, S1_VH, S1_VV_VH, PALSAR_HH, PALSAR_HV, PALSAR_HH_HV) mixed
+          into the spectral index list (luma-be forwards non-terrain predictors in "spectral_indices")
 
         Returns:
         --------
-        tuple : (selected_s1_bands: list, remaining_spectral_indices: list)
+        tuple : (selected_s1_bands: list, selected_palsar_bands: list, remaining_spectral_indices: list)
         """
         all_s1 = self.sar_calc.SAR_DATASETS["S1_GRD"]["output_bands"]
-        selected = []
+        all_palsar = self.sar_calc.SAR_DATASETS["PALSAR_EPOCH"]["output_bands"]
+        selected_s1 = []
+        selected_palsar = []
 
-        def _collect(value):
+        def _collect(value, target_list, valid_bands):
             if value is True:
-                selected.extend(all_s1)
+                target_list.extend(valid_bands)
             elif isinstance(value, (list, tuple, set)):
-                selected.extend(str(v).upper() for v in value)
+                target_list.extend(str(v).upper() for v in value)
 
-        _collect(predictor_config.get("sentinel1"))
-        _collect(predictor_config.get("individual_predictors", {}).get("sentinel1"))
+        _collect(predictor_config.get("sentinel1"), selected_s1, all_s1)
+        _collect(predictor_config.get("individual_predictors", {}).get("sentinel1"), selected_s1, all_s1)
+        _collect(predictor_config.get("palsar"), selected_palsar, all_palsar)
+        _collect(predictor_config.get("individual_predictors", {}).get("palsar"), selected_palsar, all_palsar)
 
         remaining = []
         for idx in spectral_indices or []:
-            if str(idx).upper() in all_s1:
-                selected.append(str(idx).upper())
+            idx_u = str(idx).upper()
+            if idx_u in all_s1:
+                selected_s1.append(idx_u)
+            elif idx_u in all_palsar:
+                selected_palsar.append(idx_u)
             else:
                 remaining.append(idx)
 
-        selected = [b for b in all_s1 if b in set(selected)]
-        return selected, remaining
+        selected_s1 = [b for b in all_s1 if b in set(selected_s1)]
+        selected_palsar = [b for b in all_palsar if b in set(selected_palsar)]
+        return selected_s1, selected_palsar, remaining
 
     #core function: Compute Predictor
     def compute_predictors(self, composite: ee.Image,aoi: ee.Geometry,predictor_config: Dict[str, Any],collection: ee.ImageCollection = None,
@@ -1204,8 +1212,8 @@ class PredictorCalculation:
                 spectral_indices = predictor_config.get("spectral_indices", [])
                 index_coefficients = predictor_config.get("index_coefficients", None)
             
-            # Separate Sentinel-1 band selections from spectral indices
-            s1_bands, spectral_indices = self._resolve_sar_selection(predictor_config, spectral_indices)
+            # Separate SAR (Sentinel-1 & PALSAR) band selections from spectral indices
+            s1_bands, palsar_bands, spectral_indices = self._resolve_sar_selection(predictor_config, spectral_indices)
             
             if spectral_indices:
                 if progress_callback:
@@ -1278,6 +1286,46 @@ class PredictorCalculation:
                             logger.info(f"Added Sentinel-1 bands: {s1_bands}")
                 except Exception as e:
                     error_msg = f"Error computing Sentinel-1 predictors: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+
+            # Step 4c: Compute ALOS PALSAR / PALSAR-2 L-band SAR predictors (if selected)
+            if palsar_bands:
+                if progress_callback:
+                    progress_callback(85, "Computing ALOS PALSAR SAR predictors...")
+                try:
+                    start_date, end_date = self._resolve_date_range(
+                        predictor_config, collection=collection, composite=composite
+                    )
+                    if start_date is None or end_date is None:
+                        result["warnings"].append(
+                            "PALSAR skipped: could not resolve date range from Module 1"
+                        )
+                    else:
+                        palsar_opts = predictor_config.get("palsar_options", {}) or {}
+                        palsar_image = self.sar_calc.get_palsar(
+                            aoi=aoi,
+                            start_date=start_date,
+                            end_date=end_date,
+                            reducer=palsar_opts.get("reducer", "median"),
+                            speckle_filter=palsar_opts.get("speckle_filter", "focal_median"),
+                            filter_radius_m=palsar_opts.get("filter_radius_m", 30.0),
+                            include_ratio=True,
+                            mask_layover_shadow=palsar_opts.get("mask_layover_shadow", True),
+                            allow_nearest_year_fallback=palsar_opts.get("allow_nearest_year_fallback", True),
+                        )
+                        if palsar_image is None:
+                            result["warnings"].append(
+                                f"PALSAR data unavailable for {start_date} to {end_date}"
+                            )
+                        else:
+                            result["predictors"]["palsar"] = palsar_image.select(palsar_bands)
+                            result["predictor_info"].append(
+                                f"ALOS PALSAR SAR ({len(palsar_bands)} band: {', '.join(palsar_bands)})"
+                            )
+                            logger.info(f"Added ALOS PALSAR bands: {palsar_bands}")
+                except Exception as e:
+                    error_msg = f"Error computing PALSAR predictors: {str(e)}"
                     result["warnings"].append(error_msg)
                     logger.warning(error_msg)
             
