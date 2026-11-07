@@ -339,22 +339,23 @@ class SpectralCalculator:
         #can be added more
         self.supported_indices = {
             #Vegetation Indices
-            "NDVI": "🌿 Vegetasi", 
-            "EVI": "🌿 Vegetasi", 
-            "SAVI": "🌿 Vegetasi", #https://doi.org/10.1080/24749508.2019.1608409
-            "MSAVI": "🌿 Vegetasi",
-            "OSAVI": "🌿 Vegetasi",
-            "ARVI": "🌿 Vegetasi",
-            "GBNDVI": "🌿 Vegetasi",
-            "GNDVI": "🌿 Vegetasi",
+            "NDVI": "🌿 Vegetasi",                        # Normalized Difference Vegetation Index
+            "EVI": "🌿 Vegetasi",                         # Enhanced Vegetation Index
+            "SAVI": "🌿 Vegetasi",                        # Soil Adjusted Vegetation Index; https://doi.org/10.1080/24749508.2019.1608409
+            "MSAVI": "🌿 Vegetasi",                       # Modified Soil Adjusted Vegetation Index
+            "GNDVI": "🌿 Vegetasi",                       # Green Normalized Difference Vegetation Index
+            "MCARI1": "🌿 Vegetasi",                      # Modified Chlorophyll Absorption in Reflectance Index 1; https://doi.org/10.1016/j.rse.2003.12.013
             #Water Indices
-            "MNDWI": "💧 Air & Kelembaban",
-            "NDMI": "💧 Air & Kelembaban",
-            "AWEInsh" : "💧 Air & Kelembaban",
-            #Soil and build-up Indices
-            "NDBI": "🟫 Tanah dan Lahan Terbangun",
-            "DBSI": "🟫 Tanah dan Lahan Terbangun",
-            "MBI": "🟫 Tanah dan Lahan Terbangun",
+            "MNDWI": "💧 Air & Kelembaban",               # Modified Normalized Difference Water Index
+            "NDMI": "💧 Air & Kelembaban",                # Normalized Difference Moisture Index
+            "AWEInsh": "💧 Air & Kelembaban",             # Automatic Water Extraction Index (no-shadow)
+            "NDTI": "💧 Air & Kelembaban",                # Normalized Difference Turbidity Index; https://doi.org/10.1016/j.rse.2006.07.012
+            "ANDWI": "💧 Air & Kelembaban",               # Augmented Normalized Difference Water Index; https://doi.org/10.1016/j.envsoft.2021.105030
+            #Soil and built-up Indices
+            "NDBI": "🟫 Tanah dan Lahan Terbangun",       # Normalized Difference Built-Up Index
+            "DBSI": "🟫 Tanah dan Lahan Terbangun",       # Dry Bareness Index
+            "MBI": "🟫 Tanah dan Lahan Terbangun",        # Modified Bare Soil Index; https://doi.org/10.3390/land10030231
+            "BLFEI": "🟫 Tanah dan Lahan Terbangun",      # Built-Up Land Features Extraction Index; https://doi.org/10.1080/10106049.2018.1497094
         }
         #Define default coefficients for indices that require them
         #ref: https://www.usgs.gov/landsat-missions/landsat-enhanced-vegetation-index
@@ -371,14 +372,7 @@ class SpectralCalculator:
             },                 #ref https://doi.org/10.3390/agronomy11040652 and https://www.usgs.gov/landsat-missions/landsat-soil-adjusted-vegetation-index
             "MSAVI": {
                 "L": 0.5       #Soil adjustment factor
-            },                
-            "EVI2": {
-                "g": 2.5,      #Gain factor
-                "L": 1.0       #Canopy background adjustment 
-            },                 #ref https://www.usgs.gov/landsat-missions/landsat-enhanced-vegetation-index
-            "ARVI": {
-                "gamma": 1.0   #Atmospheric resistance coefficient
-            }                  #ref https://doi.org/10.1109/36.134076
+            },
         }
         
         self.calculated_count = 0
