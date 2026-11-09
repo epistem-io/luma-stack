@@ -18,11 +18,12 @@ dependencies = [
     "shapely",
     "ipykernel",
     "streamlit_folium",
-    "shapely",
     "pyshp",
     "fiona",
     "rtree",
     "spyndex>=0.9.0",
     "eemont>=0.3.0",
+    "rasterio",
+    "openpyxl",
 ]
 requires-python = ">=3.9"

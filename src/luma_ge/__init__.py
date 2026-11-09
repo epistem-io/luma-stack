@@ -177,6 +177,20 @@ def auto_initialize():
         )
         return False
 
+from .change_detection import (
+    LULCChangeDetector,
+    src_info,
+    read_map,
+    build_grid,
+    validate_and_align,
+    run_crosstab,
+    plot_gain_loss,
+    plot_change_map,
+    plot_class_map,
+    plot_top_changes,
+    save_outputs,
+)
+
 __version__ = "0.1.0"
 __author__ = "EpistemX Team"
 
@@ -191,5 +205,16 @@ __all__ = [
     'print_auth_instructions',
     'setup_earth_engine',
     'reset_ee_initialization',
-    'auto_initialize'
+    'auto_initialize',
+    'LULCChangeDetector',
+    'src_info',
+    'read_map',
+    'build_grid',
+    'validate_and_align',
+    'run_crosstab',
+    'plot_gain_loss',
+    'plot_change_map',
+    'plot_class_map',
+    'plot_top_changes',
+    'save_outputs',
 ]
