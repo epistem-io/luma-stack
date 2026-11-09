@@ -7,7 +7,8 @@ to enhance land cover classification. This version is revised to follow the late
 """
 import ee
 import logging
-from typing import List, Optional, Dict, Any
+import datetime
+from typing import List, Optional, Dict, Any, Union, Set
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -308,12 +309,543 @@ class terrain_calculator:
         except Exception as e:
             logger.error(f"Failed to retrieve landform ({landform_source}): {str(e)}")
             return None
+
+#=================================== Sensor Identification & Predictor Catalog ===================================
+class SensorDetector:
+    """
+    Utility for detecting satellite sensor family and resolving sensor-specific band mappings.
+
+    Supported sensor families:
+    - 'LANDSAT': Landsat 4, 5, 7, 8, 9 (and legacy MSS 1-3)
+    - 'SENTINEL': Sentinel-2 MSI (S2A, S2B, Harmonized)
+    - 'UNKNOWN': Unrecognized sensor family
+    """
+
+    # Semantic band name to spyndex parameter abbreviations
+    BAND_TO_SPYNDEX = {
+        "BLUE": "B",
+        "GREEN": "G",
+        "RED": "R",
+        "NIR": "N",
+        "SWIR1": "S1",
+        "SWIR2": "S2",
+        "RED_EDGE1": "RE1",
+        "RED_EDGE2": "RE2",
+        "RED_EDGE3": "RE3",
+        "RED_EDGE4": "RE4",
+        "THERMAL": "T",
+        "ST_B10": "T",
+        "B6": "T",
+        "B6_VCID_2": "T",
+        "B2": "B",
+        "B3": "G",
+        "B4": "R",
+        "B8": "N",
+        "B8A": "RE4",
+        "B5": "RE1",
+        "B6": "RE2",
+        "B7": "RE3",
+        "B11": "S1",
+        "B12": "S2",
+    }
+
+    # Reverse lookup: spyndex code to primary semantic band name
+    SPYNDEX_TO_BAND = {
+        "B": "BLUE",
+        "G": "GREEN",
+        "R": "RED",
+        "N": "NIR",
+        "S1": "SWIR1",
+        "S2": "SWIR2",
+        "RE1": "RED_EDGE1",
+        "RE2": "RED_EDGE2",
+        "RE3": "RED_EDGE3",
+        "RE4": "RED_EDGE4",
+        "T": "THERMAL",
+    }
+
+    SENTINEL_INDICATOR_BANDS = {"RED_EDGE1", "RED_EDGE2", "RED_EDGE3", "RED_EDGE4", "B5", "B6", "B7", "B8A"}
+    LANDSAT_INDICATOR_BANDS = {"THERMAL", "ST_B10", "SR_B1", "AEROSOL", "B6_VCID_2", "QA_PIXEL", "NIR1", "NIR2"}
+
+    @classmethod
+    def normalize_sensor_name(cls, sensor_hint: Optional[str]) -> str:
+        """
+        Normalize a sensor string hint into a canonical sensor family.
+
+        Parameters
+        ----------
+        sensor_hint : str, optional
+            Sensor identifier string (e.g. 'Landsat', 'Sentinel', 'L8_SR', 'S2_SR')
+
+        Returns
+        -------
+        str : 'LANDSAT', 'SENTINEL', or 'UNKNOWN'
+        """
+        if not sensor_hint or not isinstance(sensor_hint, str):
+            return "UNKNOWN"
+
+        s = sensor_hint.strip().upper()
+        if any(token in s for token in ["SENTINEL", "S2", "COPERNICUS/S2", "MSI"]):
+            return "SENTINEL"
+        if any(token in s for token in ["LANDSAT", "LC08", "LC09", "LE07", "LT05", "LT04",
+                                        "LM01", "LM02", "LM03", "L8", "L9", "L7", "L5", "L4", "L1", "L2", "L3"]):
+            return "LANDSAT"
+        return "UNKNOWN"
+
+    @classmethod
+    def detect_sensor_from_bands(cls, band_names: List[str]) -> str:
+        """
+        Detect sensor family from a list of band names.
+
+        Parameters
+        ----------
+        band_names : List[str]
+            List of band names from the image or collection
+
+        Returns
+        -------
+        str : 'SENTINEL', 'LANDSAT', or 'UNKNOWN'
+        """
+        if not band_names:
+            return "UNKNOWN"
+
+        band_set = set(band_names)
+        if band_set.intersection(cls.SENTINEL_INDICATOR_BANDS):
+            return "SENTINEL"
+        if band_set.intersection(cls.LANDSAT_INDICATOR_BANDS):
+            return "LANDSAT"
+
+        # Check standard 6 optical bands: if NIR and SWIR1 present without Red-Edge, standard Landsat convention
+        if {"NIR", "RED", "GREEN", "BLUE"}.issubset(band_set):
+            return "LANDSAT"
+
+        return "UNKNOWN"
+
+    @classmethod
+    def detect_sensor(
+        cls,
+        sensor_hint: Optional[str] = None,
+        band_names: Optional[List[str]] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> str:
+        """
+        Comprehensive sensor detection strategy combining hints, band names, and Earth Engine objects.
+        """
+        # 1. Try explicit hint first
+        norm = cls.normalize_sensor_name(sensor_hint)
+        if norm != "UNKNOWN":
+            return norm
+
+        # 2. Try explicit band names list
+        if band_names:
+            detected = cls.detect_sensor_from_bands(band_names)
+            if detected != "UNKNOWN":
+                return detected
+
+        # 3. Try composite band names / metadata
+        if composite is not None:
+            try:
+                bands = composite.bandNames().getInfo()
+                detected = cls.detect_sensor_from_bands(bands)
+                if detected != "UNKNOWN":
+                    return detected
+            except Exception as e:
+                logger.debug(f"Could not read bandNames from composite: {e}")
+
+        # 4. Try collection metadata or first image
+        if collection is not None:
+            try:
+                first_img = collection.first()
+                if first_img is not None:
+                    bands = first_img.bandNames().getInfo()
+                    detected = cls.detect_sensor_from_bands(bands)
+                    if detected != "UNKNOWN":
+                        return detected
+            except Exception as e:
+                logger.debug(f"Could not read bandNames from collection: {e}")
+
+        # Default fallback
+        return "LANDSAT"
+
+
+class PredictorCatalog:
+    """
+    Central registry and metadata catalog for all supported predictors in Luma-GE,
+    including spectral indices, topography, and radar backscatter.
+    """
+    PREDICTORS = {
+        # --- Vegetation Indices ---
+        "NDVI": {
+            "name": "NDVI",
+            "category": "Vegetasi",
+            "long_name": "Normalized Difference Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "General canopy greenness and biomass",
+        },
+        "EVI": {
+            "name": "EVI",
+            "category": "Vegetasi",
+            "long_name": "Enhanced Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R", "B"],
+            "type": "spectral",
+            "description": "High-biomass canopy greenness with aerosol correction",
+        },
+        "SAVI": {
+            "name": "SAVI",
+            "category": "Vegetasi",
+            "long_name": "Soil Adjusted Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "Soil-brightness compensated vegetation index",
+        },
+        "MSAVI": {
+            "name": "MSAVI",
+            "category": "Vegetasi",
+            "long_name": "Modified Soil Adjusted Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "Vegetation index for sparse canopy / arid areas",
+        },
+        "GNDVI": {
+            "name": "GNDVI",
+            "category": "Vegetasi",
+            "long_name": "Green Normalized Difference Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "G"],
+            "type": "spectral",
+            "description": "Chlorophyll concentration and plant senescence",
+        },
+        "MCARI": {
+            "name": "MCARI",
+            "category": "Vegetasi",
+            "long_name": "Modified Chlorophyll Absorption in Reflectance Index",
+            "sensor": "SENTINEL",
+            "required_bands": ["RE1", "R", "G"],
+            "type": "spectral",
+            "description": "Canopy chlorophyll absorption (requires Sentinel-2 Red-Edge 1)",
+            "sensor_note": "Requires Sentinel-2 Red-Edge band (RE1)",
+        },
+        "RENDVI": {
+            "name": "RENDVI",
+            "category": "Vegetasi",
+            "long_name": "Red Edge Normalized Difference Vegetation Index",
+            "sensor": "SENTINEL",
+            "required_bands": ["RE2", "RE1"],
+            "type": "spectral",
+            "description": "Red-Edge vegetation index (requires Sentinel-2 Red-Edge 1 & 2)",
+            "sensor_note": "Requires Sentinel-2 Red-Edge bands (RE1, RE2)",
+        },
+        "MCARI1": {
+            "name": "MCARI1",
+            "category": "Vegetasi",
+            "long_name": "Modified Chlorophyll Absorption in Reflectance Index 1",
+            "sensor": "ALL",
+            "required_bands": ["N", "R", "G"],
+            "type": "spectral",
+            "description": "Chlorophyll variation without red-edge requirement",
+        },
+
+        # --- Water Indices ---
+        "MNDWI": {
+            "name": "MNDWI",
+            "category": "Air & Kelembaban",
+            "long_name": "Modified Normalized Difference Water Index",
+            "sensor": "ALL",
+            "required_bands": ["G", "S1"],
+            "type": "spectral",
+            "description": "Open water delineation with shadow suppression",
+        },
+        "NDMI": {
+            "name": "NDMI",
+            "category": "Air & Kelembaban",
+            "long_name": "Normalized Difference Moisture Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "S1"],
+            "type": "spectral",
+            "description": "Canopy water content and wetland soil moisture",
+        },
+        "AWEIsh": {
+            "name": "AWEIsh",
+            "category": "Air & Kelembaban",
+            "long_name": "Automated Water Extraction Index (with shadow)",
+            "sensor": "ALL",
+            "required_bands": ["B", "G", "N", "S1", "S2"],
+            "type": "spectral",
+            "description": "Water extraction in shadow-heavy mountainous/urban regions",
+        },
+        "AWEInsh": {
+            "name": "AWEInsh",
+            "category": "Air & Kelembaban",
+            "long_name": "Automated Water Extraction Index (no shadow)",
+            "sensor": "ALL",
+            "required_bands": ["G", "S1"],
+            "type": "spectral",
+            "description": "Water extraction without shadow compensation",
+        },
+        "NDTI": {
+            "name": "NDTI",
+            "category": "Air & Kelembaban",
+            "long_name": "Normalized Difference Turbidity Index",
+            "sensor": "ALL",
+            "required_bands": ["R", "G"],
+            "type": "spectral",
+            "description": "Water turbidity and suspended sediment detection",
+        },
+        "ANDWI": {
+            "name": "ANDWI",
+            "category": "Air & Kelembaban",
+            "long_name": "Augmented Normalized Difference Water Index",
+            "sensor": "ALL",
+            "required_bands": ["B", "G", "R", "N", "S1", "S2"],
+            "type": "spectral",
+            "description": "Multi-band augmented water extraction",
+        },
+
+        # --- Build-up and Bare Soil ---
+        "NDBI": {
+            "name": "NDBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Normalized Difference Built-Up Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "N"],
+            "type": "spectral",
+            "description": "Impervious surface and built-up land",
+        },
+        "DBSI": {
+            "name": "DBSI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Dry Bare-Soil Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "G", "N", "R"],
+            "type": "spectral",
+            "description": "Dry bare soil separation from urban areas",
+        },
+        "BLFEI": {
+            "name": "BLFEI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Built-Up Land Features Extraction Index",
+            "sensor": "ALL",
+            "required_bands": ["G", "R", "S2", "S1"],
+            "type": "spectral",
+            "description": "Built-up footprint extraction",
+        },
+        "MBI": {
+            "name": "MBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Modified Bare Soil Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "S2", "N"],
+            "type": "spectral",
+            "description": "Bare soil and fallow agricultural land discrimination",
+        },
+        "BSI": {
+            "name": "BSI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Bare Soil Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "R", "N", "B"],
+            "type": "spectral",
+            "description": "Soil background mapping using VNIR and SWIR1",
+        },
+        "EBBI": {
+            "name": "EBBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Enhanced Built-Up and Bareness Index",
+            "sensor": "LANDSAT",
+            "required_bands": ["S1", "N", "T"],
+            "type": "spectral",
+            "description": "Built-up and bareness extraction (requires Landsat Thermal band)",
+            "sensor_note": "Requires Landsat Thermal band (not available on Sentinel-2)",
+        },
+
+        # --- Topography ---
+        "Elevation": {
+            "name": "Elevation",
+            "category": "Topografi",
+            "long_name": "Digital Elevation Model",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Elevation above sea level in meters (NASADEM / Copernicus / ALOS)",
+        },
+        "Slope": {
+            "name": "Slope",
+            "category": "Topografi",
+            "long_name": "Terrain Slope",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Terrain gradient in degrees (0-90°)",
+        },
+        "Aspect": {
+            "name": "Aspect",
+            "category": "Topografi",
+            "long_name": "Terrain Aspect",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Compass direction of steepest slope (0-360°)",
+        },
+        "Landform": {
+            "name": "Landform",
+            "category": "Topografi",
+            "long_name": "Landform Classification",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Discrete landform morphological classes (ALOS / SRTM)",
+        },
+
+        # --- Radar Polarization ---
+        "VV": {
+            "name": "VV",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VV Backscatter",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Vertical-transmit Vertical-receive C-band backscatter (10m, dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "VH": {
+            "name": "VH",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VH Backscatter",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Vertical-transmit Horizontal-receive C-band backscatter (10m, dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "VV-VH Ratio": {
+            "name": "VV-VH Ratio",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VV/VH Polarization Ratio",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Sentinel-1 cross-polarization ratio (VV - VH in dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "HH": {
+            "name": "HH",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HH Backscatter",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "Horizontal-transmit Horizontal-receive L-band backscatter (25m, dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+        "HV": {
+            "name": "HV",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HV Backscatter",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "Horizontal-transmit Vertical-receive L-band backscatter (25m, dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+        "HV-HH Ratio": {
+            "name": "HV-HH Ratio",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HH/HV Polarization Ratio",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "ALOS PALSAR cross-polarization ratio (HH - HV in dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+    }
+
+    @classmethod
+    def check_availability(
+        cls,
+        sensor: str = "LANDSAT",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluate availability for all registered predictors based on sensor and temporal range.
+        """
+        sensor_norm = SensorDetector.normalize_sensor_name(sensor)
+        if sensor_norm == "UNKNOWN":
+            sensor_norm = "LANDSAT"
+
+        # Parse date range
+        start_dt = None
+        end_dt = None
+        year_set = set()
+        if start_date:
+            try:
+                start_dt = datetime.datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date()
+            except Exception:
+                pass
+        if end_date:
+            try:
+                end_dt = datetime.datetime.strptime(str(end_date)[:10], "%Y-%m-%d").date()
+            except Exception:
+                pass
+
+        if start_dt and end_dt:
+            year_set = set(range(start_dt.year, end_dt.year + 1))
+        elif start_dt:
+            year_set = {start_dt.year}
+        elif end_dt:
+            year_set = {end_dt.year}
+
+        results = {}
+        for name, meta in cls.PREDICTORS.items():
+            item_sensor = meta.get("sensor", "ALL")
+            is_avail = True
+            reason = ""
+            disabled = False
+
+            # Sensor compatibility check
+            if item_sensor != "ALL" and item_sensor != sensor_norm:
+                is_avail = False
+                disabled = True
+                reason = meta.get("sensor_note", f"Requires {item_sensor} sensor")
+
+            # Temporal range check
+            if is_avail and "min_date" in meta and end_dt:
+                min_dt = datetime.datetime.strptime(meta["min_date"], "%Y-%m-%d").date()
+                if end_dt < min_dt:
+                    is_avail = False
+                    disabled = True
+                    reason = f"Only available from {meta['min_date']} onwards"
+
+            if is_avail and "valid_years" in meta and year_set:
+                valid_set = set(meta["valid_years"])
+                if not year_set.intersection(valid_set):
+                    is_avail = False
+                    disabled = True
+                    reason = f"Unavailable for year(s) {sorted(list(year_set))} (active years: {meta['valid_years'][0]}-{meta['valid_years'][-1]})"
+
+            results[name] = {
+                "name": name,
+                "category": meta["category"],
+                "long_name": meta.get("long_name", name),
+                "type": meta.get("type", "spectral"),
+                "description": meta.get("description", ""),
+                "available": is_avail,
+                "disabled": disabled,
+                "reason": reason,
+                "sensor_compatibility": item_sensor
+            }
+
+        return results
+
 #=================================== Spectral Calculator Backend ===================================
 #reference for the use of spectral index in LC mapping: https://doi.org/10.3390/rs12183062
 class SpectralCalculator:
     """
     Backend service for spectral index calculations using spyndex library.
     Migrated from Streamlit UI to follow clean architecture patterns.
+    Enhanced to support dynamic sensor band mapping (Red-Edge, Thermal) and sensor-aware availability.
     """
     
     def __init__(self):
@@ -333,33 +865,14 @@ class SpectralCalculator:
             logger.error(f"Failed to import spyndex library: {str(e)}")
             raise ImportError("spyndex library is required for spectral calculations")
         
-        #Define supported indices with categories
-        #check for more index here: https://awesome-ee-spectral-indices.readthedocs.io/en/latest/list.html
-        #main reference: https://doi.org/10.3390/rs12183062 and remap
-        #can be added more
+        # Define supported indices from PredictorCatalog
         self.supported_indices = {
-            #Vegetation Indices
-            "NDVI": "🌿 Vegetasi",                        # Normalized Difference Vegetation Index
-            "EVI": "🌿 Vegetasi",                         # Enhanced Vegetation Index
-            "SAVI": "🌿 Vegetasi",                        # Soil Adjusted Vegetation Index; https://doi.org/10.1080/24749508.2019.1608409
-            "MSAVI": "🌿 Vegetasi",                       # Modified Soil Adjusted Vegetation Index
-            "GNDVI": "🌿 Vegetasi",                       # Green Normalized Difference Vegetation Index
-            "MCARI1": "🌿 Vegetasi",                      # Modified Chlorophyll Absorption in Reflectance Index 1; https://doi.org/10.1016/j.rse.2003.12.013
-            #Water Indices
-            "MNDWI": "💧 Air & Kelembaban",               # Modified Normalized Difference Water Index
-            "NDMI": "💧 Air & Kelembaban",                # Normalized Difference Moisture Index
-            "AWEInsh": "💧 Air & Kelembaban",             # Automatic Water Extraction Index (no-shadow)
-            "NDTI": "💧 Air & Kelembaban",                # Normalized Difference Turbidity Index; https://doi.org/10.1016/j.rse.2006.07.012
-            "ANDWI": "💧 Air & Kelembaban",               # Augmented Normalized Difference Water Index; https://doi.org/10.1016/j.envsoft.2021.105030
-            #Soil and built-up Indices
-            "NDBI": "🟫 Tanah dan Lahan Terbangun",       # Normalized Difference Built-Up Index
-            "DBSI": "🟫 Tanah dan Lahan Terbangun",       # Dry Bareness Index
-            "MBI": "🟫 Tanah dan Lahan Terbangun",        # Modified Bare Soil Index; https://doi.org/10.3390/land10030231
-            "BLFEI": "🟫 Tanah dan Lahan Terbangun",      # Built-Up Land Features Extraction Index; https://doi.org/10.1080/10106049.2018.1497094
+            name: meta["category"]
+            for name, meta in PredictorCatalog.PREDICTORS.items()
+            if meta.get("type", "spectral") == "spectral"
         }
-        #Define default coefficients for indices that require them
-        #ref: https://www.usgs.gov/landsat-missions/landsat-enhanced-vegetation-index
-        #https://doi.org/10.1016/0034-4257(94)90018-3
+
+        # Define default coefficients for indices that require them
         self.default_coefficients = {
             "EVI": {
                 "g": 2.5,      # Gain factor
@@ -368,22 +881,34 @@ class SpectralCalculator:
                 "L": 1.0       # Canopy background adjustment factor
             },
             "SAVI": {
-                "L": 0.5       #Soil brightness correction factor (0-1)
-            },                 #ref https://doi.org/10.3390/agronomy11040652 and https://www.usgs.gov/landsat-missions/landsat-soil-adjusted-vegetation-index
-            "MSAVI": {
-                "L": 0.5       #Soil adjustment factor
+                "L": 0.5       # Soil brightness correction factor (0-1)
             },
+            "MSAVI": {
+                "L": 0.5       # Soil adjustment factor
+            },
+            "EVI2": {
+                "g": 2.5,
+                "L": 1.0
+            },
+            "ARVI": {
+                "gamma": 1.0
+            }
         }
         
         self.calculated_count = 0
     
-    #Get the list of avaliable indices from previously defined list
-    def get_available_indices(self, band_names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+    def get_available_indices(
+        self,
+        sensor: Optional[str] = None,
+        band_names: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        Get available spectral indices with metadata 
+        Get available spectral indices with metadata, filtered by sensor and/or available bands.
         
         Parameters:
         -----------
+        sensor : str, optional
+            Satellite sensor family ('LANDSAT' or 'SENTINEL')
         band_names : List[str], optional
             Available band names to filter compatible indices
             
@@ -393,24 +918,38 @@ class SpectralCalculator:
         """
         try:
             available_indices = {}
+            sensor_norm = SensorDetector.normalize_sensor_name(sensor) if sensor else None
             
-            for idx_name in self.supported_indices.keys():
+            for idx_name, category in self.supported_indices.items():
+                cat_meta = PredictorCatalog.PREDICTORS.get(idx_name, {})
+                idx_sensor = cat_meta.get("sensor", "ALL")
+
+                # Filter by sensor compatibility if sensor is provided
+                if sensor_norm and sensor_norm != "UNKNOWN" and idx_sensor != "ALL" and idx_sensor != sensor_norm:
+                    continue
+
+                # Filter by band names if band_names list is provided
+                if band_names and not self.validate_index_requirements(idx_name, band_names):
+                    continue
+
                 if idx_name in self.spyndex_indices:
                     idx_info = self.spyndex_indices[idx_name]
                     available_indices[idx_name] = {
-                        "long_name": idx_info.long_name,
+                        "long_name": getattr(idx_info, 'long_name', cat_meta.get("long_name", idx_name)),
                         "formula": getattr(idx_info, 'formula', ''),
                         "reference": getattr(idx_info, 'reference', ''),
-                        "category": self.supported_indices[idx_name],
+                        "category": category,
+                        "sensor_compatibility": idx_sensor,
+                        "required_bands": cat_meta.get("required_bands", getattr(idx_info, 'bands', [])),
                     }
                 else:
-                    # If index not found in spyndex, still add it with warning
-                    logger.warning(f"Index '{idx_name}' not found in spyndex library")
                     available_indices[idx_name] = {
-                        "long_name": idx_name,
+                        "long_name": cat_meta.get("long_name", idx_name),
                         "formula": "Formula not available",
                         "reference": "",
-                        "category": self.supported_indices[idx_name],
+                        "category": category,
+                        "sensor_compatibility": idx_sensor,
+                        "required_bands": cat_meta.get("required_bands", []),
                     }
             
             logger.info(f"Found {len(available_indices)} available spectral indices")
@@ -420,34 +959,9 @@ class SpectralCalculator:
             logger.error(f"Failed to get available indices: {str(e)}")
             return {}
     
-    #Used to handle spectral index that have coefficient
     def get_index_coefficients(self, index_name: str) -> Dict[str, float]:
         """
         Get default coefficient values for a spectral index.
-        Some spectral indices require additional coefficients beyond the standard
-        band inputs (e.g., EVI requires gain factor 'g' and correction coefficients).
-        This method returns the default coefficient values from literature.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index (e.g., "EVI", "SAVI")
-            
-        Returns:
-        --------
-        Dict[str, float] : Dictionary of coefficient names and their default values.
-                          Returns empty dict if index doesn't require coefficients.
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> evi_coeffs = calc.get_index_coefficients("EVI")
-        >>> print(evi_coeffs)
-        {'g': 2.5, 'C1': 6.0, 'C2': 7.5, 'L': 1.0}
-        >>> 
-        >>> ndvi_coeffs = calc.get_index_coefficients("NDVI")
-        >>> print(ndvi_coeffs)
-        {}  # NDVI doesn't require coefficients
         """
         try:
             if index_name in self.default_coefficients:
@@ -457,12 +971,10 @@ class SpectralCalculator:
             else:
                 logger.debug(f"Index {index_name} does not require coefficients")
                 return {}
-                
         except Exception as e:
             logger.error(f"Failed to get coefficients for {index_name}: {str(e)}")
             return {}
     
-    #validate the input coefficient for spectral index calc
     def validate_coefficients(
         self, 
         index_name: str, 
@@ -470,45 +982,21 @@ class SpectralCalculator:
     ) -> Dict[str, Any]:
         """
         Validate coefficient values for a spectral index.
-        
-        Checks that provided coefficients are within reasonable ranges
-        and provides warnings for unusual values that might indicate errors.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index
-        coefficients : Dict[str, float]
-            User-provided coefficient values to validate
-            
-        Returns:
-        --------
-        Dict[str, Any] : Validation result with 'valid' flag and any warnings
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> result = calc.validate_coefficients("EVI", {"g": 2.5, "C1": 6.0, "C2": 7.5, "L": 1.0})
-        >>> print(result)
-        {'valid': True, 'warnings': []}
         """
         validation_result = {
             "valid": True,
             "warnings": []
         }
-        
         try:
-            # Define reasonable ranges for common coefficients
             coefficient_ranges = {
-                "g": (0.1, 10.0),      # Gain factor range
-                "C1": (0.0, 20.0),     # Aerosol correction range
-                "C2": (0.0, 20.0),     # Aerosol correction range
-                "L": (0.0, 2.0),       # Canopy/soil adjustment range
-                "gamma": (0.1, 5.0)    # Atmospheric resistance range
+                "g": (0.1, 10.0),
+                "C1": (0.0, 20.0),
+                "C2": (0.0, 20.0),
+                "L": (0.0, 2.0),
+                "gamma": (0.1, 5.0)
             }
             
             for coeff_name, coeff_value in coefficients.items():
-                # Check if coefficient value is numeric
                 if not isinstance(coeff_value, (int, float)):
                     validation_result["warnings"].append(
                         f"Coefficient '{coeff_name}' has non-numeric value: {coeff_value}"
@@ -516,7 +1004,6 @@ class SpectralCalculator:
                     validation_result["valid"] = False
                     continue
                 
-                # Check if coefficient is within reasonable range
                 if coeff_name in coefficient_ranges:
                     min_val, max_val = coefficient_ranges[coeff_name]
                     if coeff_value < min_val or coeff_value > max_val:
@@ -538,170 +1025,245 @@ class SpectralCalculator:
                 "valid": False,
                 "warnings": [f"Validation error: {str(e)}"]
             }
-    #validate the required band
+
     def validate_index_requirements(self, index_name: str, available_bands: List[str]) -> bool:
         """
         Validate that required bands are available for index computation.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index
-        available_bands : List[str]
-            List of available band names
-            
-        Returns:
-        --------
-        bool : True if requirements are met, False otherwise
+        Maps available semantic band names to spyndex abbreviations.
         """
         try:
-            if index_name not in self.spyndex_indices:
-                logger.warning(f"Index '{index_name}' not found in spyndex library")
+            avail_spyndex_symbols = set()
+            for b in available_bands:
+                b_u = str(b).upper()
+                if b_u in SensorDetector.BAND_TO_SPYNDEX:
+                    avail_spyndex_symbols.add(SensorDetector.BAND_TO_SPYNDEX[b_u])
+                avail_spyndex_symbols.add(b_u)
+
+            if index_name in PredictorCatalog.PREDICTORS:
+                required = PredictorCatalog.PREDICTORS[index_name].get("required_bands", [])
+            elif index_name in self.spyndex_indices:
+                required = getattr(self.spyndex_indices[index_name], 'bands', [])
+            else:
+                logger.warning(f"Index '{index_name}' not found in catalog or spyndex")
                 return False
-            
-            # Get required bands from spyndex
-            idx_info = self.spyndex_indices[index_name]
-            required_bands = getattr(idx_info, 'bands', [])
-            
-            # Check if all required bands are available
-            missing_bands = [band for band in required_bands if band not in available_bands]
-            
-            if missing_bands:
-                logger.warning(f"Index '{index_name}' requires bands {missing_bands} which are not available")
+
+            missing = [band for band in required if band not in avail_spyndex_symbols]
+            if missing:
+                logger.debug(f"Index '{index_name}' requires bands {missing} not in available bands {available_bands}")
                 return False
-            
+
             return True
             
         except Exception as e:
             logger.error(f"Failed to validate requirements for {index_name}: {str(e)}")
             return False
+
+    def _build_spyndex_params(
+        self,
+        image: ee.Image,
+        available_bands: Optional[List[str]] = None,
+        base_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Dynamically build the spyndex parameter dictionary by inspecting available bands in the image.
+        Supports standard optical bands (B, G, R, N, S1, S2), Red-Edge bands (RE1, RE2, RE3, RE4),
+        and Thermal band (T).
+        """
+        params = {}
+        bands_set = set(available_bands) if available_bands else set()
+
+        # Primary semantic band to spyndex parameter mappings
+        primary_mappings = [
+            ("NIR", "N"),
+            ("RED", "R"),
+            ("GREEN", "G"),
+            ("BLUE", "B"),
+            ("SWIR1", "S1"),
+            ("SWIR2", "S2"),
+            ("RED_EDGE1", "RE1"),
+            ("RED_EDGE2", "RE2"),
+            ("RED_EDGE3", "RE3"),
+            ("RED_EDGE4", "RE4"),
+            ("THERMAL", "T"),
+            ("ST_B10", "T"),
+            ("B6", "T"),
+            ("B2", "B"),
+            ("B3", "G"),
+            ("B4", "R"),
+            ("B8", "N"),
+            ("B8A", "RE4"),
+            ("B5", "RE1"),
+            ("B6", "RE2"),
+            ("B7", "RE3"),
+            ("B11", "S1"),
+            ("B12", "S2"),
+        ]
+
+        for band_name, spyndex_code in primary_mappings:
+            if not bands_set or band_name in bands_set:
+                if spyndex_code not in params:
+                    try:
+                        params[spyndex_code] = image.select(band_name)
+                    except Exception:
+                        pass
+
+        # Fallback for standard names if band_set was empty
+        fallbacks = [
+            ("N", "NIR"),
+            ("R", "RED"),
+            ("G", "GREEN"),
+            ("B", "BLUE"),
+            ("S1", "SWIR1"),
+            ("S2", "SWIR2"),
+        ]
+        for spyndex_code, band_name in fallbacks:
+            if spyndex_code not in params:
+                try:
+                    params[spyndex_code] = image.select(band_name)
+                except Exception:
+                    pass
+
+        if base_params:
+            params.update(base_params)
+
+        return params
+
+    def calculate_indices(
+        self,
+        image: ee.Image,
+        index_list: List[str],
+        coefficients: Optional[Dict[str, Dict[str, float]]] = None,
+        sensor: Optional[str] = None
+    ) -> Optional[ee.Image]:
+        """
+        Calculate spectral indices for a single image using spyndex with dynamic band mapping.
         
-    #calculate index across the collection, composite them into an image using mean reducer
+        Parameters:
+        -----------
+        image : ee.Image
+            Input image containing optical/thermal/red-edge bands
+        index_list : List[str]
+            List of spectral index names to calculate
+        coefficients : Dict[str, Dict[str, float]], optional
+            Custom coefficient values for indices that require them
+        sensor : str, optional
+            Sensor family hint ('LANDSAT' or 'SENTINEL')
+            
+        Returns:
+        --------
+        ee.Image or None : Multi-band image containing calculated indices
+        """
+        try:
+            if not index_list:
+                return None
+
+            try:
+                available_bands = image.bandNames().getInfo()
+            except Exception:
+                available_bands = []
+
+            # Filter valid indices for this image
+            valid_indices = []
+            for idx in index_list:
+                if not available_bands or self.validate_index_requirements(idx, available_bands):
+                    valid_indices.append(idx)
+                else:
+                    logger.warning(f"Skipping index '{idx}': required bands not present in image ({available_bands})")
+
+            if not valid_indices:
+                logger.warning("No requested spectral indices are compatible with the image bands")
+                return None
+
+            base_params = {}
+            if coefficients:
+                for idx_name, index_coeffs in coefficients.items():
+                    if idx_name in valid_indices:
+                        validation = self.validate_coefficients(idx_name, index_coeffs)
+                        if validation["valid"]:
+                            base_params.update(index_coeffs)
+            else:
+                for idx_name in valid_indices:
+                    default_coeffs = self.get_index_coefficients(idx_name)
+                    if default_coeffs:
+                        base_params.update(default_coeffs)
+
+            params = self._build_spyndex_params(image, available_bands=available_bands, base_params=base_params)
+            spectral_indices = self.spyndex.computeIndex(
+                index=valid_indices,
+                params=params
+            )
+            self.calculated_count += len(valid_indices)
+            return spectral_indices
+
+        except Exception as e:
+            logger.error(f"Failed to calculate spectral indices on single image: {str(e)}")
+            return None
+
     def calculate_indices_with_collection(
         self, 
         collection: ee.ImageCollection, 
         aoi: ee.Geometry,
         index_list: List[str],
         coefficients: Optional[Dict[str, Dict[str, float]]] = None,
-        reducer_method: str = "mean"
-    ) -> ee.Image:
+        reducer_method: str = "mean",
+        sensor: Optional[str] = None
+    ) -> Optional[ee.Image]:
         """
-        This method applies the spectral index calculation to each image in the collection
-        using the map function, then reduces the results using the specified reducer method.
-        preserving the spectral characteristics of each individual image.
-        
-        Parameters:
-        -----------
-        collection : ee.ImageCollection. Earth Engine image collection with required spectral bands
-        aoi : ee.Geometry. Area of interest geometry for clipping results
-        index_list : List[str]. List of spectral index names to calculate
-        coefficients : Dict[str, Dict[str, float]], optional
-            Custom coefficient values for indices that require them.
-            Format: {"EVI": {"g": 2.5, "C1": 6.0, "C2": 7.5, "L": 1.0}}
-            If not provided, default coefficients will be used.
-        reducer_method : str, default="mean". Supported reducer: min, max, median, mean
-
-        Returns:
-        --------
-        ee.Image : Calculated and reduced spectral indices, or None if calculation fails
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> collection = ee.ImageCollection("COPERNICUS/S2_SR").filterDate("2023-01-01", "2023-12-31")
-        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
-        >>> 
-        >>> # Using default coefficients
-        >>> indices = calc.calculate_indices_with_collection(
-        ...     collection=collection,
-        ...     aoi=aoi,
-        ...     index_list=["NDVI", "EVI"],
-        ...     reducer_method="median"
-        ... )
-        >>> 
-        >>> # Using custom coefficients
-        >>> custom_coeffs = {"EVI": {"g": 3.0, "C1": 6.0, "C2": 7.5, "L": 1.0}}
-        >>> indices = calc.calculate_indices_with_collection(
-        ...     collection=collection,
-        ...     aoi=aoi,
-        ...     index_list=["EVI"],
-        ...     coefficients=custom_coeffs,
-        ...     reducer_method="mean"
-        ... )
+        Calculate spectral indices over an image collection using map and reducer.
+        Preserves per-scene spectral characteristics before composite reduction.
         """
         try:
             logger.info(f"Calculating spectral indices using map and {reducer_method} reducer on collection")
             
-            # Validate reducer method
             valid_reducers = ["mean", "median", "max", "min"]
             if reducer_method not in valid_reducers:
                 logger.warning(f"Unsupported reducer method: {reducer_method}, using mean")
                 reducer_method = "mean"
-            
+
+            # Inspect available bands from the collection
+            try:
+                available_bands = collection.first().bandNames().getInfo()
+            except Exception:
+                available_bands = []
+
+            # Filter indices that are compatible with available bands
+            valid_indices = []
+            for idx in index_list:
+                if not available_bands or self.validate_index_requirements(idx, available_bands):
+                    valid_indices.append(idx)
+                else:
+                    logger.warning(f"Skipping index '{idx}': required bands not present in collection ({available_bands})")
+
+            if not valid_indices:
+                logger.warning("No requested spectral indices are compatible with collection bands")
+                return None
+
             # Prepare base parameters for spyndex
             base_params = {}
-            
-            # Add coefficients to params if provided
             if coefficients:
-                logger.info(f"Using custom coefficients for indices: {list(coefficients.keys())}")
-                for index_name, index_coeffs in coefficients.items():
-                    if index_name in index_list:
-                        # Validate coefficients
-                        validation = self.validate_coefficients(index_name, index_coeffs)
+                for idx_name, index_coeffs in coefficients.items():
+                    if idx_name in valid_indices:
+                        validation = self.validate_coefficients(idx_name, index_coeffs)
                         if not validation["valid"]:
-                            logger.error(f"Invalid coefficients for {index_name}: {validation['warnings']}")
-                            raise ValueError(f"Invalid coefficients for {index_name}: {validation['warnings']}")
-                        
-                        if validation["warnings"]:
-                            logger.warning(f"Coefficient warnings for {index_name}: {validation['warnings']}")
-                        
-                        # Add coefficients to base params
+                            raise ValueError(f"Invalid coefficients for {idx_name}: {validation['warnings']}")
                         base_params.update(index_coeffs)
-                        logger.info(f"Added coefficients for {index_name}: {index_coeffs}")
             else:
-                # Use default coefficients for indices that require them
-                logger.info("Using default coefficients where required")
-                for index_name in index_list:
-                    default_coeffs = self.get_index_coefficients(index_name)
+                for idx_name in valid_indices:
+                    default_coeffs = self.get_index_coefficients(idx_name)
                     if default_coeffs:
                         base_params.update(default_coeffs)
-                        logger.info(f"Added default coefficients for {index_name}: {default_coeffs}")
             
-            # Step 1: Map the index calculation function over each image in the collection. Define as server side computation
-            logger.info(f"Mapping index calculation over collection...")
-            
+            # Map calculation over collection
             def calculate_indices_for_image(image):
-                """
-                Calculate spectral indices for a single image using spyndex.
-                
-                This function is mapped over each image in the collection.
-                Since spyndex.computeIndex returns an ee.Image, this works within
-                Earth Engine's server-side execution model.
-                """
-                # Prepare params with band selections for this image
-                params = {
-                    "N": image.select("NIR"),
-                    "R": image.select("RED"),
-                    "G": image.select("GREEN"),
-                    "B": image.select("BLUE"),
-                    "S1": image.select("SWIR1"),
-                    "S2": image.select("SWIR2")
-                }
-                
-                # Add coefficients to params
-                params.update(base_params)
-                
-                # Use spyndex to compute indices for this image. spyndex.computeIndex returns an ee.Image that can be used in map
-                spectral_indices = self.spyndex.computeIndex(
-                    index=index_list,
+                params = self._build_spyndex_params(image, available_bands=available_bands, base_params=base_params)
+                return self.spyndex.computeIndex(
+                    index=valid_indices,
                     params=params
                 )
-                return spectral_indices
             
-            # Apply the function to each image in the collection
             indices_collection = collection.map(calculate_indices_for_image)
             
-            # Step 2: Apply the specified reducer to the collection
+            # Reducer
             logger.info(f"Applying {reducer_method} reducer to collection...")
             if reducer_method == "mean":
                 reduced_indices = indices_collection.mean()
@@ -712,14 +1274,13 @@ class SpectralCalculator:
             elif reducer_method == "min":
                 reduced_indices = indices_collection.min()
             
-            # Step 3: Clip to AOI
             reduced_indices = reduced_indices.clip(aoi)
             
-            # Validate results
             if reduced_indices is not None:
                 band_count = reduced_indices.bandNames().size().getInfo()
                 if band_count > 0:
-                    logger.info(f"Successfully calculated {band_count} spectral indices using map and {reducer_method} reducer")
+                    self.calculated_count += len(valid_indices)
+                    logger.info(f"Successfully calculated {band_count} spectral indices using {reducer_method} reducer")
                     return reduced_indices
                 else:
                     logger.error("No valid bands in reduced indices")
@@ -735,10 +1296,6 @@ class SpectralCalculator:
     def get_calculation_summary(self) -> Dict[str, Any]:
         """
         Get summary of calculation process.
-        
-        Returns:
-        --------
-        Dict[str, Any] : Summary information
         """
         return {
             'indices_calculated': self.calculated_count,
@@ -954,8 +1511,8 @@ class distance_calculator:
 #=================================== Predictor Calculation ===================================
 class PredictorCalculation:
     """
-    Main orchestration service for predictor computation workflows.
-    This class coordinates between terrain_calculator, SpectralCalculator, 
+    Main orchestration for predictor computation workflows.
+    This class coordinates between terrain_calculator, SpectralCalculator, SAR.py, 
     and distance_calculator to provide a unified interface for predictor computation.
     """
     
@@ -969,6 +1526,76 @@ class PredictorCalculation:
         self.sar_calc = get_sar_data()
         
         logger.info("Predictor Calculation initialized with terrain, spectral and SAR calculators")
+    def detect_sensor(
+        self,
+        sensor_hint: Optional[str] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> str:
+        """
+        Detect sensor family from explicit hint, composite image, or collection.
+        Returns: 'LANDSAT', 'SENTINEL', or 'UNKNOWN'
+        """
+        return SensorDetector.detect_sensor(
+            sensor_hint=sensor_hint,
+            composite=composite,
+            collection=collection
+        )
+
+    def get_available_predictors(
+        self,
+        sensor: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> Dict[str, Any]:
+        """
+        Query availability of all registered predictors based on sensor and temporal criteria.
+
+        Parameters
+        ----------
+        sensor : str, optional
+            Sensor identifier or hint (e.g. 'Landsat', 'Sentinel-2', 'L8_SR')
+        start_date : str, optional
+            Start date string ('YYYY-MM-DD')
+        end_date : str, optional
+            End date string ('YYYY-MM-DD')
+        composite : ee.Image, optional
+            Composite image to infer sensor or date range from if not provided
+        collection : ee.ImageCollection, optional
+            Collection to infer sensor or date range from if not provided
+
+        Returns
+        -------
+        Dict[str, Any] : Dictionary containing detected sensor, resolved dates, and predictor availability mapping.
+        """
+        detected_sensor = self.detect_sensor(sensor_hint=sensor, composite=composite, collection=collection)
+
+        if not start_date or not end_date:
+            resolved_start, resolved_end = self._resolve_date_range({}, collection=collection, composite=composite)
+            start_date = start_date or resolved_start
+            end_date = end_date or resolved_end
+
+        predictors = PredictorCatalog.check_availability(
+            sensor=detected_sensor,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        categories = sorted(list(set(p["category"] for p in predictors.values())))
+        available_count = sum(1 for p in predictors.values() if p["available"])
+
+        return {
+            "sensor": detected_sensor,
+            "start_date": start_date,
+            "end_date": end_date,
+            "categories": categories,
+            "predictors": predictors,
+            "total_count": len(predictors),
+            "available_count": available_count
+        }
+
     #Input validation
     def validate_prerequisites(self, composite: ee.Image, aoi: ee.Geometry, 
                              collection: ee.ImageCollection = None) -> Dict[str, Any]:
@@ -1068,6 +1695,9 @@ class PredictorCalculation:
             found = _get_props(composite, "composite_start_date", "composite_end_date")
             if found:
                 return found
+            found = _get_props(composite, "date_range_start", "date_range_end")
+            if found:
+                return found
         if collection is not None:
             try:
                 rng = collection.reduceColumns(
@@ -1125,8 +1755,8 @@ class PredictorCalculation:
         return selected_s1, selected_palsar, remaining
 
     #core function: Compute Predictor
-    def compute_predictors(self, composite: ee.Image,aoi: ee.Geometry,predictor_config: Dict[str, Any],collection: ee.ImageCollection = None,
-                          progress_callback: callable = None) -> Dict[str, Any]:
+    def compute_predictors(self, composite: ee.Image, aoi: ee.Geometry, predictor_config: Dict[str, Any], collection: ee.ImageCollection = None,
+                          progress_callback: callable = None, sensor: Optional[str] = None) -> Dict[str, Any]:
         """
         Compute predictors based on configuration using backend calculators.
         This method orchestrates the computation workflow:
@@ -1174,6 +1804,15 @@ class PredictorCalculation:
             
             result["warnings"].extend(validation["warnings"])
             
+            # Step 1b: Detect sensor family
+            detected_sensor = self.detect_sensor(
+                sensor_hint=sensor or predictor_config.get("sensor"),
+                composite=composite,
+                collection=collection
+            )
+            logger.info(f"Predictor computation utilizing detected sensor: {detected_sensor}")
+            result["sensor"] = detected_sensor
+
             # Step 2: Add original multispectral bands
             if progress_callback:
                 progress_callback(15, "Processing original multispectral bands...")
@@ -1228,6 +1867,17 @@ class PredictorCalculation:
                             logger.info("Successfully computed aspect")
                     except Exception as e:
                         result["warnings"].append(f"Failed to compute aspect: {str(e)}")
+
+                if individual_preds.get("landform", False):
+                    if progress_callback:
+                        progress_callback(38, "Computing landform...")
+                    try:
+                        landform = self.terrain_calc.get_landform(aoi)
+                        if landform is not None:
+                            terrain_layers.append(landform)
+                            logger.info("Successfully computed landform")
+                    except Exception as e:
+                        result["warnings"].append(f"Failed to compute landform: {str(e)}")
                 
                 # Stack individual terrain layers if any were computed
                 if terrain_layers:
@@ -1246,6 +1896,8 @@ class PredictorCalculation:
                         terrain_names.append("Slope")
                     if individual_preds.get("aspect", False):
                         terrain_names.append("Aspect")
+                    if individual_preds.get("landform", False):
+                        terrain_names.append("Landform")
                     
                     result["predictor_info"].append(f"Data Topografi ({len(terrain_layers)} layer: {', '.join(terrain_names)})")
                     
@@ -1295,14 +1947,16 @@ class PredictorCalculation:
                             aoi=aoi,
                             index_list=spectral_indices,
                             coefficients=index_coefficients,
-                            reducer_method="mean"
+                            reducer_method="mean",
+                            sensor=detected_sensor
                         )
                     else:
                         # Use composite directly
                         spectral_result = self.spectral_calc.calculate_indices(
                             image=composite,
                             index_list=spectral_indices,
-                            coefficients=index_coefficients
+                            coefficients=index_coefficients,
+                            sensor=detected_sensor
                         )
                     
                     if spectral_result is not None:
