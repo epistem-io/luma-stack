@@ -311,7 +311,7 @@ class terrain_calculator:
             return None
 
 #=================================== Sensor Identification & Predictor Catalog ===================================
-class SensorDetector:
+class sensor_detector:
     """
     Utility for detecting satellite sensor family and resolving sensor-specific band mappings.
 
@@ -468,11 +468,11 @@ class SensorDetector:
         # Default fallback
         return "LANDSAT"
 
-
-class PredictorCatalog:
+#centralize predictor catalog to ease up addition or substraction of predictor
+class predictor_catalog:
     """
     Central registry and metadata catalog for all supported predictors in Luma-GE,
-    including spectral indices, topography, and radar backscatter.
+    including spectral indices, topography, radar backscatter, and distance based metrics.
     """
     PREDICTORS = {
         # --- Vegetation Indices ---
@@ -644,15 +644,6 @@ class PredictorCatalog:
             "type": "spectral",
             "description": "Bare soil and fallow agricultural land discrimination",
         },
-        "BSI": {
-            "name": "BSI",
-            "category": "Tanah dan Lahan Terbangun",
-            "long_name": "Bare Soil Index",
-            "sensor": "ALL",
-            "required_bands": ["S1", "R", "N", "B"],
-            "type": "spectral",
-            "description": "Soil background mapping using VNIR and SWIR1",
-        },
         "EBBI": {
             "name": "EBBI",
             "category": "Tanah dan Lahan Terbangun",
@@ -762,6 +753,11 @@ class PredictorCatalog:
     }
 
     @classmethod
+    def get_all_catalog(cls) -> dict:
+        """Return a copy of the entire predictor catalog dictionary."""
+        return cls.PREDICTORS.copy()
+
+    @classmethod
     def check_availability(
         cls,
         sensor: str = "LANDSAT",
@@ -771,7 +767,7 @@ class PredictorCatalog:
         """
         Evaluate availability for all registered predictors based on sensor and temporal range.
         """
-        sensor_norm = SensorDetector.normalize_sensor_name(sensor)
+        sensor_norm = sensor_detector.normalize_sensor_name(sensor)
         if sensor_norm == "UNKNOWN":
             sensor_norm = "LANDSAT"
 
@@ -868,7 +864,7 @@ class SpectralCalculator:
         # Define supported indices from PredictorCatalog
         self.supported_indices = {
             name: meta["category"]
-            for name, meta in PredictorCatalog.PREDICTORS.items()
+            for name, meta in predictor_catalog.PREDICTORS.items()
             if meta.get("type", "spectral") == "spectral"
         }
 
@@ -918,10 +914,10 @@ class SpectralCalculator:
         """
         try:
             available_indices = {}
-            sensor_norm = SensorDetector.normalize_sensor_name(sensor) if sensor else None
+            sensor_norm = sensor_detector.normalize_sensor_name(sensor) if sensor else None
             
             for idx_name, category in self.supported_indices.items():
-                cat_meta = PredictorCatalog.PREDICTORS.get(idx_name, {})
+                cat_meta = predictor_catalog.PREDICTORS.get(idx_name, {})
                 idx_sensor = cat_meta.get("sensor", "ALL")
 
                 # Filter by sensor compatibility if sensor is provided
@@ -1035,12 +1031,12 @@ class SpectralCalculator:
             avail_spyndex_symbols = set()
             for b in available_bands:
                 b_u = str(b).upper()
-                if b_u in SensorDetector.BAND_TO_SPYNDEX:
-                    avail_spyndex_symbols.add(SensorDetector.BAND_TO_SPYNDEX[b_u])
+                if b_u in sensor_detector.BAND_TO_SPYNDEX:
+                    avail_spyndex_symbols.add(sensor_detector.BAND_TO_SPYNDEX[b_u])
                 avail_spyndex_symbols.add(b_u)
 
-            if index_name in PredictorCatalog.PREDICTORS:
-                required = PredictorCatalog.PREDICTORS[index_name].get("required_bands", [])
+            if index_name in predictor_catalog.PREDICTORS:
+                required = predictor_catalog.PREDICTORS[index_name].get("required_bands", [])
             elif index_name in self.spyndex_indices:
                 required = getattr(self.spyndex_indices[index_name], 'bands', [])
             else:
@@ -1536,7 +1532,7 @@ class PredictorCalculation:
         Detect sensor family from explicit hint, composite image, or collection.
         Returns: 'LANDSAT', 'SENTINEL', or 'UNKNOWN'
         """
-        return SensorDetector.detect_sensor(
+        return sensor_detector.detect_sensor(
             sensor_hint=sensor_hint,
             composite=composite,
             collection=collection
@@ -1577,7 +1573,7 @@ class PredictorCalculation:
             start_date = start_date or resolved_start
             end_date = end_date or resolved_end
 
-        predictors = PredictorCatalog.check_availability(
+        predictors = predictor_catalog.check_availability(
             sensor=detected_sensor,
             start_date=start_date,
             end_date=end_date
