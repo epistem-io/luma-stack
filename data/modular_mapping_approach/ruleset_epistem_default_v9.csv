@@ -1,0 +1,25 @@
+class_id,class_name,id_lv_1,Level 1,id_lv_2,Level 2,id_lv_3,Level 3,id_lv_4,Level 4,priority,waterbody_dominance,aquaculture_presence,builtup_dominance,baresoil_dominance,mining_presence,grass_dominance,palm_dominance,tree_dominance,vegetation_height,agricultural_activity_presence,mangrove_presence,rubber_presence,other_species_presence,coffee_presence,cacao_presence,oilpalm_presence,coconut_presence,paddy_presence,timber_extraction,vegetation_canopy_cover,elevation,road_presence,wetland_presence,plant_horizonal_spreading
+20,Fish Pond,12,Non-Vegetation,25,Water Non-Vegetation,24,Fish pond,,,1,==1,==1,,,,,,,,,,,,,,,,,,,,,,
+23,Waterbody,12,Non-Vegetation,25,Water Non-Vegetation,23,Waterbody,,,2,==1,,,,,,,,,,,,,,,,,,,,,,,
+24,Settlement,12,Non-Vegetation,24,Land Non-Vegetation,20,Settlement,,,3,,,==1,,,,,,,,,,,,,,,,,,,,,
+21,Cleared Land,12,Non-Vegetation,24,Land Non-Vegetation,21,Cleared Land,,,4,,,,==1,==0,,,,,,,,,,,,,,,,,,,
+22,Mining area,12,Non-Vegetation,24,Land Non-Vegetation,22,Mining area,,,5,,,,==1,==1,,,,,,,,,,,,,,,,,,,
+9,Oil palm monoculture,11,Vegetation,23,Non-Tree Based System,38,Estate/Orchard,9,Oil palm Monoculture,6,,,,,,,==1,,>=1&<=20,,,,==0,==0,==0,==1,==0,==0,,>=0.7&<=1,,,,regularRows
+11,Coconut monoculture,11,Vegetation,23,Non-Tree Based System,38,Estate/Orchard,11,Coconut monoculture,7,,,,,,,==1,,>=1&<=20,,,,==0,==0,==0,==0,==1,==0,,>=0.4&<=0.6,,,,unevenlySpread
+10,Cacao monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,10,Cacao Monoculture,8,,,,,,,,==1,>=4&<=6,,,,,,==1,,,,,>=0.6&<=0.9,,,,
+8,Rubber monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,8,Rubber Monoculture,9,,,,,,,,==1,>=5&<=25,,,==1,==0,==0,==0,==0,==0,==0,,,,,,regularRows
+14,Coffee agroforestry,11,Vegetation,22,Tree Based System,39,Agroforestry,14,Coffee agroforestry,10,,,,,,,,==1,>=1&<=4,==1,,==0,==1,==1,,,,,,>=0.6&<=0.9,,,,
+15,Rubber agroforestry,11,Vegetation,22,Tree Based System,39,Agroforestry,15,Rubber agroforestry,11,,,,,,,,==1,,==1,,==1,==1,,,,,,,>=0.4,,,,unevenlySpread
+12,Other monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,12,Other Monoculture,12,,,,,,,,==1,>=5,,,==0,==1,,==0,==0,==0,,,>=0.7&<=1,,,,regularRows
+17,Paddy field,11,Vegetation,23,Non-Tree Based System,17,Paddy field,,,13,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==1,,,,,,regularRows
+13,Other Cropland,11,Vegetation,23,Non-Tree Based System,13,Other Cropland,,,14,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==0,,,,,,
+19,Shrub,11,Vegetation,23,Non-Tree Based System,19,Shrub,,,15,,,,,,,,==0,>=2&<=5,==0,,,,,,,,,,,,,,
+18,Grass or Savanna,11,Vegetation,23,Non-Tree Based System,18,Grass or Savanna,,,16,,,,,,==1,,,,==0,,,,,,,,,,,,,,
+3,Primary Mangrove Forest,11,Vegetation,21,Forest,3,Primary Mangrove Forest,,,17,,,,,,,,==1,>=5&<=30,,==1,,,,,,,,,>=0.7,,==0,==1,
+5,Primary Swamp Forest,11,Vegetation,21,Forest,5,Primary Swamp Forest,,,18,,,,,,,,==1,>=10&<=15,,,,,,,,,,,>=0.7,,,==1,
+4,Secondary Mangrove Forest,11,Vegetation,21,Forest,4,Secondary Mangrove Forest,,,19,,,,,,,,==1,>=5&<=15,,==1,,,,,,,,,>=0.4&<=0.7,,,==1,
+6,Secondary Swamp Forest,11,Vegetation,21,Forest,6,Secondary Swamp Forest,,,20,,,,,,,,==1,>=5&<=10,,,,,,,,,,,>=0.4&<=0.7,,,==1,
+7,Plantation forest,11,Vegetation,22,Tree Based System,37,Monoculture,7,Plantation Forest,21,,,,,,,,==1,,,,,,,,,,,==1,,,,==1,regularRows
+1,Primary Dryland Forest,11,Vegetation,21,Forest,1,Primary Dryland Forest,,,22,,,,,,,,==1,>=25,,,,,,,,,,,>=0.7,,==0,==0,
+2,Secondary Dryland Forest,11,Vegetation,21,Forest,2,Secondary Dryland Forest,,,23,,,,,,,,==1,>=5&<=25,,,,,,,,,,,>=0.4&<=0.7,,,==0,
+16,Mixed/home garden,11,Vegetation,22,Tree Based System,39,Agroforestry,16,Mixed/home garden,24,,,,,,,,,,==1,,,,,,,,,,,,,,unevenlySpread
