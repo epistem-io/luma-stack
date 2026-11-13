@@ -986,6 +986,13 @@ class Reflectance_Data:
                     "Filtered collection created (use compute_detailed_stats=True for more information)"
                 )
 
+            # Stamp the requested date range so downstream modules (e.g. SAR predictors)
+            # can inherit the Module 1 date selection
+            collection = collection.set({
+                'query_start_date': str(parse_date_input(start_date, True)),
+                'query_end_date': str(parse_date_input(end_date, False)),
+            })
+
             return collection, {
                 'dataset': dataset_description,
                 'sensor': 'S2',
@@ -1112,6 +1119,13 @@ class Reflectance_Data:
                     .map(lambda img: self.mask_landsat_sr(img))
                     .map(lambda img: self.apply_scale_factors(img))
                     .map(lambda img: self.rename_landsat_bands(img, config['sensor'])))
+
+        # Stamp the requested date range so downstream modules (e.g. SAR predictors)
+        # can inherit the Module 1 date selection
+        collection = collection.set({
+            'query_start_date': str(parse_date_input(start_date, True)),
+            'query_end_date': str(parse_date_input(end_date, False)),
+        })
 
         #Return results
         return collection, {
