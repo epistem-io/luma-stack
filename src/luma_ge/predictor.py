@@ -1342,6 +1342,9 @@ class distance_calculator:
 
     HRSL_ASSET = "projects/sat-io/open-datasets/hrsl/hrslpop"
 
+    # Default canonical base resolution (meters) for sensor-independent distance computation
+    DEFAULT_BASE_SCALE_M = 30
+
     def __init__(self):
         """
         Initialize the distance calculator lazily without heavy GEE computations.
@@ -1355,11 +1358,29 @@ class distance_calculator:
         Normalize `aoi` (whether passed as `ee.Geometry`, `ee.FeatureCollection`, or `ee.Feature`)
         into an `ee.Geometry` so `.buffer()` works reliably.
         """
-        if isinstance(aoi, (ee.FeatureCollection, ee.Feature)):
-            return aoi.geometry()
         if hasattr(aoi, "geometry") and not hasattr(aoi, "buffer"):
             return aoi.geometry()
+        try:
+            if isinstance(aoi, (ee.FeatureCollection, ee.Feature)):
+                return aoi.geometry()
+        except TypeError:
+            pass
         return aoi
+
+    def _resolve_compute_scale(
+        self,
+        max_dist: float = 50000,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> float:
+        """
+        Determine canonical computation scale (in meters) so that `max_dist` fits within
+        `neighborhood_px` pixels regardless of target optical sensor resolution:
+            compute_scale = max(base_scale, ceil(max_dist / neighborhood_px))
+        """
+        base_scale = float(scale) if scale is not None else float(self.DEFAULT_BASE_SCALE_M)
+        min_scale_for_reach = float(np.ceil(float(max_dist) / max(1, int(neighborhood_px))))
+        return max(base_scale, min_scale_for_reach)
 
     def _compute_fast_distance(
         self,
@@ -1368,13 +1389,25 @@ class distance_calculator:
         band_name: str,
         max_dist: float = 50000,
         in_meters: bool = True,
-        neighborhood_px: int = 1024
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
     ) -> ee.Image:
         """
         Compute Euclidean distance from a binary source mask (1=feature, 0=background)
-        using `fastDistanceTransform` and clip to `aoi`.
+        using a canonical sensor-independent grid (`reproject`) + `fastDistanceTransform`
+        + `resample('bilinear')`, and clip to `aoi`.
         """
-        clean_mask = source_binary_mask.unmask(0).gt(0)
+        compute_scale = self._resolve_compute_scale(
+            max_dist=max_dist,
+            neighborhood_px=neighborhood_px,
+            scale=scale
+        )
+        clean_mask = (
+            source_binary_mask
+            .unmask(0)
+            .gt(0)
+            .reproject(crs="EPSG:4326", scale=compute_scale)
+        )
         dist_px = clean_mask.fastDistanceTransform(
             neighborhood=neighborhood_px,
             units="pixels",
@@ -1390,6 +1423,7 @@ class distance_calculator:
             dist_img
             .clamp(0, max_dist)
             .unmask(max_dist)
+            .resample("bilinear")
             .clip(aoi)
             .toFloat()
             .rename(band_name)
@@ -1467,7 +1501,8 @@ class distance_calculator:
         aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
-        neighborhood_px: int = 1024
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
     ) -> ee.Image:
         """
         Compute Euclidean distance to nearest S2COAST-2023 shoreline (`dist_coast`),
@@ -1490,7 +1525,8 @@ class distance_calculator:
             band_name="dist_coast",
             max_dist=max_dist,
             in_meters=in_meters,
-            neighborhood_px=neighborhood_px
+            neighborhood_px=neighborhood_px,
+            scale=scale
         )
 
     def calculate_distance_to_roads(
@@ -1502,7 +1538,8 @@ class distance_calculator:
         main_roads_only: bool = True,
         road_types: Optional[List[int]] = None,
         precomputed_asset: Optional[str] = None,
-        neighborhood_px: int = 1024
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
     ) -> ee.Image:
         """
         Compute distance to roads (`dist_roads`) using either:
@@ -1517,6 +1554,7 @@ class distance_calculator:
                 .select([0])
                 .clamp(0, max_dist)
                 .unmask(max_dist)
+                .resample("bilinear")
                 .clip(aoi)
                 .toFloat()
                 .rename("dist_roads")
@@ -1541,7 +1579,8 @@ class distance_calculator:
             band_name="dist_roads",
             max_dist=max_dist,
             in_meters=in_meters,
-            neighborhood_px=neighborhood_px
+            neighborhood_px=neighborhood_px,
+            scale=scale
         )
 
     def calculate_distance_to_settlement(
@@ -1549,7 +1588,8 @@ class distance_calculator:
         aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
-        neighborhood_px: int = 1024
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
     ) -> ee.Image:
         """
         Compute Euclidean distance to nearest HRSL settlement pixel (`dist_settlement`).
@@ -1568,7 +1608,8 @@ class distance_calculator:
             band_name="dist_settlement",
             max_dist=max_dist,
             in_meters=in_meters,
-            neighborhood_px=neighborhood_px
+            neighborhood_px=neighborhood_px,
+            scale=scale
         )
 
     def calculate_distance_metrics(
@@ -1583,7 +1624,8 @@ class distance_calculator:
         main_roads_only: bool = True,
         road_types: Optional[List[int]] = None,
         precomputed_road_asset: Optional[str] = None,
-        neighborhood_px: int = 1024
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
     ) -> Optional[ee.Image]:
         """
         Calculate stacked Euclidean distance predictors (`dist_roads`, `dist_coast`, `dist_settlement`)
@@ -1591,7 +1633,7 @@ class distance_calculator:
 
         Parameters
         ----------
-        aoi : ee.Geometry
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
             User-defined area of interest geometry for filtering and clipping results.
         max_dist : float, default=50000
             Maximum search/cap distance in meters (default 50 km) or pixels.
@@ -1613,6 +1655,8 @@ class distance_calculator:
             GEE Image asset ID when `road_source='precomputed'`.
         neighborhood_px : int, default=1024
             Neighborhood window in pixels for `fastDistanceTransform`.
+        scale : float, optional
+            Base computation scale in meters. Defaults to `max(30, ceil(max_dist / neighborhood_px))`.
 
         Returns
         -------
@@ -1620,9 +1664,14 @@ class distance_calculator:
             Stacked distance image containing requested bands (`dist_roads`, `dist_coast`, `dist_settlement`).
         """
         try:
+            compute_scale = self._resolve_compute_scale(
+                max_dist=max_dist,
+                neighborhood_px=neighborhood_px,
+                scale=scale
+            )
             logger.info(
-                f"Calculating fast distance metrics (max_dist={max_dist}, in_meters={in_meters}, "
-                f"road_source={road_source}, main_roads_only={main_roads_only})..."
+                f"Calculating fast distance metrics (max_dist={max_dist}, compute_scale={compute_scale}m, "
+                f"in_meters={in_meters}, road_source={road_source}, main_roads_only={main_roads_only})..."
             )
             layers = []
 
@@ -1635,7 +1684,8 @@ class distance_calculator:
                     main_roads_only=main_roads_only,
                     road_types=road_types,
                     precomputed_asset=precomputed_road_asset,
-                    neighborhood_px=neighborhood_px
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
                 )
                 layers.append(dist_roads)
 
@@ -1644,7 +1694,8 @@ class distance_calculator:
                     aoi=aoi,
                     max_dist=max_dist,
                     in_meters=in_meters,
-                    neighborhood_px=neighborhood_px
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
                 )
                 layers.append(dist_coast)
 
@@ -1653,7 +1704,8 @@ class distance_calculator:
                     aoi=aoi,
                     max_dist=max_dist,
                     in_meters=in_meters,
-                    neighborhood_px=neighborhood_px
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
                 )
                 layers.append(dist_settlement)
 
