@@ -10,7 +10,7 @@ class_id,class_name,id_lv_1,Level 1,id_lv_2,Level 2,id_lv_3,Level 3,id_lv_4,Leve
 8,Rubber monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,8,Rubber Monoculture,9,,,,,,,,==1,>=5&<=25,,,==1,==0,==0,==0,==0,==0,==0,,,,,,regularRows
 14,Coffee agroforestry,11,Vegetation,22,Tree Based System,39,Agroforestry,14,Coffee agroforestry,10,,,,,,,,==1,>=1&<=4,==1,,==0,==1,==1,,,,,,>=0.6&<=0.9,,,,
 15,Rubber agroforestry,11,Vegetation,22,Tree Based System,39,Agroforestry,15,Rubber agroforestry,11,,,,,,,,==1,,==1,,==1,==1,,,,,,,>=0.4,,,,unevenlySpread
-12,Other monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,12,Other Monoculture,12,,,,,,,,==1,>=5,,,==0,==1,,==0,==0,==0,,,>=0.7&<=1,,,,regularRows
+12,Other monoculture,11,Vegetation,22,Tree Based System,37,Monoculture,12,Other Monoculture,12,,,,,,,,==1,>=5,,,==0,==1,,==0,==0,==0,,==0,>=0.7&<=1,,,,regularRows
 17,Paddy field,11,Vegetation,23,Non-Tree Based System,17,Paddy field,,,13,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==1,,,,,,regularRows
 13,Other Cropland,11,Vegetation,23,Non-Tree Based System,13,Other Cropland,,,14,,,,,,,,,,==1,,==0,,==0,==0,==0,==0,==0,,,,,,
 19,Shrub,11,Vegetation,23,Non-Tree Based System,19,Shrub,,,15,,,,,,,,==0,>=2&<=5,==0,,,,,,,,,,,,,,
