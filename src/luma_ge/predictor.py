@@ -579,15 +579,6 @@ class predictor_catalog:
             "type": "spectral",
             "description": "Water extraction in shadow-heavy mountainous/urban regions",
         },
-        "AWEInsh": {
-            "name": "AWEInsh",
-            "category": "Air & Kelembaban",
-            "long_name": "Automated Water Extraction Index (no shadow)",
-            "sensor": "ALL",
-            "required_bands": ["G", "S1"],
-            "type": "spectral",
-            "description": "Water extraction without shadow compensation",
-        },
         "NDTI": {
             "name": "NDTI",
             "category": "Air & Kelembaban",
@@ -1358,10 +1349,22 @@ class distance_calculator:
         ensure_ee_initialized()
         logger.info("Distance calculator initialized")
 
+    @staticmethod
+    def _resolve_geometry(aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature]) -> ee.Geometry:
+        """
+        Normalize `aoi` (whether passed as `ee.Geometry`, `ee.FeatureCollection`, or `ee.Feature`)
+        into an `ee.Geometry` so `.buffer()` works reliably.
+        """
+        if isinstance(aoi, (ee.FeatureCollection, ee.Feature)):
+            return aoi.geometry()
+        if hasattr(aoi, "geometry") and not hasattr(aoi, "buffer"):
+            return aoi.geometry()
+        return aoi
+
     def _compute_fast_distance(
         self,
         source_binary_mask: ee.Image,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         band_name: str,
         max_dist: float = 50000,
         in_meters: bool = True,
@@ -1394,7 +1397,7 @@ class distance_calculator:
 
     def extract_s2_coastline(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         buffer_m: float = 10000
     ) -> ee.FeatureCollection:
         """
@@ -1406,18 +1409,19 @@ class distance_calculator:
 
         Parameters
         ----------
-        aoi : ee.Geometry
-            User-defined area of interest geometry.
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
+            User-defined area of interest geometry or FeatureCollection.
         buffer_m : float, default=10000
             Outward search buffer in meters around `aoi` to capture nearby coastlines.
         """
         s2_coast = ee.FeatureCollection(self.S2COAST_ASSET)
-        target_buffer = aoi.buffer(buffer_m)
+        aoi_geom = self._resolve_geometry(aoi)
+        target_buffer = aoi_geom.buffer(buffer_m)
         return s2_coast.filter(ee.Filter.bounds(target_buffer))
 
     def extract_grip4_roads(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         buffer_m: float = 50000,
         main_roads_only: bool = True,
         road_types: Optional[List[int]] = None,
@@ -1428,8 +1432,8 @@ class distance_calculator:
 
         Parameters
         ----------
-        aoi : ee.Geometry
-            Area of interest.
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
+            Area of interest geometry or FeatureCollection.
         buffer_m : float, default=50000
             Outward search buffer in meters around `aoi` so nearby roads outside the
             AOI boundary are accounted for.
@@ -1440,7 +1444,8 @@ class distance_calculator:
         grip4_assets : list of str, optional
             Custom GRIP4 FeatureCollection asset IDs.
         """
-        search_geom = aoi.buffer(buffer_m)
+        aoi_geom = self._resolve_geometry(aoi)
+        search_geom = aoi_geom.buffer(buffer_m)
         assets = grip4_assets or self.GRIP4_REGIONAL_ASSETS
         target_types = road_types or self.MAIN_ROAD_TYPES
 
@@ -1459,7 +1464,7 @@ class distance_calculator:
 
     def calculate_distance_to_coast(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
         neighborhood_px: int = 1024
@@ -1490,7 +1495,7 @@ class distance_calculator:
 
     def calculate_distance_to_roads(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
         road_source: str = "grip4",
@@ -1541,7 +1546,7 @@ class distance_calculator:
 
     def calculate_distance_to_settlement(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
         neighborhood_px: int = 1024
@@ -1550,9 +1555,10 @@ class distance_calculator:
         Compute Euclidean distance to nearest HRSL settlement pixel (`dist_settlement`).
         """
         search_buffer = max(10000.0, float(max_dist))
+        aoi_geom = self._resolve_geometry(aoi)
         hrsl = (
             ee.ImageCollection(self.HRSL_ASSET)
-            .filterBounds(aoi.buffer(search_buffer))
+            .filterBounds(aoi_geom.buffer(search_buffer))
             .mosaic()
         )
         settlement_mask = hrsl.gt(0).unmask(0)
@@ -1567,7 +1573,7 @@ class distance_calculator:
 
     def calculate_distance_metrics(
         self,
-        aoi: ee.Geometry,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
         max_dist: float = 50000,
         in_meters: bool = True,
         include_roads: bool = True,
