@@ -7,10 +7,15 @@ to enhance land cover classification. This version is revised to follow the late
 """
 import ee
 import logging
-from typing import List, Optional, Dict, Any, Tuple, Union
+from typing import List, Optional, Dict, Any, Tuple, Union, Callable
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import RFECV
+from sklearn.model_selection import StratifiedKFold
+from tqdm.auto import tqdm
 from .ee_config import ensure_ee_initialized
 import matplotlib.pyplot as plt
 # Configure logging for development
@@ -1989,4 +1994,403 @@ class RFEGEE:
             'Number_of_Features': self.n_features_history_,
             'Accuracy': self.accuracy_history_
         })
+
+
+#=================================== Local RFECV Feature Selection ===================================
+class _ProgressRandomForest(BaseEstimator, ClassifierMixin):
+    """Lightweight scikit-learn RandomForest wrapper that reports each fit step."""
+
+    def __init__(
+        self,
+        n_estimators: int = 50,
+        max_depth: Optional[int] = 12,
+        min_samples_leaf: int = 2,
+        random_state: int = 42,
+        n_jobs: int = 1,
+        on_fit: Optional[Callable[[], None]] = None,
+    ):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.on_fit = on_fit
+
+    def fit(self, X, y):
+        self.estimator_ = RandomForestClassifier(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
+        )
+        self.estimator_.fit(X, y)
+        self.classes_ = self.estimator_.classes_
+        if self.on_fit is not None:
+            self.on_fit()
+        return self
+
+    def predict(self, X):
+        return self.estimator_.predict(X)
+
+    def predict_proba(self, X):
+        return self.estimator_.predict_proba(X)
+
+    @property
+    def feature_importances_(self):
+        return self.estimator_.feature_importances_
+
+
+class RFELocal:
+    """
+    Local Recursive Feature Elimination with Cross-Validation (RFECV)
+    using scikit-learn's RandomForestClassifier.
+
+    Extracts sampled training properties from Google Earth Engine once with
+    ``retainGeometry=False`` (or accepts a ``pandas.DataFrame`` directly),
+    runs ``RFECV`` locally to select the recommended feature stack, and omits
+    model accuracy outputs since scikit-learn's Random Forest differs from
+    Earth Engine's ``smileRandomForest``.
+    """
+
+    _GEE_BATCH_SIZE = 4000
+
+    def __init__(
+        self,
+        training_data: Union[ee.FeatureCollection, pd.DataFrame],
+        class_property: str,
+        features: List[str],
+        n_features_to_select: Optional[int] = None,
+        step: Union[int, float] = 1,
+        cv: int = 3,
+        n_trees: int = 50,
+        max_depth: Optional[int] = 12,
+        min_samples_leaf: int = 2,
+        seed: int = 42,
+        max_samples: Optional[int] = 2000,
+        n_jobs: int = 1,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        verbose: bool = True,
+    ):
+        self.training_data = training_data
+        self.class_property = class_property
+        self.features = list(dict.fromkeys(features))
+        self.n_features_to_select = (
+            n_features_to_select
+            if n_features_to_select is not None
+            else max(1, len(self.features) // 2)
+        )
+        self.step = step
+        self.cv = cv
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.seed = seed
+        self.max_samples = max_samples
+        self.n_jobs = n_jobs
+        self.progress_callback = progress_callback
+        self.verbose = verbose
+
+        if isinstance(self.training_data, ee.FeatureCollection):
+            ensure_ee_initialized()
+
+        self._validate_inputs()
+
+        # Results (populated after fit)
+        self.selected_features_: Optional[List[str]] = None
+        self.best_n_features_: Optional[int] = None
+        self.ranking_: Optional[Dict[str, int]] = None
+        self.support_: Optional[Dict[str, bool]] = None
+        self.feature_importances_: Optional[Dict[str, float]] = None
+
+    def _log(self, msg: str):
+        if self.verbose:
+            print(msg)
+        logger.info(msg)
+
+    def _validate_inputs(self):
+        if not isinstance(self.training_data, (ee.FeatureCollection, pd.DataFrame)):
+            raise TypeError("training_data must be an ee.FeatureCollection or pandas.DataFrame")
+
+        if not self.features:
+            raise ValueError("features must be a non-empty list of feature names")
+
+        if self.n_features_to_select < 1:
+            raise ValueError("n_features_to_select must be >= 1")
+
+        if self.n_features_to_select > len(self.features):
+            raise ValueError("n_features_to_select exceeds feature count")
+
+        if isinstance(self.step, bool) or not isinstance(self.step, (int, float)):
+            raise TypeError("step must be an integer >= 1 or a float in (0, 1)")
+
+        if isinstance(self.step, float):
+            if not (0.0 < self.step < 1.0):
+                raise ValueError("float step must be in (0, 1)")
+        elif self.step < 1:
+            raise ValueError("integer step must be >= 1")
+
+        if self.cv < 2:
+            raise ValueError("cv must be >= 2")
+
+        if self.n_trees < 1:
+            raise ValueError("n_trees must be >= 1")
+
+        if self.max_depth is not None and self.max_depth < 1:
+            raise ValueError("max_depth must be >= 1 or None")
+
+        if self.min_samples_leaf < 1:
+            raise ValueError("min_samples_leaf must be >= 1")
+
+        if self.max_samples is not None and self.max_samples < 1:
+            raise ValueError("max_samples must be >= 1 or None")
+
+    def _extract_dataframe(self) -> pd.DataFrame:
+        """
+        Extract features and class_property into a clean pandas DataFrame.
+        Drops geometries server-side (retainGeometry=False) and avoids extra
+        size()/sort()/toList() round-trips on Earth Engine.
+        """
+        cols = list(dict.fromkeys(self.features + [self.class_property]))
+
+        if isinstance(self.training_data, pd.DataFrame):
+            df = self.training_data.copy()
+        else:
+            fc = self.training_data.select(propertySelectors=cols, retainGeometry=False)
+            raw_features: List[Dict[str, Any]] = []
+
+            if self.max_samples is not None and self.max_samples <= self._GEE_BATCH_SIZE:
+                # Single round-trip: avoid size(), randomColumn().sort(), and toList()
+                with tqdm(
+                    total=1,
+                    desc="Extracting GEE samples",
+                    unit="batch",
+                    disable=not self.verbose,
+                ) as pbar:
+                    info = fc.limit(self.max_samples).getInfo() or {}
+                    raw_features.extend(info.get("features", []))
+                    pbar.update(1)
+            else:
+                # Stream paginated batches via computeFeatures without size() or toList()
+                target_fc = fc.limit(self.max_samples) if self.max_samples is not None else fc
+                page_token = None
+                with tqdm(
+                    desc="Extracting GEE samples",
+                    unit="batch",
+                    disable=not self.verbose,
+                ) as pbar:
+                    while True:
+                        params: Dict[str, Any] = {
+                            "expression": target_fc,
+                            "pageSize": self._GEE_BATCH_SIZE,
+                        }
+                        if page_token:
+                            params["pageToken"] = page_token
+                        resp = ee.data.computeFeatures(params) or {}
+                        raw_features.extend(resp.get("features", []))
+                        pbar.update(1)
+                        page_token = resp.get("nextPageToken")
+                        if not page_token or (
+                            self.max_samples is not None and len(raw_features) >= self.max_samples
+                        ):
+                            break
+
+                if self.max_samples is not None:
+                    raw_features = raw_features[: self.max_samples]
+
+            if not raw_features:
+                raise ValueError("No features returned from Earth Engine")
+
+            df = pd.DataFrame([feat.get("properties", {}) for feat in raw_features])
+
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns in training_data: {missing}")
+
+        df = df[cols].copy()
+        for c in cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        before_len = len(df)
+        df = df.dropna(subset=cols).reset_index(drop=True)
+        dropped = before_len - len(df)
+        if dropped > 0:
+            self._log(f"Dropped {dropped} rows containing NaN/non-numeric values")
+
+        return df
+
+    def _estimate_total_fits(self, n_folds: int) -> int:
+        """Estimate total RandomForest fits during RFECV for progress reporting."""
+        n_curr = len(self.features)
+        rfe_steps = 1
+        while n_curr > self.n_features_to_select:
+            if isinstance(self.step, float):
+                drop_n = max(1, int(self.step * n_curr))
+            else:
+                drop_n = int(self.step)
+            drop_n = min(drop_n, n_curr - self.n_features_to_select)
+            n_curr -= drop_n
+            rfe_steps += 1
+        return (n_folds + 1) * rfe_steps + 1
+
+    def fit(self):
+        """
+        Run local RFECV and populate the recommended feature stack.
+        Does not compute or return model accuracy metrics.
+        """
+        df = self._extract_dataframe()
+        if len(df) < 2:
+            raise ValueError("Not enough valid samples after cleaning to run RFECV")
+
+        X = df[self.features].to_numpy(dtype=np.float64)
+        y = df[self.class_property].to_numpy()
+
+        class_counts = pd.Series(y).value_counts()
+        if len(class_counts) < 2:
+            raise ValueError("At least 2 distinct classes are required to run RFECV")
+
+        min_class_count = int(class_counts.min())
+        if min_class_count < 2:
+            raise ValueError("Each class must have at least 2 samples for cross-validation")
+
+        effective_cv = min(self.cv, min_class_count)
+        if effective_cv < self.cv:
+            self._log(
+                f"Adjusting cv from {self.cv} to {effective_cv} (smallest class has {min_class_count} samples)"
+            )
+
+        self._log(
+            f"Starting local RFECV on {len(df)} samples, {len(self.features)} features "
+            f"(min_features={self.n_features_to_select}, cv={effective_cv}, n_trees={self.n_trees})"
+        )
+
+        total_fits = self._estimate_total_fits(effective_cv)
+        completed_fits = 0
+
+        with tqdm(
+            total=total_fits,
+            desc="Running local RFECV",
+            unit="fit",
+            disable=not self.verbose,
+        ) as pbar:
+            def _on_fit():
+                nonlocal completed_fits
+                completed_fits += 1
+                if pbar.n < pbar.total:
+                    pbar.update(1)
+                if self.progress_callback is not None:
+                    self.progress_callback(completed_fits, total_fits, "rfecv")
+
+            estimator = _ProgressRandomForest(
+                n_estimators=self.n_trees,
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.seed,
+                n_jobs=self.n_jobs,
+                on_fit=_on_fit,
+            )
+            cv_splitter = StratifiedKFold(
+                n_splits=effective_cv, shuffle=True, random_state=self.seed
+            )
+            selector = RFECV(
+                estimator=estimator,
+                step=self.step,
+                min_features_to_select=self.n_features_to_select,
+                cv=cv_splitter,
+                scoring="accuracy",
+                n_jobs=self.n_jobs,
+            )
+            selector.fit(X, y)
+
+            if pbar.n < pbar.total:
+                pbar.update(pbar.total - pbar.n)
+
+        support_mask = [bool(s) for s in selector.support_]
+        ranks = [int(r) for r in selector.ranking_]
+
+        self.selected_features_ = [f for f, keep in zip(self.features, support_mask) if keep]
+        self.best_n_features_ = len(self.selected_features_)
+        self.support_ = {f: keep for f, keep in zip(self.features, support_mask)}
+        self.ranking_ = {f: r for f, r in zip(self.features, ranks)}
+
+        selected_importances = selector.estimator_.feature_importances_
+        imp_map = dict(zip(self.selected_features_, selected_importances))
+        self.feature_importances_ = {f: float(imp_map.get(f, 0.0)) for f in self.features}
+
+        self._log(f"Recommended feature stack ({self.best_n_features_} features):")
+        for f in self.selected_features_:
+            self._log(f"  - {f}")
+
+        return self
+
+    def get_selected_features(self) -> List[str]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.selected_features_.copy()
+
+    def get_ranking(self) -> Dict[str, int]:
+        if self.ranking_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.ranking_.copy()
+
+    def get_support(self) -> Dict[str, bool]:
+        if self.support_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.support_.copy()
+
+    def select_bands(self, image: ee.Image) -> ee.Image:
+        """Return the input ee.Image subsetted to the recommended feature stack."""
+        if not isinstance(image, ee.Image):
+            raise TypeError("image must be an ee.Image")
+        return image.select(self.get_selected_features())
+
+    def get_results_dataframe(self) -> pd.DataFrame:
+        """Return feature selection rankings and support as a pandas DataFrame."""
+        if self.selected_features_ is None or self.ranking_ is None or self.support_ is None:
+            raise RuntimeError("Call fit() first")
+
+        results_df = pd.DataFrame({
+            "Feature": self.features,
+            "Rank": [self.ranking_[f] for f in self.features],
+            "Selected": [self.support_[f] for f in self.features],
+            "Status": [
+                "✅ Selected" if self.support_[f] else "❌ Eliminated"
+                for f in self.features
+            ],
+            "Importance": [
+                (self.feature_importances_ or {}).get(f, 0.0) for f in self.features
+            ],
+        })
+        return results_df.sort_values(["Rank", "Feature"]).reset_index(drop=True)
+
+    def plot_feature_rankings(self, figsize: Tuple[int, int] = (10, 8)):
+        """Plot feature rankings as a horizontal bar chart."""
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        ranking = self.get_ranking()
+        ranking_sorted = sorted(ranking.items(), key=lambda x: (x[1], x[0]))
+        features, ranks = zip(*ranking_sorted)
+
+        fig, ax = plt.subplots(figsize=figsize)
+        colors = ["#2ca02c" if r == 1 else "#d62728" for r in ranks]
+        ax.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+
+        ax.set_yticks(range(len(features)))
+        ax.set_yticklabels(features, fontsize=10)
+        ax.set_xlabel("Rank (1 = Selected)", fontsize=12)
+        ax.set_title("Local RFECV Feature Rankings", fontsize=14, fontweight="bold")
+        ax.grid(True, alpha=0.3, axis="x")
+        ax.invert_yaxis()
+
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor="#2ca02c", alpha=0.7, label="Selected"),
+            Patch(facecolor="#d62728", alpha=0.7, label="Eliminated"),
+        ]
+        ax.legend(handles=legend_elements, loc="lower right")
+
+        plt.tight_layout()
+        return fig
+
 
