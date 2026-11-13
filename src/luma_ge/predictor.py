@@ -750,6 +750,31 @@ class predictor_catalog:
             "description": "ALOS PALSAR cross-polarization ratio (HH - HV in dB)",
             "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
         },
+        # --- Distance & Accessibility Predictors ---
+        "dist_roads": {
+            "name": "dist_roads",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Main Roads (GRIP4)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest main road (GRIP4 highways, primary & secondary roads)",
+        },
+        "dist_coast": {
+            "name": "dist_coast",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Coastline (S2COAST-2023)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest S2COAST-2023 shoreline",
+        },
+        "dist_settlement": {
+            "name": "dist_settlement",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Settlement (HRSL)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest High Resolution Settlement Layer (HRSL) built-up pixel",
+        },
     }
 
     @classmethod
@@ -1302,206 +1327,340 @@ class SpectralCalculator:
 #=================================== Distance Metrics ===================================
 class distance_calculator:
     """
-    This class computes distance-based predictors that measure proximity to various
-    geographic features like roads, coastlines, and settlements.
-    Supported Distance Metrics:
-    - Roads: Distance to road networks 
-    - Coastline: Distance to coastline features
-    - Settlements: Distance to populated areas
-    Data Sources:
-    - Natural Earth Coastline: https://www.naturalearthdata.com/
-    - OpenStreetMap (OSM) Roads: Community-contributed road data
-    - RBI Roads: Regional road network data
-    - HRSL Settlements: High Resolution Settlement Layer
+    Computes fast Euclidean distance-based predictors measuring proximity to:
+    - Main Roads (`dist_roads`): On-the-fly from Global Roads Inventory Project (GRIP4, main roads
+      GP_RTP in [1, 2, 3]) or from a pre-computed raster asset.
+    - Coastline (`dist_coast`): Derived from S2COAST-2023 (`projects/sat-io/open-datasets/S2COAST-2023`)
+      with outward spatial buffering to preserve high/low-tide shoreline continuity.
+    - Settlements (`dist_settlement`): Derived from High Resolution Settlement Layer (HRSL).
 
-    Usage Example:
-        calc = distance_calculator()
-        
-        # Calculate all distance metrics
-        distances = calc.calculate_distance_metrics(
-            aoi=aoi_geometry,
-            max_dist=50000,  # 50km maximum distance
-            in_meters=True   # Output in meters
-        )
-        
-        # Result contains: dist_roads, dist_coast, dist_settlement bands
+    Uses Earth Engine's linear-time `fastDistanceTransform()` instead of `cumulativeCost()`
+    to avoid neighborhood size limits and timeouts.
     """
-    
+
+    S2COAST_ASSET = "projects/sat-io/open-datasets/S2COAST-2023"
+
+    # GRIP4 regional collections covering Southeast Asia & PNG/Oceania
+    GRIP4_REGIONAL_ASSETS = [
+        "projects/sat-io/open-datasets/GRIP4/South-East-Asia",
+        "projects/sat-io/open-datasets/GRIP4/Oceania",
+    ]
+
+    # GRIP4 road types (GP_RTP): 1=Highway, 2=Primary, 3=Secondary (excludes 4=Tertiary, 5=Local)
+    MAIN_ROAD_TYPES = [1, 2, 3]
+
+    HRSL_ASSET = "projects/sat-io/open-datasets/hrsl/hrslpop"
+
     def __init__(self):
         """
-        Initialize the distance calculator.
-        
-        Ensures Earth Engine is initialized and sets up logging.
-        No heavy computations are performed during initialization.
+        Initialize the distance calculator lazily without heavy GEE computations.
         """
         ensure_ee_initialized()
         logger.info("Distance calculator initialized")
-    
-    def calculate_distance_metrics(self, 
-                                   aoi: ee.Geometry, 
-                                   max_dist: float = 500000, 
-                                   in_meters: bool = False) -> ee.Image:
+
+    def _compute_fast_distance(
+        self,
+        source_binary_mask: ee.Image,
+        aoi: ee.Geometry,
+        band_name: str,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024
+    ) -> ee.Image:
         """
-        Create distance images based on predefined datasets.
-        
-        This method calculates cumulative cost distance from various geographic
-        features to create spatial predictors for land cover classification using Earth Engine's cumulativeCost().
-        Distance metrics help capture accessibility patterns and spatial
-        relationships that influence land use decisions.
-        
-        Parameters:
-        -----------
+        Compute Euclidean distance from a binary source mask (1=feature, 0=background)
+        using `fastDistanceTransform` and clip to `aoi`.
+        """
+        clean_mask = source_binary_mask.unmask(0).gt(0)
+        dist_px = clean_mask.fastDistanceTransform(
+            neighborhood=neighborhood_px,
+            units="pixels",
+            metric="squared_euclidean"
+        ).sqrt()
+
+        if in_meters:
+            dist_img = dist_px.multiply(ee.Image.pixelArea().sqrt())
+        else:
+            dist_img = dist_px
+
+        return (
+            dist_img
+            .clamp(0, max_dist)
+            .unmask(max_dist)
+            .clip(aoi)
+            .toFloat()
+            .rename(band_name)
+        )
+
+    def extract_s2_coastline(
+        self,
+        aoi: ee.Geometry,
+        buffer_m: float = 10000
+    ) -> ee.FeatureCollection:
+        """
+        Extract coastline polyline segments from S2COAST-2023 within the user-defined AOI.
+
+        Applies an outward spatial buffer (`buffer_m`, default 10 km) around `aoi` so that
+        shoreline segments (and high/low-tide lines) just outside the AOI boundary are
+        captured when computing proximity.
+
+        Parameters
+        ----------
         aoi : ee.Geometry
-            Area of interest geometry for clipping results
-        max_dist : float, default=500000
-            Maximum cumulative cost distance in meters or pixels.
-            Larger values increase computation time but provide more complete coverage.
-        in_meters : bool, default=False
-            Distance unit selection:
-            - True: Output distance in meters (more accurate, slower computation)
-            - False: Output distance in pixels (faster, less precise)
-            
-        Returns:
-        --------
+            User-defined area of interest geometry.
+        buffer_m : float, default=10000
+            Outward search buffer in meters around `aoi` to capture nearby coastlines.
+        """
+        s2_coast = ee.FeatureCollection(self.S2COAST_ASSET)
+        target_buffer = aoi.buffer(buffer_m)
+        return s2_coast.filter(ee.Filter.bounds(target_buffer))
+
+    def extract_grip4_roads(
+        self,
+        aoi: ee.Geometry,
+        buffer_m: float = 50000,
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        grip4_assets: Optional[List[str]] = None
+    ) -> ee.FeatureCollection:
+        """
+        Extract road network features from the Global Roads Inventory Project (GRIP4).
+
+        Parameters
+        ----------
+        aoi : ee.Geometry
+            Area of interest.
+        buffer_m : float, default=50000
+            Outward search buffer in meters around `aoi` so nearby roads outside the
+            AOI boundary are accounted for.
+        main_roads_only : bool, default=True
+            If True, filters `GP_RTP` to main roads (`[1, 2, 3]`: Highways, Primary, Secondary).
+        road_types : list of int, optional
+            Custom list of `GP_RTP` road type codes.
+        grip4_assets : list of str, optional
+            Custom GRIP4 FeatureCollection asset IDs.
+        """
+        search_geom = aoi.buffer(buffer_m)
+        assets = grip4_assets or self.GRIP4_REGIONAL_ASSETS
+        target_types = road_types or self.MAIN_ROAD_TYPES
+
+        collections = []
+        for asset_id in assets:
+            fc = ee.FeatureCollection(asset_id).filter(ee.Filter.bounds(search_geom))
+            if main_roads_only:
+                fc = fc.filter(ee.Filter.inList("GP_RTP", target_types))
+            collections.append(fc)
+
+        merged_roads = collections[0]
+        for fc in collections[1:]:
+            merged_roads = merged_roads.merge(fc)
+
+        return merged_roads
+
+    def calculate_distance_to_coast(
+        self,
+        aoi: ee.Geometry,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024
+    ) -> ee.Image:
+        """
+        Compute Euclidean distance to nearest S2COAST-2023 shoreline (`dist_coast`),
+        clipped to the user-defined `aoi`.
+        """
+        search_buffer = max(10000.0, float(max_dist))
+        filtered_coast = self.extract_s2_coastline(
+            aoi=aoi,
+            buffer_m=search_buffer
+        )
+        coast_mask = (
+            filtered_coast
+            .map(lambda ft: ft.set("constant", 1))
+            .reduceToImage(["constant"], ee.Reducer.first())
+            .unmask(0)
+        )
+        return self._compute_fast_distance(
+            source_binary_mask=coast_mask,
+            aoi=aoi,
+            band_name="dist_coast",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px
+        )
+
+    def calculate_distance_to_roads(
+        self,
+        aoi: ee.Geometry,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        road_source: str = "grip4",
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        precomputed_asset: Optional[str] = None,
+        neighborhood_px: int = 1024
+    ) -> ee.Image:
+        """
+        Compute distance to roads (`dist_roads`) using either:
+        1. `road_source='grip4'` (default): On-the-fly computation from GRIP4 main roads.
+        2. `road_source='precomputed'`: Pre-computed distance raster asset (`precomputed_asset`).
+        """
+        source_mode = (road_source or "grip4").lower()
+        if source_mode == "precomputed" and precomputed_asset:
+            logger.info(f"Loading pre-computed road distance asset: {precomputed_asset}")
+            return (
+                ee.Image(precomputed_asset)
+                .select([0])
+                .clamp(0, max_dist)
+                .unmask(max_dist)
+                .clip(aoi)
+                .toFloat()
+                .rename("dist_roads")
+            )
+
+        search_buffer = max(10000.0, float(max_dist))
+        roads_fc = self.extract_grip4_roads(
+            aoi=aoi,
+            buffer_m=search_buffer,
+            main_roads_only=main_roads_only,
+            road_types=road_types
+        )
+        roads_mask = (
+            roads_fc
+            .map(lambda ft: ft.set("constant", 1))
+            .reduceToImage(["constant"], ee.Reducer.max())
+            .unmask(0)
+        )
+        return self._compute_fast_distance(
+            source_binary_mask=roads_mask,
+            aoi=aoi,
+            band_name="dist_roads",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px
+        )
+
+    def calculate_distance_to_settlement(
+        self,
+        aoi: ee.Geometry,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024
+    ) -> ee.Image:
+        """
+        Compute Euclidean distance to nearest HRSL settlement pixel (`dist_settlement`).
+        """
+        search_buffer = max(10000.0, float(max_dist))
+        hrsl = (
+            ee.ImageCollection(self.HRSL_ASSET)
+            .filterBounds(aoi.buffer(search_buffer))
+            .mosaic()
+        )
+        settlement_mask = hrsl.gt(0).unmask(0)
+        return self._compute_fast_distance(
+            source_binary_mask=settlement_mask,
+            aoi=aoi,
+            band_name="dist_settlement",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px
+        )
+
+    def calculate_distance_metrics(
+        self,
+        aoi: ee.Geometry,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        include_roads: bool = True,
+        include_coast: bool = True,
+        include_settlement: bool = True,
+        road_source: str = "grip4",
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        precomputed_road_asset: Optional[str] = None,
+        neighborhood_px: int = 1024
+    ) -> Optional[ee.Image]:
+        """
+        Calculate stacked Euclidean distance predictors (`dist_roads`, `dist_coast`, `dist_settlement`)
+        using `fastDistanceTransform`, clipped to the user-defined `aoi`.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry
+            User-defined area of interest geometry for filtering and clipping results.
+        max_dist : float, default=50000
+            Maximum search/cap distance in meters (default 50 km) or pixels.
+        in_meters : bool, default=True
+            If True, output distance in meters; if False, output in pixel units.
+        include_roads : bool, default=True
+            Compute `dist_roads` (GRIP4 main roads or pre-computed asset).
+        include_coast : bool, default=True
+            Compute `dist_coast` (S2COAST-2023).
+        include_settlement : bool, default=True
+            Compute `dist_settlement` (HRSL).
+        road_source : str, default='grip4'
+            Road data source: `'grip4'` (on-the-fly main roads) or `'precomputed'`.
+        main_roads_only : bool, default=True
+            When `road_source='grip4'`, filter `GP_RTP` to `[1, 2, 3]` (Highways, Primary, Secondary).
+        road_types : list of int, optional
+            Custom `GP_RTP` codes for GRIP4 road filtering.
+        precomputed_road_asset : str, optional
+            GEE Image asset ID when `road_source='precomputed'`.
+        neighborhood_px : int, default=1024
+            Neighborhood window in pixels for `fastDistanceTransform`.
+
+        Returns
+        -------
         ee.Image or None
-            Stacked distance metrics with bands:
-            - 'dist_roads': Distance to nearest road network
-            - 'dist_coast': Distance to nearest coastline
-            - 'dist_settlement': Distance to nearest settlement
-            Returns None if calculation fails completely.
-            
-        Example:
-        --------
-        >>> calc = distance_calculator()
-        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
-        >>> 
-        >>> # Fast pixel-based calculation
-        >>> distances_px = calc.calculate_distance_metrics(aoi, max_dist=100000, in_meters=False)
-        >>> 
-        >>> # Accurate meter-based calculation  
-        >>> distances_m = calc.calculate_distance_metrics(aoi, max_dist=50000, in_meters=True)
-        
+            Stacked distance image containing requested bands (`dist_roads`, `dist_coast`, `dist_settlement`).
         """
         try:
-            logger.info(f"Calculating distance metrics (max_dist={max_dist}, in_meters={in_meters})...")
-            
-            # Set up cost image based on distance unit preference
-            if in_meters:
-                # Distance in meters: Use pixel area square root as cost
-                # This accounts for varying pixel sizes due to map projection
-                cost_image = ee.Image.pixelArea().sqrt()
-                logger.info("Using meter-based distance calculation (slower but more accurate)")
-            else:
-                # Distance in pixel units: Uniform cost of 1 per pixel
-                # Faster computation but less accurate for large areas
-                cost_image = ee.Image(1)
-                logger.info("Using pixel-based distance calculation (faster but less precise)")
-            
-            # Helper function to calculate distance from source mask
-            def distance_image(source_mask):
-                """
-                Calculate cumulative cost distance from binary source mask.
-                
-                Parameters:
-                -----------
-                source_mask : ee.Image
-                    Binary mask where value 1 indicates source locations (starting points)
-                    
-                Returns:
-                --------
-                ee.Image : Distance image with cumulative cost values
-                """
-                return cost_image.cumulativeCost(source_mask, max_dist)
-            
-            # 1. Natural Earth Coastline Data Processing
-            # Source: https://www.naturalearthdata.com/downloads/10m-physical-vectors/10m-coastline/
-            logger.info("Processing coastline data...")
-            try:
-                ne_coastline = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/coastline_ne_10m"
-                ).filterBounds(aoi)
-                
-                # Convert vector features to raster mask
-                # Each feature gets a constant value of 1, then reduce to image
-                coast_dist = ne_coastline.map(lambda ft: ft.set('constant', 1)) \
-                                        .reduceToImage(['constant'], ee.Reducer.first()) \
-                                        .mask()  # Create binary mask (1 where coastline exists)
-                
-            except Exception as e:
-                logger.warning(f"Failed to load coastline data: {str(e)}")
-                # Create empty mask if coastline data unavailable
-                coast_dist = ee.Image(0).mask(ee.Image(0))
-            
-            # 2. Roads Data Processing (OSM + RBI)
-            # Combines OpenStreetMap and Rupa Bumi Indonesia (RBI) road networks
-            logger.info("Processing roads data...")
-            try:
-                #OpenStreetMap roads (use legacy asset from RESTORE+, update might be needed)
-                road_osm = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/road_osm"
-                ).filterBounds(aoi)
-                
-                #RBI roads (use legacy asset from RESTORE+, update might be needed)
-                road_rbi = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/road_rbi"
-                ).filterBounds(aoi)
-                
-                # Merge road datasets and convert to raster mask
-                roads_dist = road_osm.merge(road_rbi) \
-                                    .map(lambda ft: ft.set('constant', 1)) \
-                                    .reduceToImage(['constant'], ee.Reducer.max()) \
-                                    .mask()  # Use max reducer to handle overlapping roads
-                
-            except Exception as e:
-                logger.warning(f"Failed to load roads data: {str(e)}")
-                # Create empty mask if roads data unavailable
-                roads_dist = ee.Image(0).mask(ee.Image(0))
-            
-            # 3. Settlement Data Processing (HRSL)
-            # Source: Facebook High Resolution Settlement Layer
-            # https://dataforgood.facebook.com/dfg/tools/high-resolution-population-density-maps
-            #calculation is based on RESTORE+ codebase
-            logger.info("Processing settlement data...")
-            try:
-                # Load HRSL population density data
-                hrsl = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop") \
-                        .mosaic() \
-                        .clip(aoi)
-                
-                # Apply connected component analysis to identify settlement clusters
-                # This groups adjacent populated pixels into coherent settlements
-                hrsl_connected = hrsl.int().connectedPixelCount(maxSize=100, eightConnected=True)
-                
-                # Create settlement mask: areas with >3 connected populated pixels
-                # This filters out isolated pixels and focuses on actual settlements
-                hrsl_masked = hrsl_connected.unmask().gt(3)
-                
-            except Exception as e:
-                logger.warning(f"Failed to load settlement data: {str(e)}")
-                # Create empty mask if settlement data unavailable
-                hrsl_masked = ee.Image(0).mask(ee.Image(0))
-            
-            # 4. Calculate Distance Transformations
-            logger.info("Computing distance transformations...")
-            
-            # Calculate cumulative cost distance for each feature type
-            dist_roads = distance_image(roads_dist).rename('dist_roads')
-            dist_coast = distance_image(coast_dist).rename('dist_coast')
-            dist_settlement = distance_image(hrsl_masked).rename('dist_settlement')
-            
-            # Stack all distance metrics into single multi-band image
-            distance_metrics = ee.Image.cat(dist_roads, dist_coast, dist_settlement)
-            
-            logger.info("Successfully calculated distance metrics: dist_roads, dist_coast, dist_settlement")
+            logger.info(
+                f"Calculating fast distance metrics (max_dist={max_dist}, in_meters={in_meters}, "
+                f"road_source={road_source}, main_roads_only={main_roads_only})..."
+            )
+            layers = []
+
+            if include_roads:
+                dist_roads = self.calculate_distance_to_roads(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    road_source=road_source,
+                    main_roads_only=main_roads_only,
+                    road_types=road_types,
+                    precomputed_asset=precomputed_road_asset,
+                    neighborhood_px=neighborhood_px
+                )
+                layers.append(dist_roads)
+
+            if include_coast:
+                dist_coast = self.calculate_distance_to_coast(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    neighborhood_px=neighborhood_px
+                )
+                layers.append(dist_coast)
+
+            if include_settlement:
+                dist_settlement = self.calculate_distance_to_settlement(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    neighborhood_px=neighborhood_px
+                )
+                layers.append(dist_settlement)
+
+            if not layers:
+                logger.warning("No distance layers were requested")
+                return None
+
+            distance_metrics = ee.Image.cat(*layers) if len(layers) > 1 else layers[0]
+            logger.info("Successfully constructed fast distance predictor stack")
             return distance_metrics
-            
+
         except Exception as e:
             logger.error(f"Failed to calculate distance metrics: {str(e)}")
-            logger.error("This may be due to:")
-            logger.error("- Missing or inaccessible datasets")
-            logger.error("- Earth Engine quota limits")
-            logger.error("- Network connectivity issues")
-            logger.error("- AOI outside dataset coverage area")
             return None
 
 #=================================== Predictor Calculation ===================================
@@ -1520,8 +1679,9 @@ class PredictorCalculation:
         self.terrain_calc = terrain_calculator()
         self.spectral_calc = SpectralCalculator()
         self.sar_calc = get_sar_data()
+        self.distance_calc = distance_calculator()
         
-        logger.info("Predictor Calculation initialized with terrain, spectral and SAR calculators")
+        logger.info("Predictor Calculation initialized with terrain, spectral, SAR, and distance calculators")
     def detect_sensor(
         self,
         sensor_hint: Optional[str] = None,
@@ -2047,6 +2207,60 @@ class PredictorCalculation:
                     result["warnings"].append(error_msg)
                     logger.warning(error_msg)
             
+            # Step 4d: Compute Distance-based predictors (if selected)
+            distance_layers = []
+            distance_names = []
+            dist_opts = predictor_config.get("distance_options", {}) or {}
+            max_dist_val = dist_opts.get("max_dist", 50000)
+            in_meters_val = dist_opts.get("in_meters", True)
+            road_source_val = dist_opts.get("road_source", "grip4")
+            main_roads_only_val = dist_opts.get("main_roads_only", True)
+            precomputed_road_asset_val = dist_opts.get("precomputed_road_asset", None)
+
+            if "individual_predictors" in predictor_config:
+                ind_p = predictor_config["individual_predictors"]
+                want_all_dist = bool(predictor_config.get("distance", False) or ind_p.get("distance", False))
+                want_roads = want_all_dist or bool(ind_p.get("dist_roads", False))
+                want_coast = want_all_dist or bool(ind_p.get("dist_coast", False))
+                want_settlement = want_all_dist or bool(ind_p.get("dist_settlement", False))
+            else:
+                want_all_dist = bool(predictor_config.get("distance", False))
+                want_roads = want_all_dist
+                want_coast = want_all_dist
+                want_settlement = want_all_dist
+
+            if want_roads or want_coast or want_settlement:
+                if progress_callback:
+                    progress_callback(88, "Computing distance predictors...")
+                try:
+                    dist_img = self.distance_calc.calculate_distance_metrics(
+                        aoi=aoi,
+                        max_dist=max_dist_val,
+                        in_meters=in_meters_val,
+                        include_roads=want_roads,
+                        include_coast=want_coast,
+                        include_settlement=want_settlement,
+                        road_source=road_source_val,
+                        main_roads_only=main_roads_only_val,
+                        precomputed_road_asset=precomputed_road_asset_val,
+                    )
+                    if dist_img is not None:
+                        result["predictors"]["distance"] = dist_img
+                        if want_roads:
+                            distance_names.append("dist_roads")
+                        if want_coast:
+                            distance_names.append("dist_coast")
+                        if want_settlement:
+                            distance_names.append("dist_settlement")
+                        result["predictor_info"].append(
+                            f"Jarak & Aksesibilitas ({len(distance_names)} band: {', '.join(distance_names)})"
+                        )
+                        logger.info(f"Added distance bands: {distance_names}")
+                except Exception as e:
+                    error_msg = f"Error computing distance predictors: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+
             # Step 5: Stack all predictors together
             if result["predictors"]:
                 if progress_callback:
