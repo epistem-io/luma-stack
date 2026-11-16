@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from tqdm.auto import tqdm
 from .ee_config import ensure_ee_initialized
 import matplotlib.pyplot as plt
@@ -2041,9 +2041,9 @@ class _ProgressRandomForest(BaseEstimator, ClassifierMixin):
         return self.estimator_.feature_importances_
 
 
-class RFELocal:
+class RFE_CV:
     """
-    Local Recursive Feature Elimination with Cross-Validation (RFECV)
+     Recursive Feature Elimination with Cross-Validation (RFECV)
     using scikit-learn's RandomForestClassifier.
 
     Extracts sampled training properties from Google Earth Engine once with
@@ -2067,7 +2067,7 @@ class RFELocal:
         max_depth: Optional[int] = 12,
         min_samples_leaf: int = 2,
         seed: int = 42,
-        max_samples: Optional[int] = 2000,
+        max_samples: Optional[int] = 5000,
         n_jobs: int = 1,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         verbose: bool = True,
@@ -2148,8 +2148,9 @@ class RFELocal:
     def _extract_dataframe(self) -> pd.DataFrame:
         """
         Extract features and class_property into a clean pandas DataFrame.
-        Drops geometries server-side (retainGeometry=False) and avoids extra
-        size()/sort()/toList() round-trips on Earth Engine.
+        Drops geometries server-side (retainGeometry=False), applies per-class
+        balanced capping on Earth Engine (supporting both point and polygon
+        training data), and paginates via computeFeatures without size()/sort()/toList().
         """
         cols = list(dict.fromkeys(self.features + [self.class_property]))
 
@@ -2159,20 +2160,30 @@ class RFELocal:
             fc = self.training_data.select(propertySelectors=cols, retainGeometry=False)
             raw_features: List[Dict[str, Any]] = []
 
+            if self.max_samples is not None:
+                distinct_classes = fc.aggregate_array(self.class_property).distinct().getInfo() or []
+                if not distinct_classes:
+                    raise ValueError("training_data FeatureCollection is empty")
+                per_class_cap = max(2, self.max_samples // len(distinct_classes))
+                target_fc = ee.FeatureCollection(
+                    ee.List(distinct_classes).map(
+                        lambda c: fc.filter(ee.Filter.eq(self.class_property, c)).limit(per_class_cap)
+                    )
+                ).flatten()
+            else:
+                target_fc = fc
+
             if self.max_samples is not None and self.max_samples <= self._GEE_BATCH_SIZE:
-                # Single round-trip: avoid size(), randomColumn().sort(), and toList()
                 with tqdm(
                     total=1,
                     desc="Extracting GEE samples",
                     unit="batch",
                     disable=not self.verbose,
                 ) as pbar:
-                    info = fc.limit(self.max_samples).getInfo() or {}
+                    info = target_fc.getInfo() or {}
                     raw_features.extend(info.get("features", []))
                     pbar.update(1)
             else:
-                # Stream paginated batches via computeFeatures without size() or toList()
-                target_fc = fc.limit(self.max_samples) if self.max_samples is not None else fc
                 page_token = None
                 with tqdm(
                     desc="Extracting GEE samples",
@@ -2216,6 +2227,20 @@ class RFELocal:
         dropped = before_len - len(df)
         if dropped > 0:
             self._log(f"Dropped {dropped} rows containing NaN/non-numeric values")
+
+        if isinstance(self.training_data, pd.DataFrame) and self.max_samples is not None and len(df) > self.max_samples:
+            class_counts = df[self.class_property].value_counts()
+            if (class_counts >= 2).all() and len(class_counts) <= self.max_samples:
+                df, _ = train_test_split(
+                    df,
+                    train_size=self.max_samples,
+                    stratify=df[self.class_property],
+                    random_state=self.seed,
+                )
+            else:
+                df = df.sample(n=self.max_samples, random_state=self.seed)
+            df = df.reset_index(drop=True)
+            self._log(f"Stratified-subsampled DataFrame to {len(df)} rows")
 
         return df
 
