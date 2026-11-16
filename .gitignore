@@ -220,3 +220,8 @@ notebooks/Module_3_Generate_ROI.ipynb
 /.kiro
 /.agents
 /docs
+/.vscode
+BRDF_ee.js
+tests/test_rfe_local.py
+tests/test_sample_quality_nonparametric.py
+tests/test_sensor_predictors.py

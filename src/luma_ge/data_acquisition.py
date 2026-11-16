@@ -180,6 +180,53 @@ class Reflectance_Data:
             'description': 'Sentinel-2 Level-1C Top-of-Atmosphere (Harmonized)',
         }
     }
+    # Define NASA Harmonized Landsat Sentinel-2 (HLS v2.0) datasets (2013-present, 30m MGRS grid)
+    HLS_DATASETS = {
+        'HLS': {
+            'l30_collection': 'NASA/HLS/HLSL30/v002',
+            's30_collection': 'NASA/HLS/HLSS30/v002',
+            'cloud_property': 'CLOUD_COVERAGE',
+            'type': 'hls_merged',
+            'sensor': 'HLS',
+            'start_date': '2013-04-01',
+            'description': 'NASA Harmonized Landsat Sentinel-2 (HLSL30 + HLSS30 v2.0, 30m)',
+        },
+        'HLS_L30': {
+            'collection': 'NASA/HLS/HLSL30/v002',
+            'cloud_property': 'CLOUD_COVERAGE',
+            'type': 'hls_l30',
+            'sensor': 'HLS_L30',
+            'start_date': '2013-04-01',
+            'description': 'NASA Harmonized Landsat-8/9 OLI Surface Reflectance (HLSL30 v2.0, 30m)',
+        },
+        'HLS_S30': {
+            'collection': 'NASA/HLS/HLSS30/v002',
+            'cloud_property': 'CLOUD_COVERAGE',
+            'type': 'hls_s30',
+            'sensor': 'HLS_S30',
+            'start_date': '2015-11-28',
+            'description': 'NASA Harmonized Sentinel-2 MSI Surface Reflectance (HLSS30 v2.0, 30m)',
+        },
+    }
+    # Roy et al. (2016) Table 2 OLS coefficients transforming Landsat TM/ETM+ (L4/L5/L7) SR to OLI (L8/L9) SR
+    ROY2016_COEFFICIENTS = {
+        'slopes': {
+            'BLUE': 0.9747,
+            'GREEN': 0.9822,
+            'RED': 0.9739,
+            'NIR': 1.0113,
+            'SWIR1': 1.0071,
+            'SWIR2': 1.0106,
+        },
+        'intercepts': {
+            'BLUE': 0.0003,
+            'GREEN': 0.0033,
+            'RED': 0.0010,
+            'NIR': 0.0051,
+            'SWIR1': 0.0043,
+            'SWIR2': 0.0030,
+        },
+    }
     #Define the thermal datasets. The thermal bands used is from Collection 2 Top-of-atmosphere data 
     #The TOA data provide consistent result and contain minimum missing pixel data
     #Note: Landsat 1-3 MSS sensors did not have thermal bands, so they are excluded
@@ -1218,6 +1265,408 @@ class Reflectance_Data:
             'filtered_collection': filtered_stats,
             'detailed_stats_computed': compute_detailed_stats
         }
+
+    # =========================================================================
+    # HLS v2.0 (Harmonized Landsat Sentinel-2) & Cross-Sensor Harmonization
+    # =========================================================================
+    def mask_hls_fmask(self, image: ee.Image, mask_high_aerosol: bool = True) -> ee.Image:
+        """
+        Mask clouds, cloud adjacency, cloud shadows, snow/ice, and optionally high
+        aerosol in NASA HLS v2.0 imagery (`HLSL30` and `HLSS30`) using the `Fmask` band.
+
+        Bit layout of `Fmask`:
+        - Bit 0: Cirrus
+        - Bit 1: Cloud
+        - Bit 2: Adjacent to cloud/shadow
+        - Bit 3: Cloud shadow
+        - Bit 4: Snow/ice
+        - Bits 6-7: Aerosol level (`11` = 3 = high aerosol)
+        """
+        qa = image.select('Fmask')
+        cirrus = qa.bitwiseAnd(1 << 0).eq(0)
+        cloud = qa.bitwiseAnd(1 << 1).eq(0)
+        adj_cloud = qa.bitwiseAnd(1 << 2).eq(0)
+        shadow = qa.bitwiseAnd(1 << 3).eq(0)
+        snow = qa.bitwiseAnd(1 << 4).eq(0)
+
+        mask = cirrus.And(cloud).And(adj_cloud).And(shadow).And(snow)
+        if mask_high_aerosol:
+            low_med_aerosol = qa.rightShift(6).bitwiseAnd(3).neq(3)
+            mask = mask.And(low_med_aerosol)
+
+        return ee.Image(image.updateMask(mask).copyProperties(image, image.propertyNames()))
+
+    def rename_hls_bands(self, image: ee.Image, hls_type: str = 'HLS_L30') -> ee.Image:
+        """
+        Select and rename NASA HLS v2.0 optical bands to standardized semantic names:
+        `['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']`.
+
+        - `HLS_L30` (Landsat 8/9 OLI): `['B2', 'B3', 'B4', 'B5', 'B6', 'B7']`
+        - `HLS_S30` (Sentinel-2 MSI): `['B2', 'B3', 'B4', 'B8A', 'B11', 'B12']`
+        """
+        target_names = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+        if hls_type == 'HLS_L30':
+            src_bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7']
+        elif hls_type == 'HLS_S30':
+            src_bands = ['B2', 'B3', 'B4', 'B8A', 'B11', 'B12']
+        else:
+            raise ValueError(f"Unsupported hls_type '{hls_type}'. Expected 'HLS_L30' or 'HLS_S30'.")
+
+        renamed = image.select(src_bands, target_names)
+        return ee.Image(renamed.copyProperties(image, image.propertyNames()))
+
+    def apply_hls_scale_factors(self, image: ee.Image) -> ee.Image:
+        """
+        Apply the NASA HLS v2.0 surface reflectance scale factor (`0.0001`).
+
+        Note: In Google Earth Engine, `NASA/HLS/HLSL30/v002` and `NASA/HLS/HLSS30/v002`
+        optical bands are stored with a scale factor of `0.0001` (or pre-scaled float
+        in some GEE catalog views). If `multiply(0.0001)` is requested via
+        `scale_reflectance=True` in `get_hls_optical_data`, this converts integer DN
+        to `[0.0, 1.0]` surface reflectance.
+        """
+        scaled = image.multiply(0.0001).toFloat()
+        return ee.Image(scaled.copyProperties(image, image.propertyNames()))
+
+    def get_hls_optical_data(
+        self,
+        aoi,
+        start_date,
+        end_date,
+        dataset: str = 'HLS',
+        cloud_cover: int = 30,
+        mask_high_aerosol: bool = True,
+        scale_reflectance: bool = True,
+        verbose: bool = True,
+        compute_detailed_stats: bool = True,
+    ):
+        """
+        Retrieve a filtered, Fmask-masked, and band-standardized NASA Harmonized
+        Landsat Sentinel-2 (HLS v2.0) collection (`HLS`, `HLS_L30`, or `HLS_S30`).
+
+        Parameters
+        ----------
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest (must not be None).
+        start_date, end_date : int or str
+            Date bounds (`YYYY` or `YYYY-MM-DD`). Must not end before `2013-04-01`
+            (`2015-11-28` for `HLS_S30`).
+        dataset : str, optional
+            One of `'HLS'` (merged L30 + S30), `'HLS_L30'`, or `'HLS_S30'`. Default `'HLS'`.
+        cloud_cover : int, optional
+            Maximum `CLOUD_COVERAGE` percentage (0-100). Default `30`.
+        mask_high_aerosol : bool, optional
+            Mask pixels with high aerosol (`Fmask` bits 6-7 == 3). Default `True`.
+        scale_reflectance : bool, optional
+            Multiply optical bands by `0.0001` to convert DN to `[0, 1]` reflectance.
+            Default `True`.
+        verbose : bool, optional
+            Log collection details. Default `True`.
+        compute_detailed_stats : bool, optional
+            Compute detailed collection statistics. Default `True`.
+
+        Returns
+        -------
+        tuple : (ee.ImageCollection, dict)
+            Pre-processed collection with bands `['BLUE','GREEN','RED','NIR','SWIR1','SWIR2']`
+            and metadata/statistics dictionary.
+        """
+        if aoi is None:
+            raise ValueError("aoi must not be None — provide an ee.Geometry or ee.FeatureCollection.")
+
+        if dataset not in self.HLS_DATASETS:
+            raise ValueError(f"dataset must be one of {list(self.HLS_DATASETS.keys())}, got '{dataset}'")
+
+        start_date = parse_date_input(start_date, is_start=True)
+        end_date = parse_date_input(end_date, is_start=False)
+        config = self.HLS_DATASETS[dataset]
+
+        if end_date < config['start_date']:
+            raise ValueError(
+                f"{dataset} is only available from {config['start_date']} onward "
+                f"(requested: {start_date} to {end_date}). Use Landsat 4-7 for earlier periods."
+            )
+
+        def _prepare_subcollection(col_id: str, hls_type: str):
+            init_col = (
+                ee.ImageCollection(col_id)
+                .filterBounds(aoi)
+                .filterDate(start_date, end_date)
+            )
+            filtered = (
+                init_col
+                .filter(ee.Filter.lt(config['cloud_property'], cloud_cover))
+                .limit(MAX_COLLECTION_SIZE)
+                .map(lambda img: self.mask_hls_fmask(img, mask_high_aerosol=mask_high_aerosol))
+                .map(lambda img: self.rename_hls_bands(img, hls_type=hls_type))
+            )
+            if scale_reflectance:
+                filtered = filtered.map(lambda img: self.apply_hls_scale_factors(img))
+            return init_col, filtered
+
+        if dataset == 'HLS':
+            init_l30, col_l30 = _prepare_subcollection(config['l30_collection'], 'HLS_L30')
+            init_s30, col_s30 = _prepare_subcollection(config['s30_collection'], 'HLS_S30')
+            initial_collection = init_l30.merge(init_s30)
+            collection = col_l30.merge(col_s30).limit(MAX_COLLECTION_SIZE)
+        elif dataset == 'HLS_L30':
+            initial_collection, collection = _prepare_subcollection(config['collection'], 'HLS_L30')
+        else:
+            initial_collection, collection = _prepare_subcollection(config['collection'], 'HLS_S30')
+
+        stats_object = Reflectance_Stats()
+        hls_props = [config['cloud_property'], 'system:time_start', 'system:index']
+        initial_stats = stats_object.get_collection_statistics(
+            initial_collection,
+            compute_detailed_stats,
+            cloud_property=config['cloud_property'],
+            stats_properties=hls_props,
+        )
+        filtered_stats = stats_object.get_collection_statistics(
+            collection,
+            compute_detailed_stats,
+            cloud_property=config['cloud_property'],
+            stats_properties=hls_props,
+        )
+
+        if verbose:
+            self.logger.info(f"Retrieved {config['description']} for {start_date} to {end_date}")
+
+        return collection, {
+            'dataset': config['description'],
+            'sensor': config['sensor'],
+            'date_range_requested': f"{start_date} to {end_date}",
+            'cloud_cover_threshold': cloud_cover,
+            'collection_type': dataset,
+            'initial_collection': initial_stats,
+            'filtered_collection': filtered_stats,
+            'detailed_stats_computed': compute_detailed_stats,
+        }
+
+    def apply_brdf_harmonization(self, image: ee.Image, sensor_type: str) -> ee.Image:
+        """
+        Apply Roy et al. (2016) Bidirectional Reflectance Distribution Function (BRDF) 
+        Table 2 OLS linear regression coefficients to transform
+        Landsat 4/5/7 TM/ETM+ Surface Reflectance (`BLUE..SWIR2`) into Landsat 8/9 OLI
+        equivalent Surface Reflectance:
+
+            rho_OLI = slope * rho_ETM + intercept
+
+        For sensors other than `'L4'`, `'L5'`, `'L7'`, returns ``image`` unchanged.
+        """
+        if sensor_type not in ('L4', 'L5', 'L7'):
+            return image
+
+        bands = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+        slopes = [self.ROY2016_COEFFICIENTS['slopes'][b] for b in bands]
+        intercepts = [self.ROY2016_COEFFICIENTS['intercepts'][b] for b in bands]
+
+        slope_img = ee.Image.constant(slopes).rename(bands)
+        itcp_img = ee.Image.constant(intercepts).rename(bands)
+
+        harmonized = (
+            image.select(bands)
+            .multiply(slope_img)
+            .add(itcp_img)
+            .toFloat()
+            .rename(bands)
+        )
+        return ee.Image(
+            image
+            .addBands(harmonized, bands, True)
+            .copyProperties(image, image.propertyNames())
+        )
+
+    def get_multitemporal_optical_data(
+        self,
+        aoi,
+        periods,
+        harmonize_landsat: bool = True,
+        apply_brdf: bool = False,
+        apply_topo_correction: bool = False,
+        dem: Optional[ee.Image] = None,
+        include_thermal: bool = False,
+        verbose: bool = True,
+        compute_detailed_stats: bool = True,
+    ) -> dict:
+        """
+        Acquire optical image collections across N >= 2 mapping periods.
+
+        Supports any mix of Landsat (`L1_RAW`..`L9_SR`), Sentinel-2 (`S2_SR`, `S2_TOA`, `S2`),
+        and NASA HLS (`HLS`, `HLS_L30`, `HLS_S30`). Optionally applies Roy et al. (2016)
+        TM/ETM+ -> OLI spectral adjustment, BRDF c-factor normalization (`BRDF_Correction`),
+        and SCSc topographic correction (`Topographic_Correction`).
+
+        Parameters
+        ----------
+        aoi : ee.Geometry or ee.FeatureCollection
+            Area of interest.
+        periods : dict or list of dict/PeriodConfig
+            Either `{label: {'start_date', 'end_date', 'sensor', 'cloud_cover', ...}}`
+            or a list of period dicts/objects each carrying a `'label'`.
+            Must contain at least 2 distinct periods.
+        harmonize_landsat : bool, optional
+            Apply Roy et al. (2016) OLS harmonization to Landsat 4/5/7 SR collections.
+            Default `True`.
+        apply_brdf : bool, optional
+            Apply `BRDF_Correction` to Landsat 4-9 and Sentinel-2 collections.
+            Skipped automatically for HLS (already NBAR) and Landsat 1-3 MSS.
+            Default `False`.
+        apply_topo_correction : bool, optional
+            Apply `Topographic_Correction` (SCSc) to collections (except MSS).
+            Default `False`.
+        dem : ee.Image, optional
+            Custom DEM for topographic correction (defaults to NASADEM).
+        include_thermal : bool, optional
+            Also fetch corresponding Landsat TOA thermal collection when available.
+            Default `False`.
+        verbose : bool, optional
+            Log progress details. Default `True`.
+        compute_detailed_stats : bool, optional
+            Compute detailed collection statistics per period. Default `True`.
+
+        Returns
+        -------
+        dict
+            `{'periods': {label: {...}}, 'period_order': [label, ...]}` sorted
+            chronologically by `(order_index, start_date)`.
+        """
+        if aoi is None:
+            raise ValueError("aoi must not be None.")
+
+        # Normalize periods into a list of dicts
+        normalized = []
+        if isinstance(periods, dict):
+            for idx, (label, cfg) in enumerate(periods.items()):
+                item = dict(cfg) if isinstance(cfg, dict) else vars(cfg).copy()
+                item['label'] = label
+                item.setdefault('order_index', idx)
+                normalized.append(item)
+        elif isinstance(periods, (list, tuple)):
+            for idx, cfg in enumerate(periods):
+                item = dict(cfg) if isinstance(cfg, dict) else vars(cfg).copy()
+                if 'label' not in item or not item['label']:
+                    raise ValueError(f"Period at index {idx} is missing a 'label'.")
+                item.setdefault('order_index', idx)
+                normalized.append(item)
+        else:
+            raise ValueError("periods must be a dict or a list/tuple of period configurations.")
+
+        if len(normalized) < 2:
+            raise ValueError(f"Multitemporal analysis requires at least 2 periods, got {len(normalized)}.")
+
+        labels = [p['label'] for p in normalized]
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"Period labels must be unique, got: {labels}")
+
+        # Sort chronologically by parsed start_date, breaking ties with order_index
+        for p in normalized:
+            p['_parsed_start'] = parse_date_input(p['start_date'], is_start=True)
+            p['_parsed_end'] = parse_date_input(p['end_date'], is_start=False)
+
+        normalized.sort(key=lambda p: (p['_parsed_start'], p.get('order_index', 0)))
+        period_order = [p['label'] for p in normalized]
+
+        brdf_corrector = None
+        topo_corrector = None
+        if apply_brdf or apply_topo_correction:
+            from .imagery_correction import BRDF_Correction, Topographic_Correction
+            if apply_brdf:
+                brdf_corrector = BRDF_Correction(log_level=self.logger.level)
+            if apply_topo_correction:
+                topo_corrector = Topographic_Correction(log_level=self.logger.level)
+
+        results = {}
+        for p in normalized:
+            label = p['label']
+            sensor_key = p.get('sensor') or p.get('optical_data') or 'L8_SR'
+            cloud_cover = p.get('cloud_cover', 30)
+            start_d = p['_parsed_start']
+            end_d = p['_parsed_end']
+            thermal_col = None
+
+            if sensor_key in self.OPTICAL_DATASETS:
+                col, stats = self.get_optical_data(
+                    aoi=aoi,
+                    start_date=start_d,
+                    end_date=end_d,
+                    optical_data=sensor_key,
+                    cloud_cover=cloud_cover,
+                    verbose=verbose,
+                    compute_detailed_stats=compute_detailed_stats,
+                )
+                sensor_code = self.OPTICAL_DATASETS[sensor_key]['sensor']
+                if harmonize_landsat and sensor_code in ('L4', 'L5', 'L7'):
+                    col = col.map(lambda img, sc=sensor_code: self.apply_brdf_harmonization(img, sc))
+
+                if apply_brdf and brdf_corrector is not None and sensor_code in ('L4', 'L5', 'L7', 'L8', 'L9'):
+                    col = brdf_corrector.correct_collection(col, verbose=verbose)
+                if apply_topo_correction and topo_corrector is not None and sensor_code in ('L4', 'L5', 'L7', 'L8', 'L9'):
+                    col = topo_corrector.correct_collection(col, dem=dem, scale=30, verbose=verbose)
+
+                if include_thermal and self.has_thermal_capability(sensor_key):
+                    thermal_key = sensor_key.replace('_SR', '_TOA')
+                    thermal_col, _ = self.get_thermal_bands(
+                        aoi=aoi,
+                        start_date=start_d,
+                        end_date=end_d,
+                        thermal_data=thermal_key,
+                        cloud_cover=cloud_cover,
+                        verbose=False,
+                        compute_detailed_stats=False,
+                    )
+
+            elif sensor_key in self.S2_DATASETS or sensor_key == 'S2':
+                cs_thresh = p.get('cs_threshold', 0.7)
+                col, stats = self.get_s2_optical_data(
+                    aoi=aoi,
+                    start_date=start_d,
+                    end_date=end_d,
+                    cloud_cover=cloud_cover,
+                    cs_threshold=cs_thresh,
+                    verbose=verbose,
+                    compute_detailed_stats=compute_detailed_stats,
+                )
+                if apply_brdf and brdf_corrector is not None:
+                    col = brdf_corrector.correct_collection(
+                        col, band_list=brdf_corrector.S2_OPTICAL_BANDS, verbose=verbose
+                    )
+                if apply_topo_correction and topo_corrector is not None:
+                    col = topo_corrector.correct_collection(col, dem=dem, scale=10, verbose=verbose)
+
+            elif sensor_key in self.HLS_DATASETS:
+                col, stats = self.get_hls_optical_data(
+                    aoi=aoi,
+                    start_date=start_d,
+                    end_date=end_d,
+                    dataset=sensor_key,
+                    cloud_cover=cloud_cover,
+                    verbose=verbose,
+                    compute_detailed_stats=compute_detailed_stats,
+                )
+                # Note: HLS is already NBAR BRDF-normalized; only apply topo correction if requested
+                if apply_topo_correction and topo_corrector is not None:
+                    col = topo_corrector.correct_collection(col, dem=dem, scale=30, verbose=verbose)
+            else:
+                raise ValueError(
+                    f"Unsupported sensor '{sensor_key}' for period '{label}'. "
+                    f"Supported: {list(self.OPTICAL_DATASETS.keys()) + list(self.S2_DATASETS.keys()) + list(self.HLS_DATASETS.keys())}"
+                )
+
+            results[label] = {
+                'collection': col,
+                'thermal_collection': thermal_col,
+                'stats': stats,
+                'sensor': sensor_key,
+                'start_date': start_d,
+                'end_date': end_d,
+                'cloud_cover': cloud_cover,
+            }
+
+        return {
+            'periods': results,
+            'period_order': period_order,
+        }
 class Reflectance_Stats:
     """
     Class for fetching image collection statistics
@@ -1736,7 +2185,8 @@ class final_Image:
     #thus when median composite is used cloud get 'remove' from the final image
     #adjust scale if needed
     def get_temporal_composite(self, collection, aoi, reducer='median', calculate_coverage=False,
-                              coverage_scale=30, sharpen: bool = False, verbose=True):
+                              coverage_scale=30, sharpen: bool = False, verbose=True,
+                              return_image_only: bool = False):
         """
         Create a temporal composite from image collection using specified reducer.
         Output is always clipped to the AOI.
@@ -1890,11 +2340,335 @@ class final_Image:
             coverage_stats = self.calculate_data_coverage(
                 composite, aoi, scale=coverage_scale, verbose=verbose
             )
-        
+
+        if return_image_only:
+            return composite
+
         return {
             'image': composite,
             'metadata': metadata,
             'coverage': coverage_stats
+        }
+
+    # =========================================================================
+    # CDF Histogram Matching & Multitemporal Composite Harmonization
+    # =========================================================================
+    def histogram_match(
+        self,
+        source_image: ee.Image,
+        reference_image: ee.Image,
+        region,
+        bands: Optional[List[str]] = None,
+        scale: int = 30,
+        max_buckets: int = 256,
+    ) -> ee.Image:
+        """
+        Perform server-side piecewise-linear Cumulative Distribution Function (CDF)
+        histogram matching of ``source_image`` onto ``reference_image`` within ``region``.
+
+        Uses a single ``reduceRegion(ee.Reducer.histogram())`` call per image across
+        all target ``bands`` (avoiding per-band network or aggregation loops) and
+        maps each source band through ``interpolate(src_vals, src_cdf)`` followed by
+        ``interpolate(ref_cdf, ref_vals)``.
+
+        Parameters
+        ----------
+        source_image : ee.Image
+            Historical or target composite image to be radiometrically matched.
+        reference_image : ee.Image
+            Baseline/reference composite image defining the target radiometric distribution.
+        region : ee.Geometry or ee.FeatureCollection
+            Area of interest over which histograms are computed.
+        bands : list of str, optional
+            Optical bands to histogram-match. If None, defaults to
+            `['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']`.
+        scale : int, optional
+            Sampling scale in meters for histogram computation. Default `30`.
+        max_buckets : int, optional
+            Maximum histogram bins. Default `256`.
+
+        Returns
+        -------
+        ee.Image
+            ``source_image`` with ``bands`` replaced by their histogram-matched
+            counterparts and all non-matched bands & properties preserved.
+        """
+        if bands is None:
+            bands = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+
+        if not bands:
+            return source_image
+
+        geometry = region.geometry() if isinstance(region, ee.FeatureCollection) else region
+
+        src_hist_dict = source_image.select(bands).reduceRegion(
+            reducer=ee.Reducer.histogram(maxBuckets=max_buckets),
+            geometry=geometry,
+            scale=scale,
+            maxPixels=DEFAULT_MAX_PIXELS,
+            bestEffort=True,
+            tileScale=DEFAULT_TILE_SCALE,
+        )
+        ref_hist_dict = reference_image.select(bands).reduceRegion(
+            reducer=ee.Reducer.histogram(maxBuckets=max_buckets),
+            geometry=geometry,
+            scale=scale,
+            maxPixels=DEFAULT_MAX_PIXELS,
+            bestEffort=True,
+            tileScale=DEFAULT_TILE_SCALE,
+        )
+
+        default_hist = ee.Dictionary({
+            'bucketMeans': [0.0, 1.0],
+            'histogram': [1.0, 1.0],
+        })
+
+        def _extract_vals_and_cdf(hist_dict: ee.Dictionary, band_name: str):
+            raw_hist = ee.Dictionary(
+                ee.List([hist_dict.get(band_name), default_hist]).reduce(ee.Reducer.firstNonNull())
+            )
+            means = ee.List(
+                ee.List([raw_hist.get('bucketMeans'), [0.0, 1.0]]).reduce(ee.Reducer.firstNonNull())
+            )
+            counts_list = ee.List(
+                ee.List([raw_hist.get('histogram'), [1.0, 1.0]]).reduce(ee.Reducer.firstNonNull())
+            )
+            # Enforce at least 2 bins and strictly positive counts (1e-6 floor)
+            # so cumulative sum is strictly monotonic for ee.Image.interpolate()
+            safe_means = ee.List(ee.Algorithms.If(means.size().gte(2), means, [0.0, 1.0]))
+            safe_counts = ee.List(ee.Algorithms.If(counts_list.size().gte(2), counts_list, [1.0, 1.0]))
+
+            counts_arr = ee.Array(safe_counts).max(1e-6)
+            cum_arr = counts_arr.accum(0)
+            total = cum_arr.get([-1]).max(1e-6)
+            cdf_list = cum_arr.divide(total).toList()
+            return safe_means, cdf_list
+
+        matched_bands = []
+        for band in bands:
+            src_vals, src_cdf = _extract_vals_and_cdf(src_hist_dict, band)
+            ref_vals, ref_cdf = _extract_vals_and_cdf(ref_hist_dict, band)
+
+            matched = (
+                source_image.select(band)
+                .interpolate(src_vals, src_cdf, 'clamp')
+                .interpolate(ref_cdf, ref_vals, 'clamp')
+                .toFloat()
+                .rename(band)
+            )
+            matched_bands.append(matched)
+
+        matched_stack = ee.Image.cat(matched_bands)
+        return ee.Image(
+            source_image
+            .addBands(matched_stack.select(bands), bands, True)
+            .copyProperties(source_image, source_image.propertyNames())
+        )
+
+    @staticmethod
+    def _expected_bands_for_sensor(sensor_key: Optional[str]) -> Optional[List[str]]:
+        """Return known standardized optical band names for a sensor key."""
+        if sensor_key in ('L8_SR', 'L9_SR'):
+            return ['AEROSOL', 'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+        if sensor_key in ('L4_SR', 'L5_SR', 'L7_SR', 'HLS', 'HLS_L30', 'HLS_S30'):
+            return ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
+        if sensor_key in ('S2_SR', 'S2_TOA', 'S2'):
+            return [
+                'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2',
+                'RED_EDGE3', 'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2',
+            ]
+        if sensor_key in ('L1_RAW', 'L2_RAW', 'L3_RAW'):
+            return ['GREEN', 'RED', 'NIR1', 'NIR2']
+        return None
+
+    def get_multitemporal_composites(
+        self,
+        collections_by_period: dict,
+        aoi,
+        reference_period: str = 'baseline',
+        reducer: str = 'median',
+        drop_aerosol: bool = True,
+        harmonize_sensors: bool = True,
+        histogram_match: bool = True,
+        scale: int = 30,
+        max_buckets: int = 256,
+        sharpen_s2: bool = False,
+        calculate_coverage: bool = False,
+        coverage_scale: int = 30,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Build, harmonize, and optionally histogram-match temporal composites across
+        N >= 2 mapping periods.
+
+        Cross-sensor harmonization steps performed when ``harmonize_sensors=True``:
+        1. Drops ``'AEROSOL'`` from Landsat 8/9 composites when ``drop_aerosol=True``.
+        2. Scales ``S2_SR`` composites (`0-10000` DN) to `[0, 1]` surface reflectance
+           when paired with reflectance-scaled datasets (Landsat SR, HLS, `S2_TOA`).
+        3. Aliases Landsat 1-3 MSS ``'NIR2'`` (0.8-1.1 um) -> ``'NIR'`` when paired
+           with non-MSS sensors.
+        4. Computes the ordered ``common_bands`` intersection across all periods and
+           selects ``common_bands`` on every period's composite.
+        5. When ``histogram_match=True``, matches all common optical bands of each
+           non-reference period's composite onto ``reference_period`` within ``aoi``.
+        """
+        # Unwrap output of get_multitemporal_optical_data() if passed directly
+        if 'periods' in collections_by_period and isinstance(collections_by_period['periods'], dict):
+            period_order = collections_by_period.get(
+                'period_order', list(collections_by_period['periods'].keys())
+            )
+            period_entries = collections_by_period['periods']
+        else:
+            period_entries = collections_by_period
+            period_order = list(period_entries.keys())
+
+        if len(period_order) < 2:
+            raise ValueError(
+                f"get_multitemporal_composites requires at least 2 periods, got {len(period_order)}."
+            )
+
+        if reference_period not in period_entries:
+            fallback_ref = period_order[-1]
+            self.logger.warning(
+                f"reference_period '{reference_period}' not found in periods {period_order}; "
+                f"defaulting to '{fallback_ref}'."
+            )
+            reference_period = fallback_ref
+
+        geometry = aoi.geometry() if isinstance(aoi, ee.FeatureCollection) else aoi
+
+        raw_composites = {}
+        metadata_by_period = {}
+        coverage_by_period = {}
+        sensor_by_period = {}
+        bands_by_period = {}
+
+        # Detect whether any non-MSS or reflectance-scaled sensor is in the mix
+        for label in period_order:
+            entry = period_entries[label]
+            if isinstance(entry, dict) and 'collection' in entry:
+                sensor_by_period[label] = entry.get('sensor')
+            else:
+                sensor_by_period[label] = None
+
+        has_non_mss = any(
+            s not in ('L1_RAW', 'L2_RAW', 'L3_RAW') for s in sensor_by_period.values() if s is not None
+        )
+        has_reflectance_sensor = any(
+            s in ('L4_SR', 'L5_SR', 'L7_SR', 'L8_SR', 'L9_SR', 'HLS', 'HLS_L30', 'HLS_S30', 'S2_TOA')
+            for s in sensor_by_period.values() if s is not None
+        )
+
+        for label in period_order:
+            entry = period_entries[label]
+            if isinstance(entry, dict) and 'collection' in entry:
+                col = entry['collection']
+                thermal_col = entry.get('thermal_collection')
+                sensor_key = entry.get('sensor')
+            else:
+                col = entry
+                thermal_col = None
+                sensor_key = None
+
+            comp_res = self.get_temporal_composite(
+                collection=col,
+                aoi=aoi,
+                reducer=reducer,
+                calculate_coverage=calculate_coverage,
+                coverage_scale=coverage_scale,
+                sharpen=sharpen_s2,
+                verbose=verbose,
+            )
+            comp_img = comp_res['image']
+
+            # Scale S2_SR DN (0-10000) to [0, 1] reflectance when harmonized with SR datasets
+            if harmonize_sensors and sensor_key in ('S2_SR', 'S2') and (has_reflectance_sensor or histogram_match):
+                comp_img = ee.Image(
+                    comp_img.multiply(0.0001).toFloat().copyProperties(comp_img, comp_img.propertyNames())
+                )
+
+            expected_bands = self._expected_bands_for_sensor(sensor_key)
+            if expected_bands is None:
+                expected_bands = list(comp_img.bandNames().getInfo())
+            else:
+                expected_bands = list(expected_bands)
+
+            # Drop AEROSOL band in multitemporal stacks
+            if drop_aerosol and 'AEROSOL' in expected_bands:
+                expected_bands = [b for b in expected_bands if b != 'AEROSOL']
+                comp_img = comp_img.select(expected_bands)
+
+            # Alias MSS NIR2 -> NIR when paired with non-MSS sensors
+            if harmonize_sensors and sensor_key in ('L1_RAW', 'L2_RAW', 'L3_RAW') and has_non_mss:
+                if 'NIR2' in expected_bands and 'NIR' not in expected_bands:
+                    nir_alias = comp_img.select(['NIR2'], ['NIR'])
+                    comp_img = comp_img.addBands(nir_alias)
+                    expected_bands.append('NIR')
+
+            # Attach thermal median if provided
+            if thermal_col is not None:
+                thermal_median = thermal_col.median().clip(geometry).rename('THERMAL')
+                comp_img = comp_img.addBands(thermal_median)
+                if 'THERMAL' not in expected_bands:
+                    expected_bands.append('THERMAL')
+
+            raw_composites[label] = comp_img.toFloat()
+            metadata_by_period[label] = comp_res['metadata']
+            coverage_by_period[label] = comp_res['coverage']
+            bands_by_period[label] = expected_bands
+
+        # Compute canonical ordered common band intersection across all periods
+        canonical_order = [
+            'BLUE', 'GREEN', 'RED', 'RED_EDGE1', 'RED_EDGE2',
+            'RED_EDGE3', 'NIR', 'RED_EDGE4', 'SWIR1', 'SWIR2',
+            'NIR1', 'NIR2', 'THERMAL',
+        ]
+        common_set = set(bands_by_period[period_order[0]])
+        for label in period_order[1:]:
+            common_set &= set(bands_by_period[label])
+
+        common_bands = [b for b in canonical_order if b in common_set]
+        for b in bands_by_period[period_order[0]]:
+            if b in common_set and b not in common_bands:
+                common_bands.append(b)
+
+        if harmonize_sensors and not common_bands:
+            raise ValueError(
+                f"No common optical bands found across periods: {bands_by_period}"
+            )
+
+        harmonized_composites = {}
+        for label in period_order:
+            img = raw_composites[label]
+            if harmonize_sensors and common_bands:
+                img = img.select(common_bands)
+            harmonized_composites[label] = img
+
+        # Perform server-side CDF histogram matching on optical bands (excluding THERMAL)
+        if histogram_match:
+            ref_img = harmonized_composites[reference_period]
+            match_bands = [b for b in common_bands if b != 'THERMAL']
+            for label in period_order:
+                if label == reference_period:
+                    continue
+                harmonized_composites[label] = self.histogram_match(
+                    source_image=harmonized_composites[label],
+                    reference_image=ref_img,
+                    region=geometry,
+                    bands=match_bands,
+                    scale=scale,
+                    max_buckets=max_buckets,
+                )
+
+        return {
+            'composites': harmonized_composites,
+            'raw_composites': raw_composites,
+            'metadata': metadata_by_period,
+            'coverage': coverage_by_period,
+            'common_bands': common_bands,
+            'reference_period': reference_period,
+            'period_order': period_order,
+            'histogram_matched': histogram_match,
         }
 #Class helper for managing visualization parameters and band combinations originally
 class Vis_Params:
