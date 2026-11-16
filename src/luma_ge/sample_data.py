@@ -3,8 +3,6 @@ Module 3 Backend - Training Data Management
 
 This module provides training data loading and processing functionality.
 """
-
-import streamlit as st
 import pandas as pd
 import geopandas as gpd
 import numpy as np
@@ -495,6 +493,214 @@ try:
             except Exception as e:
                 logger.error(f"Error creating training data summary: {str(e)}")
                 return pd.DataFrame(), 0, pd.DataFrame()
+
+        @staticmethod
+        def LoadMultitemporalTrainData(
+            training_sources: Dict[str, Any],
+            landcover_df: Optional[pd.DataFrame],
+            aoi_geometry: Any = None,
+            period_order: Optional[List[str]] = None,
+            reference_period: str = 'baseline',
+            class_field: Optional[str] = None,
+            use_class_ids: bool = True,
+            min_samples: int = 20,
+        ) -> Dict[str, Any]:
+            """
+            Load and validate training data across multitemporal periods against a
+            shared classification scheme, routing the workflow to either:
+
+            - ``'model_transfer'`` when only ``reference_period`` has training data
+            - ``'batch'`` when every period in ``period_order`` has training data
+
+            Parameters
+            ----------
+            training_sources : dict[str, Any]
+                Mapping ``{period_label: source}`` where each source may be:
+                - ``str`` path to a shapefile (`.shp`) or Earth Engine FeatureCollection asset (`users/` / `projects/`),
+                - ``geopandas.GeoDataFrame``,
+                - ``ee.FeatureCollection``, or
+                - ``None`` (no training data for that period).
+            landcover_df : pandas.DataFrame or None
+                Shared classification scheme DataFrame containing `'ID'` (when ``use_class_ids=True``)
+                and/or `'LULC_Type'` / `'Class Name'`.
+            aoi_geometry : Any, optional
+                Area of interest (`GeoDataFrame`, Shapely geometry, or `ee.Geometry`).
+            period_order : list[str], optional
+                Ordered list of all mapping period labels. Defaults to ``list(training_sources.keys())``.
+            reference_period : str, default='baseline'
+                Reference period label used as the training source in Model Transfer mode.
+            class_field : str, optional
+                Column/property containing class labels. Auto-detects `'class_id'` or `'kelas'`
+                for GeoDataFrames when omitted, defaulting to `'kelas'`.
+            use_class_ids : bool, default=True
+                Validate class labels against ``landcover_df['ID']`` when True.
+            min_samples : int, default=20
+                Minimum sample count per class for sufficiency warnings.
+
+            Returns
+            -------
+            dict
+                ``{'mode', 'reference_period', 'period_order', 'provided_periods',
+                'training_by_period', 'validation_summary'}``.
+            """
+            if not isinstance(training_sources, dict) or not training_sources:
+                raise ValueError("training_sources must be a non-empty dictionary keyed by period label.")
+
+            if period_order is None:
+                period_order = list(training_sources.keys())
+            else:
+                period_order = list(period_order)
+
+            if len(period_order) < 2:
+                raise ValueError(
+                    f"Multitemporal training validation requires at least 2 periods, got {len(period_order)}."
+                )
+
+            unknown_keys = [k for k in training_sources.keys() if k not in period_order]
+            if unknown_keys:
+                raise ValueError(
+                    f"training_sources contains unknown period label(s) {unknown_keys}; "
+                    f"expected subset of {period_order}."
+                )
+
+            if reference_period not in period_order:
+                raise ValueError(
+                    f"reference_period '{reference_period}' is not in period_order {period_order}."
+                )
+
+            def _is_non_empty_source(src: Any) -> bool:
+                if src is None:
+                    return False
+                if isinstance(src, gpd.GeoDataFrame):
+                    return not src.empty
+                if isinstance(src, str):
+                    return bool(src.strip())
+                return True
+
+            provided_periods = [
+                p for p in period_order if _is_non_empty_source(training_sources.get(p))
+            ]
+
+            if len(provided_periods) == 0:
+                raise ValueError(
+                    f"No training data provided. Supply training data for '{reference_period}' "
+                    "(Model Transfer) or for all periods (Batch)."
+                )
+            elif len(provided_periods) == 1:
+                if provided_periods[0] != reference_period:
+                    raise ValueError(
+                        f"Single training dataset must belong to reference_period '{reference_period}', "
+                        f"but was provided for '{provided_periods[0]}'."
+                    )
+                mode = 'model_transfer'
+            elif len(provided_periods) == len(period_order):
+                mode = 'batch'
+            else:
+                missing = [p for p in period_order if p not in provided_periods]
+                raise ValueError(
+                    f"Partial training data provided for {provided_periods}; missing periods {missing}. "
+                    f"Provide training data for '{reference_period}' only (Model Transfer) or all periods (Batch)."
+                )
+
+            training_by_period: Dict[str, Dict[str, Any]] = {}
+            validation_summary: Dict[str, Dict[str, Any]] = {}
+
+            for label in provided_periods:
+                src = training_sources[label]
+                if isinstance(src, str):
+                    is_ee_asset = src.startswith(('users/', 'projects/'))
+                    train_dict = SyncTrainData.LoadTrainData(
+                        landcover_df=landcover_df,
+                        aoi_geometry=aoi_geometry,
+                        training_shp_path=None if is_ee_asset else src,
+                        training_ee_path=src if is_ee_asset else None,
+                    )
+                elif isinstance(src, gpd.GeoDataFrame):
+                    gdf_copy = src.copy()
+                    if gdf_copy.crs is None:
+                        gdf_copy = gdf_copy.set_crs('EPSG:4326')
+                    elif str(gdf_copy.crs).upper() != 'EPSG:4326':
+                        gdf_copy = gdf_copy.to_crs('EPSG:4326')
+                    detected_field = class_field
+                    if detected_field is None:
+                        if 'class_id' in gdf_copy.columns:
+                            detected_field = 'class_id'
+                        elif 'kelas' in gdf_copy.columns:
+                            detected_field = 'kelas'
+                        else:
+                            detected_field = 'kelas'
+                    train_dict = {
+                        'training_data': gdf_copy,
+                        'landcover_df': landcover_df,
+                        'class_field': detected_field,
+                        'validation_results': {
+                            'total_points': len(gdf_copy),
+                            'valid_points': len(gdf_copy),
+                            'points_after_class_filter': len(gdf_copy),
+                            'invalid_classes': [],
+                            'outside_aoi': [],
+                            'insufficient_samples': [],
+                            'warnings': [],
+                        },
+                    }
+                elif isinstance(src, ee.FeatureCollection):
+                    resolved_field = class_field or 'class_id'
+                    fc_size = src.size().getInfo()
+                    train_dict = {
+                        'training_data': src,
+                        'landcover_df': landcover_df,
+                        'class_field': resolved_field,
+                        'validation_results': {
+                            'total_points': fc_size,
+                            'valid_points': fc_size,
+                            'points_after_class_filter': fc_size,
+                            'invalid_classes': [],
+                            'outside_aoi': [],
+                            'insufficient_samples': [],
+                            'warnings': [],
+                        },
+                    }
+                else:
+                    raise ValueError(
+                        f"Unsupported training source type for period '{label}': {type(src).__name__}"
+                    )
+
+                if class_field is not None:
+                    train_dict = SyncTrainData.SetClassField(train_dict, class_field)
+
+                if aoi_geometry is not None:
+                    train_dict['aoi_geometry'] = aoi_geometry
+                    if isinstance(train_dict.get('training_data'), gpd.GeoDataFrame) and isinstance(
+                        aoi_geometry, gpd.GeoDataFrame
+                    ):
+                        train_dict = SyncTrainData.FilterTrainAoi(train_dict)
+
+                if landcover_df is not None:
+                    train_dict = SyncTrainData.ValidClass(train_dict, use_class_ids=use_class_ids)
+
+                # CheckSufficiency expects DataFrame-like .columns; handle FeatureCollection safely
+                td_obj = train_dict.get('training_data')
+                if isinstance(td_obj, gpd.GeoDataFrame):
+                    train_dict = SyncTrainData.CheckSufficiency(train_dict, min_samples=min_samples)
+                elif isinstance(td_obj, ee.FeatureCollection):
+                    cf = train_dict.get('class_field', 'class_id')
+                    hist = td_obj.aggregate_histogram(cf).getInfo() or {}
+                    insufficient = [
+                        k for k, v in hist.items() if int(v) < min_samples
+                    ]
+                    train_dict['validation_results']['insufficient_samples'] = insufficient
+
+                training_by_period[label] = train_dict
+                validation_summary[label] = train_dict['validation_results']
+
+            return {
+                'mode': mode,
+                'reference_period': reference_period,
+                'period_order': period_order,
+                'provided_periods': provided_periods,
+                'training_by_period': training_by_period,
+                'validation_summary': validation_summary,
+            }
     
     class SplitTrainData:
         """Data splitting functionality."""
@@ -526,6 +732,49 @@ try:
             except Exception as e:
                 logger.error(f"Error splitting training data: {str(e)}")
                 return gpd.GeoDataFrame(), gpd.GeoDataFrame()
+
+        @staticmethod
+        def SplitMultitemporalProcess(
+            training_by_period: Dict[str, Any],
+            TrainSplitPct: float = 0.7,
+            random_state: int = 123,
+            class_field: Optional[str] = None,
+        ) -> Dict[str, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]:
+            """
+            Split GeoDataFrame training sets across one or more periods into
+            ``(train_split, val_split)`` pairs.
+            """
+            splits: Dict[str, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]] = {}
+            for label, entry in training_by_period.items():
+                if isinstance(entry, dict) and 'training_data' in entry:
+                    gdf = entry['training_data']
+                    cf = class_field or entry.get('class_field', 'kelas')
+                else:
+                    gdf = entry
+                    cf = class_field or 'kelas'
+
+                if gdf is None or not isinstance(gdf, gpd.GeoDataFrame) or gdf.empty:
+                    splits[label] = (gpd.GeoDataFrame(), gpd.GeoDataFrame())
+                    continue
+
+                from sklearn.model_selection import train_test_split
+                strat_col = gdf[cf] if cf in gdf.columns else None
+                try:
+                    train_idx, val_idx = train_test_split(
+                        gdf.index,
+                        train_size=TrainSplitPct,
+                        random_state=random_state,
+                        stratify=strat_col,
+                    )
+                except ValueError:
+                    # Fallback without stratification if a rare class has 1 sample
+                    train_idx, val_idx = train_test_split(
+                        gdf.index,
+                        train_size=TrainSplitPct,
+                        random_state=random_state,
+                    )
+                splits[label] = (gdf.loc[train_idx].copy(), gdf.loc[val_idx].copy())
+            return splits
 
 except ImportError as e:
     logger.warning(f"Some functionality not available: {str(e)}")

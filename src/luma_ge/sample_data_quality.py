@@ -1,3 +1,8 @@
+"""
+Module 4 GE - Sample analysis via Separability and cluster analysis
+
+This module provides training data loading and processing functionality.
+"""
 import ee
 import pandas as pd
 import numpy as np
@@ -14,7 +19,7 @@ from .ee_config import ensure_ee_initialized
 ## System Response 4.1 Separability Analysis
 class sample_quality:
     """
-    class which contain several functions used to conduct training data/sample analysis 
+    methods which contain several functions used to conduct training data/sample analysis 
     
     """
     def __init__(self, training_data, image, class_property, region, class_name_property=None):
@@ -576,6 +581,123 @@ class sample_quality:
             print(lowest_pairs[display_cols].to_string(index=False))
         
         print("\n" + "="*80)
+
+    @staticmethod
+    def run_multitemporal_separability(
+        composites_by_period,
+        training_by_period,
+        class_property='class_id',
+        region=None,
+        class_name_property='class_name',
+        scale=30,
+        max_pixels_per_class=5000,
+        method='TD',
+        period_order=None,
+    ):
+        """
+        Run separability analysis across multitemporal periods.
+
+        Only periods present with non-null training data in ``training_by_period``
+        are analyzed (e.g., only ``reference_period`` in Model Transfer mode, or all
+        periods in Batch mode); periods without training data are recorded under
+        ``'skipped_periods'``.
+
+        Parameters
+        ----------
+        composites_by_period : dict[str, ee.Image] or dict
+            Mapping of ``{period_label: ee.Image}`` or the result dict returned by
+            ``final_Image.get_multitemporal_composites()``.
+        training_by_period : dict[str, Any]
+            Mapping of ``{period_label: ee.FeatureCollection | train_data_dict | GeoDataFrame}``.
+        class_property : str, default='class_id'
+            Property/column name holding numeric class IDs.
+        region : ee.Geometry, optional
+            Optional AOI geometry limiting extraction.
+        class_name_property : str or None, default='class_name'
+            Optional property/column holding human-readable class names.
+        scale : int, default=30
+            Pixel sampling scale in meters.
+        max_pixels_per_class : int, default=5000
+            Maximum sampled pixels per class.
+        method : str, default='TD'
+            Separability metric (`'TD'`).
+        period_order : list[str], optional
+            Explicit chronological period order.
+
+        Returns
+        -------
+        dict
+            ``{'per_period': {label: {'spectral_df', 'separability_df', 'summary_df', 'analyzer'}},
+            'analyzed_periods': list[str], 'skipped_periods': list[str]}``.
+        """
+        if isinstance(composites_by_period, dict) and isinstance(
+            composites_by_period.get('composites'), dict
+        ):
+            if period_order is None:
+                period_order = composites_by_period.get('period_order')
+            composites = composites_by_period['composites']
+        else:
+            composites = composites_by_period
+
+        if period_order is None:
+            period_order = list(composites.keys())
+
+        per_period = {}
+        analyzed_periods = []
+        skipped_periods = []
+
+        for label in period_order:
+            if label not in composites:
+                raise ValueError(f"Period '{label}' missing from composites_by_period.")
+
+            train_entry = (training_by_period or {}).get(label)
+            if isinstance(train_entry, dict) and 'training_data' in train_entry:
+                train_obj = train_entry['training_data']
+            else:
+                train_obj = train_entry
+
+            if train_obj is None:
+                skipped_periods.append(label)
+                continue
+
+            if isinstance(train_obj, pd.DataFrame) and train_obj.empty:
+                skipped_periods.append(label)
+                continue
+
+            # Convert GeoDataFrame to ee.FeatureCollection if needed
+            if not isinstance(train_obj, ee.FeatureCollection) and hasattr(train_obj, 'geometry'):
+                from .input_utils import EE_converter
+                train_fc = EE_converter(verbose=False).convert_roi_gdf(train_obj)
+            else:
+                train_fc = train_obj
+
+            analyzer = sample_quality(
+                training_data=train_fc,
+                image=composites[label],
+                class_property=class_property,
+                region=region,
+                class_name_property=class_name_property,
+            )
+            spectral_df = analyzer.extract_spectral_values(
+                scale=scale,
+                max_pixels_per_class=max_pixels_per_class,
+            )
+            separability_df = analyzer.get_separability_df(spectral_df, method=method)
+            summary_df = analyzer.sum_separability(spectral_df)
+
+            per_period[label] = {
+                'spectral_df': spectral_df,
+                'separability_df': separability_df,
+                'summary_df': summary_df,
+                'analyzer': analyzer,
+            }
+            analyzed_periods.append(label)
+
+        return {
+            'per_period': per_period,
+            'analyzed_periods': analyzed_periods,
+            'skipped_periods': skipped_periods,
+        }
         
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
 
