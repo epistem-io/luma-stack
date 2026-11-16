@@ -1997,12 +1997,12 @@ class RFEGEE:
 
 
 #=================================== Local RFECV Feature Selection ===================================
-class _ProgressRandomForest(BaseEstimator, ClassifierMixin):
+class ProgressRF(BaseEstimator, ClassifierMixin):
     """Lightweight scikit-learn RandomForest wrapper that reports each fit step."""
 
     def __init__(
         self,
-        n_estimators: int = 50,
+        n_estimators: int = 100,
         max_depth: Optional[int] = 12,
         min_samples_leaf: int = 2,
         random_state: int = 42,
@@ -2148,9 +2148,9 @@ class RFE_CV:
     def _extract_dataframe(self) -> pd.DataFrame:
         """
         Extract features and class_property into a clean pandas DataFrame.
-        Drops geometries server-side (retainGeometry=False), applies per-class
-        balanced capping on Earth Engine (supporting both point and polygon
-        training data), and paginates via computeFeatures without size()/sort()/toList().
+        Drops geometries server-side, applies per-class
+        balanced capping on Earth Engine (for point and polygon
+        training data), and paginates via computeFeatures
         """
         cols = list(dict.fromkeys(self.features + [self.class_property]))
 
@@ -2306,7 +2306,7 @@ class RFE_CV:
                 if self.progress_callback is not None:
                     self.progress_callback(completed_fits, total_fits, "rfecv")
 
-            estimator = _ProgressRandomForest(
+            estimator = ProgressRF(
                 n_estimators=self.n_trees,
                 max_depth=self.max_depth,
                 min_samples_leaf=self.min_samples_leaf,
@@ -2386,36 +2386,73 @@ class RFE_CV:
                 (self.feature_importances_ or {}).get(f, 0.0) for f in self.features
             ],
         })
-        return results_df.sort_values(["Rank", "Feature"]).reset_index(drop=True)
+        return results_df.sort_values(
+            ["Rank", "Importance", "Feature"],
+            ascending=[True, False, True],
+        ).reset_index(drop=True)
 
-    def plot_feature_rankings(self, figsize: Tuple[int, int] = (10, 8)):
-        """Plot feature rankings as a horizontal bar chart."""
+    def plot_feature_importance(
+        self,
+        figsize: Tuple[int, int] = (10, 8),
+        top_n: Optional[int] = None,
+        show_eliminated: bool = True,
+    ):
+        """
+        Plot Random Forest feature importance for the recommended feature stack
+        (and optionally eliminated features) as a horizontal bar chart.
+        """
         if self.selected_features_ is None:
             raise RuntimeError("Call fit() first")
 
-        ranking = self.get_ranking()
-        ranking_sorted = sorted(ranking.items(), key=lambda x: (x[1], x[0]))
-        features, ranks = zip(*ranking_sorted)
+        if top_n is not None and top_n < 1:
+            raise ValueError("top_n must be >= 1 or None")
+
+        df = self.get_results_dataframe()
+        if not show_eliminated:
+            df = df[df["Selected"]].reset_index(drop=True)
+        if top_n is not None:
+            df = df.head(top_n).reset_index(drop=True)
+
+        if df.empty:
+            raise ValueError("No features available to plot")
+
+        features = df["Feature"].tolist()
+        importances = df["Importance"].tolist()
+        selected = df["Selected"].tolist()
+        ranks = df["Rank"].tolist()
 
         fig, ax = plt.subplots(figsize=figsize)
-        colors = ["#2ca02c" if r == 1 else "#d62728" for r in ranks]
-        ax.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+        colors = ["#2ca02c" if is_sel else "#d62728" for is_sel in selected]
+        y_pos = range(len(features))
+        ax.barh(y_pos, importances, color=colors, alpha=0.8)
 
-        ax.set_yticks(range(len(features)))
+        max_imp = max(importances) if importances else 0.0
+        x_pad = max_imp * 0.02 if max_imp > 0 else 0.01
+        ax.set_xlim(0, max_imp * 1.22 if max_imp > 0 else 1.0)
+
+        for idx, (imp, is_sel, rank) in enumerate(zip(importances, selected, ranks)):
+            label = f"{imp:.4f} ({imp * 100:.1f}%)" if is_sel else f"Eliminated (Rank {rank})"
+            ax.text(
+                imp + x_pad,
+                idx,
+                label,
+                va="center",
+                fontsize=9,
+                color="#1b5e20" if is_sel else "#8e1c1c",
+            )
+
+        ax.set_yticks(list(y_pos))
         ax.set_yticklabels(features, fontsize=10)
-        ax.set_xlabel("Rank (1 = Selected)", fontsize=12)
-        ax.set_title("Local RFECV Feature Rankings", fontsize=14, fontweight="bold")
+        ax.set_xlabel("Relative Feature Importance (Gini)", fontsize=12)
+        ax.set_title("RFECV Model Feature Importance", fontsize=14, fontweight="bold")
         ax.grid(True, alpha=0.3, axis="x")
         ax.invert_yaxis()
 
         from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor="#2ca02c", alpha=0.7, label="Selected"),
-            Patch(facecolor="#d62728", alpha=0.7, label="Eliminated"),
-        ]
+        legend_elements = [Patch(facecolor="#2ca02c", alpha=0.8, label="Selected")]
+        if show_eliminated and any(not s for s in selected):
+            legend_elements.append(Patch(facecolor="#d62728", alpha=0.8, label="Eliminated"))
         ax.legend(handles=legend_elements, loc="lower right")
 
         plt.tight_layout()
         return fig
-
-
