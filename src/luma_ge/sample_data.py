@@ -644,10 +644,33 @@ try:
                         },
                     }
                 elif isinstance(src, ee.FeatureCollection):
-                    resolved_field = class_field or 'class_id'
-                    fc_size = src.size().getInfo()
+                    fc = src
+                    # Filter by AOI bounds if AOI is provided
+                    if aoi_geometry is not None:
+                        if isinstance(aoi_geometry, (ee.Geometry, ee.FeatureCollection)):
+                            fc = fc.filterBounds(aoi_geometry)
+                        elif hasattr(aoi_geometry, 'geometry') and hasattr(aoi_geometry.geometry, 'iloc'):
+                            fc = fc.filterBounds(ee.Geometry(aoi_geometry.geometry.iloc[0].__geo_interface__))
+                        elif hasattr(aoi_geometry, '__geo_interface__'):
+                            fc = fc.filterBounds(ee.Geometry(aoi_geometry.__geo_interface__))
+
+                    props = list(fc.first().propertyNames().getInfo() or [])
+                    if class_field is not None:
+                        if class_field not in props:
+                            raise ValueError(
+                                f"class_field '{class_field}' not found in EE FeatureCollection for period '{label}'. "
+                                f"Available properties: {props}"
+                            )
+                        resolved_field = class_field
+                    else:
+                        resolved_field = next(
+                            (c for c in ('class_id', 'ID_Kelas', 'kelas', 'ID') if c in props),
+                            'class_id',
+                        )
+
+                    fc_size = fc.size().getInfo()
                     train_dict = {
-                        'training_data': src,
+                        'training_data': fc,
                         'landcover_df': landcover_df,
                         'class_field': resolved_field,
                         'validation_results': {
@@ -739,29 +762,58 @@ try:
             TrainSplitPct: float = 0.7,
             random_state: int = 123,
             class_field: Optional[str] = None,
-        ) -> Dict[str, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]]:
+        ) -> Dict[str, Tuple[Any, Any]]:
             """
-            Split GeoDataFrame training sets across one or more periods into
-            ``(train_split, val_split)`` pairs.
+            Split training sets (``geopandas.GeoDataFrame`` or ``ee.FeatureCollection``)
+            across one or more periods into ``(train_split, val_split)`` pairs.
             """
-            splits: Dict[str, Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]] = {}
+            splits: Dict[str, Tuple[Any, Any]] = {}
             for label, entry in training_by_period.items():
                 if isinstance(entry, dict) and 'training_data' in entry:
-                    gdf = entry['training_data']
+                    data = entry['training_data']
                     cf = class_field or entry.get('class_field', 'kelas')
                 else:
-                    gdf = entry
+                    data = entry
                     cf = class_field or 'kelas'
 
-                if gdf is None or not isinstance(gdf, gpd.GeoDataFrame) or gdf.empty:
+                if data is None:
+                    splits[label] = (gpd.GeoDataFrame(), gpd.GeoDataFrame())
+                    continue
+
+                if isinstance(data, ee.FeatureCollection):
+                    classes = data.aggregate_array(cf).distinct()
+
+                    def _make_split_fn(fc, prop, ratio, seed):
+                        # EE CustomFunction.create inspects co_argcount; keep callback unary.
+                        def _split_class(c):
+                            subset = fc.filter(ee.Filter.eq(prop, c)).randomColumn('random', seed=seed)
+                            tr = subset.filter(ee.Filter.lt('random', ratio)).map(
+                                lambda f: f.set('fraction', 'training')
+                            )
+                            te = subset.filter(ee.Filter.gte('random', ratio)).map(
+                                lambda f: f.set('fraction', 'testing')
+                            )
+                            return tr.merge(te)
+
+                        return _split_class
+
+                    split_fc = ee.FeatureCollection(
+                        classes.map(_make_split_fn(data, cf, TrainSplitPct, random_state))
+                    ).flatten()
+                    train_fc = split_fc.filter(ee.Filter.eq('fraction', 'training'))
+                    test_fc = split_fc.filter(ee.Filter.eq('fraction', 'testing'))
+                    splits[label] = (train_fc, test_fc)
+                    continue
+
+                if not isinstance(data, gpd.GeoDataFrame) or data.empty:
                     splits[label] = (gpd.GeoDataFrame(), gpd.GeoDataFrame())
                     continue
 
                 from sklearn.model_selection import train_test_split
-                strat_col = gdf[cf] if cf in gdf.columns else None
+                strat_col = data[cf] if cf in data.columns else None
                 try:
                     train_idx, val_idx = train_test_split(
-                        gdf.index,
+                        data.index,
                         train_size=TrainSplitPct,
                         random_state=random_state,
                         stratify=strat_col,
@@ -769,11 +821,11 @@ try:
                 except ValueError:
                     # Fallback without stratification if a rare class has 1 sample
                     train_idx, val_idx = train_test_split(
-                        gdf.index,
+                        data.index,
                         train_size=TrainSplitPct,
                         random_state=random_state,
                     )
-                splits[label] = (gdf.loc[train_idx].copy(), gdf.loc[val_idx].copy())
+                splits[label] = (data.loc[train_idx].copy(), data.loc[val_idx].copy())
             return splits
 
 except ImportError as e:
