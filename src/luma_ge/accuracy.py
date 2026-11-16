@@ -7,7 +7,7 @@ classification maps using an independent reference data. Adapted from AcATaMa QG
 from scipy import stats
 import numpy as np
 import ee
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Sequence
 import logging
 import time
 import io
@@ -692,4 +692,97 @@ class thematic_accuracy:
                 f"{results['overall_accuracy_ci'][1]*100:.2f}%"
             ),
             'sample_size': str(results['n_total'])
+        }
+
+    def run_multitemporal_assessment(
+        self,
+        maps_by_period: Dict[str, ee.Image],
+        validation_by_period: Dict[str, Optional[ee.FeatureCollection]],
+        class_property: str = 'class_id',
+        scale: int = 30,
+        confidence: float = 0.95,
+        required_periods: Optional[Sequence[str]] = None,
+        period_order: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Run thematic accuracy assessment across multiple mapping periods.
+
+        Enforces ``required_periods`` (e.g. ``['baseline']``) while treating any
+        additional periods without validation data as optional (recorded in
+        ``'skipped_periods'``). Each assessed period returns the exact
+        ``(success, results_dict)`` tuple produced by ``run_accuracy_assessment()``.
+        """
+        if period_order is None:
+            period_order = list(maps_by_period.keys())
+        else:
+            period_order = list(period_order)
+
+        required = list(required_periods) if required_periods else []
+        for req in required:
+            if req not in maps_by_period:
+                raise ValueError(f"Required period '{req}' is missing from maps_by_period.")
+            if req not in validation_by_period or validation_by_period[req] is None:
+                raise ValueError(f"Ground truth validation data is required for period '{req}'.")
+
+        per_period: Dict[str, Tuple[bool, Dict[str, Any]]] = {}
+        assessed_periods: List[str] = []
+        skipped_periods: List[str] = []
+
+        for label in period_order:
+            val_fc = (validation_by_period or {}).get(label)
+            if val_fc is None:
+                skipped_periods.append(label)
+                continue
+
+            success, res = self.run_accuracy_assessment(
+                lcmap=maps_by_period[label],
+                validation_data=val_fc,
+                class_property=class_property,
+                scale=scale,
+                confidence=confidence,
+            )
+            per_period[label] = (success, res)
+            assessed_periods.append(label)
+
+        return {
+            'per_period': per_period,
+            'assessed_periods': assessed_periods,
+            'skipped_periods': skipped_periods,
+        }
+
+    @staticmethod
+    def compare_accuracy(
+        raw_results: Dict[str, Any],
+        corrected_results: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Compare thematic accuracy metrics before (raw) and after post-classification
+        consistency correction.
+        """
+        if 'error' in raw_results or 'error' in corrected_results:
+            raise ValueError("Cannot compare accuracy when either assessment contains an error.")
+
+        oa_raw = float(raw_results['overall_accuracy'])
+        oa_corr = float(corrected_results['overall_accuracy'])
+        kappa_raw = float(raw_results['kappa'])
+        kappa_corr = float(corrected_results['kappa'])
+
+        f1_raw = list(raw_results.get('f1_scores', []))
+        f1_corr = list(corrected_results.get('f1_scores', []))
+        f1_deltas = [
+            float(c) - float(r)
+            for r, c in zip(f1_raw, f1_corr)
+        ]
+
+        return {
+            'oa_raw': oa_raw,
+            'oa_corrected': oa_corr,
+            'oa_delta': oa_corr - oa_raw,
+            'kappa_raw': kappa_raw,
+            'kappa_corrected': kappa_corr,
+            'kappa_delta': kappa_corr - kappa_raw,
+            'n_total': int(corrected_results.get('n_total', raw_results.get('n_total', 0))),
+            'n_correct_raw': int(raw_results.get('n_correct', 0)),
+            'n_correct_corrected': int(corrected_results.get('n_correct', 0)),
+            'per_class_f1_delta': f1_deltas,
         }

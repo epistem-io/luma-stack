@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 import ee
 from .ee_config import ensure_ee_initialized
 
@@ -174,36 +174,90 @@ class Generate_LULC:
         #if not needed, only return classification result
         else:
             return multiclass   
-    ############################# 1. One-vs-rest (OVR) binary Classification ###########################
+    ############################# 1. One-vs-rest (OVR) & Multiprobability Soft Classification ###########################
     def soft_classification(self, training_data, class_property, image, include_final_map=True,
-                                ntrees = 100, v_split = None, min_leaf=1, seed=0, probability_scale = 100):
+                                ntrees = 100, v_split = None, min_leaf=1, seed=0, probability_scale = 100,
+                                mode: str = 'ovr', return_model: bool = False):
         """
-        Implementation of one-vs-rest binary classification approach for multi-class land cover classification, similar to the work of
-        Saah et al 2020. This function create probability layer stack for each land cover class. The final land cover map is created using
-        maximum probability, via Argmax
+        Perform soft (probabilistic) multi-class land cover classification.
+
+        Supports two modes:
+        - ``'ovr'`` (default, backwards-compatible): One-vs-Rest binary Random Forest
+          classifiers per class (Saah et al., 2020).
+        - ``'multiprobability'``: A single Random Forest classifier with
+          ``setOutputMode('MULTIPROBABILITY')``, ideal for fast execution and
+          cross-period Model Transfer.
 
         Parameters
-            training_data (ee.FeatureCollection): The data which already have a pixel value from input covariates
-            class_property (str): Column name contain land cover class id
-            image (ee.Image): Image data
-            ntrees (int): Number of trees (user should input the best parammeter from parameter optimization)
-            v_split (int): Variables per split (default = sqrt(#covariates)). (user should input the best parammeter from parameter optimization)
-            min_leaf (int): Minimum leaf population. (user should input the best parammeter from parameter optimization)
-            seed (int): Random seed.
-            probability scale = used to scaled up the probability layer
+        ----------
+        training_data : ee.FeatureCollection
+            Sample data containing extracted predictor pixel values.
+        class_property : str
+            Column/property name containing integer land cover class IDs.
+        image : ee.Image
+            Predictor stack image.
+        include_final_map : bool, default=True
+            If True, append `'classification'` (argmax) and `'confidence'` (max prob) bands.
+        ntrees, v_split, min_leaf, seed :
+            Random Forest hyperparameters.
+        probability_scale : int, default=100
+            Scale multiplier applied before rounding probabilities to byte.
+        mode : {'ovr', 'multiprobability'}, default='ovr'
+            Soft classification engine.
+        return_model : bool, default=False
+            When True, returns ``(result_image, model_info)``.
 
-        Returns:
-            ee.Image: Stacked probability bands + final classified map.
+        Returns
+        -------
+        ee.Image or tuple(ee.Image, dict)
+            Stacked probability bands (`prob_<id>`) plus optional `'classification'`
+            and `'confidence'` bands.
         """
         # parameters and input valdiation
         if not isinstance(training_data, ee.FeatureCollection):
             raise ValueError("training_data must be an ee.FeatureCollection")
         if not isinstance(image, ee.Image):
             raise ValueError("image must be an ee.Image")
+        if mode not in ('ovr', 'multiprobability'):
+            raise ValueError(f"mode must be 'ovr' or 'multiprobability', got '{mode}'")
         #if for some reason var split is not specified, used 
         if v_split is None:
             v_split = ee.Number(image.bandNames().size()).sqrt().ceil()
-        
+
+        if mode == 'multiprobability':
+            class_ids_raw = training_data.aggregate_array(class_property).distinct().sort().getInfo()
+            class_ids = sorted(int(c) for c in class_ids_raw)
+            if not class_ids:
+                raise ValueError("No distinct classes found in training_data.")
+
+            classifier = ee.Classifier.smileRandomForest(
+                numberOfTrees=ntrees,
+                variablesPerSplit=v_split,
+                minLeafPopulation=min_leaf,
+                seed=seed,
+            ).setOutputMode('MULTIPROBABILITY')
+
+            trained_model = classifier.train(
+                features=training_data,
+                classProperty=class_property,
+                inputProperties=image.bandNames(),
+            )
+            stacked = self.classify_with_model(
+                trained_model=trained_model,
+                image=image,
+                mode='soft',
+                class_ids=class_ids,
+                include_final_map=include_final_map,
+                probability_scale=probability_scale,
+            )
+            if return_model:
+                return stacked, {
+                    'model': trained_model,
+                    'class_ids': class_ids,
+                    'mode': 'multiprobability',
+                }
+            return stacked
+
         # Get distinct classes ID from the training data. It should be noted that unique ID should be in integer, since 
         # float types tend to resulted in error during the band naming process 
         class_list = training_data.aggregate_array(class_property).distinct()
@@ -248,6 +302,8 @@ class Generate_LULC:
 
         #if final map  is not needed, the functin will return prob bands only
         if not include_final_map:
+            if return_model:
+                return prob_stack, {'mode': 'ovr', 'class_list': class_list}
             return prob_stack
         #final map creation using argmax
         print('Creating final classification using argmax')
@@ -263,7 +319,60 @@ class Generate_LULC:
         max_confidence = prob_stack.toArray().arrayReduce(ee.Reducer.max(), [0]).arrayGet([0]).rename('confidence')
         #stack the final map and confidence
         stacked = prob_stack.addBands([final_lc, max_confidence])
+        if return_model:
+            return stacked, {'mode': 'ovr', 'class_list': class_list}
         return stacked
+
+    def classify_with_model(
+        self,
+        trained_model: ee.Classifier,
+        image: ee.Image,
+        mode: str = 'hard',
+        class_ids: Optional[List[int]] = None,
+        include_final_map: bool = True,
+        probability_scale: int = 100,
+    ) -> ee.Image:
+        """
+        Apply a previously trained ``ee.Classifier`` (hard or MULTIPROBABILITY)
+        to a target ``ee.Image`` predictor stack (used for Model Transfer).
+        """
+        if not isinstance(image, ee.Image):
+            raise ValueError("image must be an ee.Image")
+        if mode not in ('hard', 'soft', 'multiprobability'):
+            raise ValueError(f"mode must be 'hard', 'soft', or 'multiprobability', got '{mode}'")
+
+        if mode == 'hard':
+            return image.classify(trained_model)
+
+        if not class_ids:
+            raise ValueError("class_ids (sorted list of integer class IDs) is required for soft/multiprobability transfer.")
+
+        sorted_ids = sorted(int(c) for c in class_ids)
+        prob_band_names = [f"prob_{cid}" for cid in sorted_ids]
+        raw_prob_img = image.classify(trained_model)
+        prob_stack = (
+            raw_prob_img
+            .arrayFlatten([prob_band_names])
+            .multiply(probability_scale)
+            .round()
+            .byte()
+        )
+        if not include_final_map:
+            return prob_stack
+
+        max_prob_index = prob_stack.toArray().arrayArgmax().arrayGet(0)
+        final_lc = (
+            max_prob_index
+            .remap(list(range(len(sorted_ids))), sorted_ids)
+            .rename('classification')
+        )
+        max_confidence = (
+            prob_stack.toArray()
+            .arrayReduce(ee.Reducer.max(), [0])
+            .arrayGet([0])
+            .rename('confidence')
+        )
+        return prob_stack.addBands([final_lc, max_confidence])
         ############################# Feature importance ###########################
         #feature importance that can be used by hard or soft classification
     ## System Response 6.3 Model Evaluation
@@ -323,7 +432,7 @@ class Generate_LULC:
             else:
                 raise ValueError(f"Could not extract feature importance: {str(e)}. Try providing training_data and class_property for fallback method.") 
     
-    def evaluate_model(self, trained_model, test_data, class_property):
+    def evaluate_model(self, trained_model, test_data, class_property, is_multiprobability: bool = False, class_ids: Optional[List[int]] = None):
         """
         Perform model evaluation based on confusion matrix. This approach is similar to standard Remote Sensing accuracy assessment, but applied for trained model (ee.classifier)
         instead on classification result or map.
@@ -331,12 +440,27 @@ class Generate_LULC:
             trained_model: ee.Classifier - Trained Random Forest model
             test_data: ee.FeatureCollection - Testing samples with pixel values
             class_property (str): Column name containing class labels
+            is_multiprobability (bool): Set True when ``trained_model`` uses MULTIPROBABILITY output mode
+            class_ids (list[int], optional): Sorted class IDs matching the MULTIPROBABILITY array order
         
         Returns:
             dict: Dictionary containing accuracy metrics
         """
         #Classify the testing data
         test_classified = test_data.classify(trained_model)
+        if is_multiprobability:
+            if not class_ids:
+                class_ids = sorted(
+                    int(c) for c in test_data.aggregate_array(class_property).distinct().sort().getInfo()
+                )
+            sorted_ids_ee = ee.List(sorted(int(c) for c in class_ids))
+
+            def _argmax_feature(ft):
+                arr = ee.Array(ft.get('classification'))
+                max_idx = arr.argmax().get(0)
+                return ft.set('classification', sorted_ids_ee.get(max_idx))
+
+            test_classified = test_classified.map(_argmax_feature)
         
         #Get confusion matrix
         confusion_matrix = test_classified.errorMatrix(
@@ -592,4 +716,229 @@ class Generate_LULC:
             "source":          "prebuilt_bypass",
             "year_used":       year_used,
             "scheme":          scheme_name,
+        }
+
+    def classify_from_prebuilt_multitemporal(
+        self,
+        scheme_name: str,
+        aoi: ee.Geometry,
+        years_by_period: Dict[str, int],
+        scheme_classes: List[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Retrieve clipped prebuilt wall-to-wall LULC maps across multiple periods.
+        """
+        return {
+            label: self.classify_from_prebuilt(
+                scheme_name=scheme_name,
+                aoi=aoi,
+                year=year,
+                scheme_classes=scheme_classes,
+            )
+            for label, year in years_by_period.items()
+        }
+
+    def classify_multitemporal(
+        self,
+        predictor_stacks: Dict[str, ee.Image],
+        training_splits: Dict[str, Tuple[ee.FeatureCollection, ee.FeatureCollection]],
+        class_property: str = 'class_id',
+        mode: str = 'auto',
+        reference_period: str = 'baseline',
+        classification_type: str = 'hard',
+        soft_mode: str = 'multiprobability',
+        ntrees: int = 100,
+        v_split: Optional[int] = None,
+        min_leaf: int = 1,
+        seed: int = 0,
+        probability_scale: int = 100,
+        common_bands: Optional[List[str]] = None,
+        period_order: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Run multitemporal Random Forest classification across N >= 2 periods in either
+        ``'batch'`` mode (one trained model per period) or ``'model_transfer'`` mode
+        (model trained on ``reference_period`` and applied to all target periods).
+
+        Supports both ``classification_type='hard'`` and ``classification_type='soft'``
+        (with ``soft_mode='multiprobability'`` recommended for fast transferable
+        probability stacks).
+        """
+        if period_order is None:
+            period_order = list(predictor_stacks.keys())
+
+        if len(period_order) < 2:
+            raise ValueError(f"classify_multitemporal requires at least 2 periods, got {len(period_order)}.")
+
+        if classification_type not in ('hard', 'soft'):
+            raise ValueError(f"classification_type must be 'hard' or 'soft', got '{classification_type}'")
+
+        if mode == 'auto':
+            provided = [p for p in period_order if p in training_splits and training_splits[p] is not None]
+            if len(provided) == 1 and provided[0] == reference_period:
+                mode_used = 'model_transfer'
+            elif len(provided) == len(period_order):
+                mode_used = 'batch'
+            else:
+                raise ValueError(
+                    f"Cannot infer classification mode from training_splits keys {provided} "
+                    f"for period_order={period_order} and reference_period='{reference_period}'."
+                )
+        elif mode in ('batch', 'model_transfer'):
+            mode_used = mode
+        else:
+            raise ValueError(f"mode must be 'auto', 'batch', or 'model_transfer', got '{mode}'")
+
+        maps: Dict[str, ee.Image] = {}
+        models: Dict[str, Any] = {}
+        feature_importance: Dict[str, pd.DataFrame] = {}
+        model_evaluation: Dict[str, Dict[str, Any]] = {}
+        class_ids_by_period: Dict[str, List[int]] = {}
+
+        if mode_used == 'batch':
+            for label in period_order:
+                train_fc, test_fc = training_splits[label]
+                stack = predictor_stacks[label]
+
+                if classification_type == 'hard':
+                    lulc_img, trained_model = self.hard_classification(
+                        training_data=train_fc,
+                        class_property=class_property,
+                        image=stack,
+                        ntrees=ntrees,
+                        v_split=v_split,
+                        min_leaf=min_leaf,
+                        return_model=True,
+                        seed=seed,
+                    )
+                    is_multiprob = False
+                    cids = None
+                else:
+                    lulc_img, model_info = self.soft_classification(
+                        training_data=train_fc,
+                        class_property=class_property,
+                        image=stack,
+                        include_final_map=True,
+                        ntrees=ntrees,
+                        v_split=v_split,
+                        min_leaf=min_leaf,
+                        seed=seed,
+                        probability_scale=probability_scale,
+                        mode=soft_mode,
+                        return_model=True,
+                    )
+                    trained_model = model_info.get('model')
+                    cids = model_info.get('class_ids')
+                    is_multiprob = soft_mode == 'multiprobability'
+                    if cids is not None:
+                        class_ids_by_period[label] = cids
+
+                maps[label] = lulc_img
+                models[label] = trained_model
+                if trained_model is not None:
+                    feature_importance[label] = self.get_feature_importance(
+                        trained_model, training_data=train_fc, class_property=class_property
+                    )
+                    if test_fc is not None:
+                        model_evaluation[label] = self.evaluate_model(
+                            trained_model=trained_model,
+                            test_data=test_fc,
+                            class_property=class_property,
+                            is_multiprobability=is_multiprob,
+                            class_ids=cids,
+                        )
+        else:
+            if reference_period not in training_splits:
+                raise ValueError(f"training_splits missing reference_period '{reference_period}'.")
+
+            ref_train_fc, ref_test_fc = training_splits[reference_period]
+            ref_stack = predictor_stacks[reference_period]
+            if common_bands is not None:
+                ref_stack = ref_stack.select(common_bands)
+
+            if classification_type == 'hard':
+                ref_map, ref_model = self.hard_classification(
+                    training_data=ref_train_fc,
+                    class_property=class_property,
+                    image=ref_stack,
+                    ntrees=ntrees,
+                    v_split=v_split,
+                    min_leaf=min_leaf,
+                    return_model=True,
+                    seed=seed,
+                )
+                is_multiprob = False
+                ref_cids = None
+                transfer_mode = 'hard'
+            else:
+                if soft_mode != 'multiprobability':
+                    raise ValueError(
+                        "Model Transfer with soft classification requires soft_mode='multiprobability' "
+                        "so a single trained classifier can be applied across periods."
+                    )
+                ref_map, model_info = self.soft_classification(
+                    training_data=ref_train_fc,
+                    class_property=class_property,
+                    image=ref_stack,
+                    include_final_map=True,
+                    ntrees=ntrees,
+                    v_split=v_split,
+                    min_leaf=min_leaf,
+                    seed=seed,
+                    probability_scale=probability_scale,
+                    mode='multiprobability',
+                    return_model=True,
+                )
+                ref_model = model_info['model']
+                ref_cids = model_info['class_ids']
+                is_multiprob = True
+                transfer_mode = 'soft'
+
+            maps[reference_period] = ref_map
+            models[reference_period] = ref_model
+            if ref_cids is not None:
+                class_ids_by_period[reference_period] = ref_cids
+
+            feature_importance[reference_period] = self.get_feature_importance(
+                ref_model, training_data=ref_train_fc, class_property=class_property
+            )
+            if ref_test_fc is not None:
+                model_evaluation[reference_period] = self.evaluate_model(
+                    trained_model=ref_model,
+                    test_data=ref_test_fc,
+                    class_property=class_property,
+                    is_multiprobability=is_multiprob,
+                    class_ids=ref_cids,
+                )
+
+            for label in period_order:
+                if label == reference_period:
+                    continue
+                target_stack = predictor_stacks[label]
+                if common_bands is not None:
+                    target_stack = target_stack.select(common_bands)
+
+                maps[label] = self.classify_with_model(
+                    trained_model=ref_model,
+                    image=target_stack,
+                    mode=transfer_mode,
+                    class_ids=ref_cids,
+                    include_final_map=True,
+                    probability_scale=probability_scale,
+                )
+                models[label] = ref_model
+                if ref_cids is not None:
+                    class_ids_by_period[label] = ref_cids
+
+        return {
+            'mode_used': mode_used,
+            'classification_type': classification_type,
+            'soft_mode': soft_mode if classification_type == 'soft' else None,
+            'reference_period': reference_period,
+            'period_order': period_order,
+            'maps': maps,
+            'models': models,
+            'feature_importance': feature_importance,
+            'model_evaluation': model_evaluation,
+            'class_ids': class_ids_by_period,
         }
