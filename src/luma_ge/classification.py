@@ -77,8 +77,57 @@ def build_prob_band_names(
 
     return band_names, cid_to_band
 
-# Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
 
+def compute_log_loss_from_arrays(
+    y_true: Sequence[int],
+    y_prob: Any,
+    class_ids: Optional[Sequence[int]] = None,
+    eps: float = 1e-6,
+) -> float:
+    """
+    Compute multi-class log loss (cross-entropy) from predicted probability vectors.
+
+    Parameters
+    ----------
+    y_true : sequence of int
+        Ground truth class IDs of length N.
+    y_prob : array-like of shape (N, K)
+        Predicted class probabilities (each row ordered along ``class_ids``).
+        If values appear scaled (row sums > 1.5), rows are normalized by row sum.
+    class_ids : sequence of int, optional
+        Ordered class IDs matching columns of ``y_prob``. Defaults to ``sorted(set(y_true))``.
+    eps : float, default=1e-6
+        Probability clipping threshold to avoid ``log(0)``.
+    """
+    y_true_arr = [int(v) for v in y_true]
+    probs = np.asarray(y_prob, dtype=np.float64)
+    if probs.ndim != 2 or len(y_true_arr) != probs.shape[0]:
+        raise ValueError(
+            f"y_prob shape {probs.shape} does not match len(y_true)={len(y_true_arr)}."
+        )
+    if len(y_true_arr) == 0:
+        raise ValueError("Cannot compute log loss on an empty sample set.")
+
+    ids = [int(c) for c in (class_ids if class_ids is not None else sorted(set(y_true_arr)))]
+    if len(ids) != probs.shape[1]:
+        raise ValueError(
+            f"len(class_ids)={len(ids)} does not match probability columns {probs.shape[1]}."
+        )
+
+    id_to_col = {cid: idx for idx, cid in enumerate(ids)}
+    row_sums = probs.sum(axis=1, keepdims=True)
+    if np.any(row_sums > 1.5):
+        probs = np.divide(probs, np.where(row_sums > 0, row_sums, 1.0))
+
+    total_nll = 0.0
+    for row_idx, cid in enumerate(y_true_arr):
+        if cid not in id_to_col:
+            raise ValueError(f"Ground truth class ID {cid} missing from class_ids {ids}.")
+        p = float(np.clip(probs[row_idx, id_to_col[cid]], eps, 1.0 - eps))
+        total_nll -= float(np.log(p))
+    return total_nll / float(len(y_true_arr))
+
+# Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
 # Module 6: Land Cover Classification
 ## System Response 6.2 Classification
 class FeatureExtraction:
@@ -699,7 +748,61 @@ class Generate_LULC:
             else:
                 raise ValueError(f"Could not extract feature importance: {str(e)}. Try providing training_data and class_property for fallback method.") 
     
-    def evaluate_model(self, trained_model, test_data, class_property, is_multiprobability: bool = False, class_ids: Optional[List[int]] = None):
+    def compute_log_loss(
+        self,
+        trained_model: ee.Classifier,
+        test_data: ee.FeatureCollection,
+        class_property: str,
+        class_ids: Optional[List[int]] = None,
+        eps: float = 1e-6,
+    ) -> Dict[str, Any]:
+        """
+        Compute optional server-side multi-class Log Loss on a ``MULTIPROBABILITY``
+        ``ee.Classifier`` against held-out ``test_data``.
+
+        Evaluates raw probability calibration ($-\frac{1}{N}\sum \log(\max(P(y_i), \epsilon))$)
+        without converting probabilities to hard labels, complementing Overall Accuracy
+        especially when downstream HMM consistency analysis consumes log-probabilities.
+        """
+        if not class_ids:
+            class_ids = sorted(
+                int(c) for c in test_data.aggregate_array(class_property).distinct().sort().getInfo()
+            )
+        sorted_ids = sorted(int(c) for c in class_ids)
+        sorted_ids_ee = ee.List(sorted_ids)
+
+        valid_test = test_data.filter(ee.Filter.inList(class_property, sorted_ids_ee))
+        test_prob_fc = valid_test.classify(trained_model)
+
+        def _feature_nll(ft):
+            arr = ee.Array(ft.get('classification'))
+            actual = ee.Number(ft.get(class_property)).int()
+            idx = sorted_ids_ee.indexOf(actual)
+            p_true = ee.Number(arr.get([idx])).max(eps).min(1.0 - eps)
+            return ft.set('_nll', p_true.log().multiply(-1.0))
+
+        scored_fc = test_prob_fc.map(_feature_nll)
+        stats = scored_fc.aggregate_stats('_nll').getInfo() or {}
+        nll_mean = float(stats.get('mean', 0.0) or 0.0)
+        n_scored = int(round(float(stats.get('total_count', 0) or 0)))
+
+        return {
+            'log_loss': nll_mean,
+            'n_samples': n_scored,
+            'eps': eps,
+            'class_ids': sorted_ids,
+        }
+
+    def evaluate_model(
+        self,
+        trained_model,
+        test_data,
+        class_property,
+        is_multiprobability: bool = False,
+        class_ids: Optional[List[int]] = None,
+        include_log_loss: bool = False,
+        eps: float = 1e-6,
+    ):
         """
         Perform model evaluation based on confusion matrix. This approach is similar to standard Remote Sensing accuracy assessment, but applied for trained model (ee.classifier)
         instead on classification result or map.
@@ -802,6 +905,16 @@ class Generate_LULC:
             'gmean_per_class': gmean_per_class,
             'overall_gmean': overall_gmean
         }
+
+        if include_log_loss and is_multiprobability:
+            ll_res = self.compute_log_loss(
+                trained_model=trained_model,
+                test_data=test_data,
+                class_property=class_property,
+                class_ids=class_ids,
+                eps=eps,
+            )
+            accuracy_metrics['log_loss'] = ll_res['log_loss']
         
         return accuracy_metrics
     
@@ -1023,6 +1136,7 @@ class Generate_LULC:
         common_bands: Optional[List[str]] = None,
         period_order: Optional[List[str]] = None,
         class_names: Optional[Any] = None,
+        include_log_loss: bool = False,
     ) -> Dict[str, Any]:
         """
         Run multitemporal Random Forest classification across N >= 2 periods in either
@@ -1119,6 +1233,7 @@ class Generate_LULC:
                             class_property=class_property,
                             is_multiprobability=is_multiprob,
                             class_ids=cids,
+                            include_log_loss=include_log_loss,
                         )
         else:
             if reference_period not in training_splits:
@@ -1185,6 +1300,7 @@ class Generate_LULC:
                     class_property=class_property,
                     is_multiprobability=is_multiprob,
                     class_ids=ref_cids,
+                    include_log_loss=include_log_loss,
                 )
 
             for label in period_order:
