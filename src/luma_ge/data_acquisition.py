@@ -1597,7 +1597,10 @@ class Reflectance_Data:
                 )
                 sensor_code = self.OPTICAL_DATASETS[sensor_key]['sensor']
                 if harmonize_landsat and sensor_code in ('L4', 'L5', 'L7'):
-                    col = col.map(lambda img, sc=sensor_code: self.apply_brdf_harmonization(img, sc))
+                    def _make_harmonize_fn(sc):
+                        return lambda img: self.apply_brdf_harmonization(img, sc)
+
+                    col = col.map(_make_harmonize_fn(sensor_code))
 
                 if apply_brdf and brdf_corrector is not None and sensor_code in ('L4', 'L5', 'L7', 'L8', 'L9'):
                     col = brdf_corrector.correct_collection(col, verbose=verbose)
