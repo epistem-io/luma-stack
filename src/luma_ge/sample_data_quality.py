@@ -7,6 +7,11 @@ from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 import plotly.graph_objects as go
 import plotly.express as px
+from typing import Dict, List, Optional, Any
+from sklearn.preprocessing import StandardScaler
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score, silhouette_samples
 from .ee_config import ensure_ee_initialized
 
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
@@ -298,14 +303,406 @@ class sample_quality:
         result_df = self.add_class_names(result_df)
         
         return result_df
+    def _get_feature_columns(self, df: pd.DataFrame, bands: Optional[List[str]] = None) -> List[str]:
+        """
+        Resolve valid numeric feature/predictor columns from the DataFrame.
+        Supports explicit band subsets (e.g. post-RFECV) or defaults to image band_names.
+        """
+        excluded = {self.class_property, self.class_name_property, 'Class_Display', 'Class_Name'}
+        if bands is not None:
+            cols = [col for col in bands if col in df.columns and col not in excluded]
+            if cols:
+                return cols
+        cols = [col for col in df.columns if col not in excluded and col in self.band_names]
+        if cols:
+            return cols
+        # Fallback to numeric columns if df contains additional predictor bands not in initial image
+        return [
+            col for col in df.select_dtypes(include=[np.number]).columns
+            if col not in excluded
+        ]
+
+    def _stratified_subsample(
+        self,
+        df: pd.DataFrame,
+        max_samples: Optional[int] = 5000,
+        random_state: int = 42
+    ) -> pd.DataFrame:
+        """
+        Perform stratified subsampling across classes so non-parametric metrics and
+        embeddings execute quickly on large extracted pixel tables.
+        """
+        if df.empty or max_samples is None or len(df) <= max_samples:
+            return df
+
+        rng = np.random.RandomState(random_state)
+        total = len(df)
+        sampled_parts = []
+        for _, group in df.groupby(self.class_property, group_keys=False):
+            n_group = len(group)
+            if n_group == 0:
+                continue
+            target_n = max(2, int(round(max_samples * (n_group / total))))
+            target_n = min(n_group, target_n)
+            idx = rng.choice(group.index, size=target_n, replace=False)
+            sampled_parts.append(group.loc[idx])
+
+        if not sampled_parts:
+            return df.sample(n=min(len(df), max_samples), random_state=random_state)
+
+        result = pd.concat(sampled_parts, axis=0)
+        if len(result) > max_samples:
+            result = result.sample(n=max_samples, random_state=random_state)
+        return result.reset_index(drop=True)
+
+    def compute_silhouette_analysis(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        metric: str = 'euclidean',
+        max_samples: Optional[int] = 5000,
+        random_state: int = 42
+    ) -> Dict[str, Any]:
+        """
+        Compute non-parametric Silhouette Score analysis on standardized predictor features.
+
+        Evaluates how tightly grouped each class is relative to its nearest neighboring
+        class in [-1.0, +1.0] without assuming Gaussian distributions or inverting
+        covariance matrices.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Extracted sample pixel values containing class_property and predictor columns.
+        bands : list of str, optional
+            Specific predictor subset to evaluate (e.g. RFECV selected bands).
+        metric : str, default='euclidean'
+            Distance metric for silhouette calculation ('euclidean', 'cosine', 'manhattan').
+        max_samples : int or None, default=5000
+            Maximum total samples (stratified across classes) for fast execution.
+        random_state : int, default=42
+            Random seed for reproducible stratified subsampling.
+
+        Returns
+        -------
+        dict with keys:
+            - 'overall_score': float in [-1, 1]
+            - 'per_class_df': pd.DataFrame with per-class silhouette statistics & Negative_Ratio
+            - 'pairwise_matrix': dict[str, dict[str, float]] of pairwise class silhouette scores
+            - 'bands_used': list of str
+            - 'samples_analyzed': int
+        """
+        feature_cols = self._get_feature_columns(df, bands=bands)
+        if not feature_cols or df.empty or self.class_property not in df.columns:
+            return {
+                'overall_score': 0.0,
+                'per_class_df': pd.DataFrame(),
+                'pairwise_matrix': {},
+                'bands_used': feature_cols,
+                'samples_analyzed': 0
+            }
+
+        clean_df = df[[self.class_property] + feature_cols].dropna().copy()
+        classes = clean_df[self.class_property].unique()
+        if len(classes) < 2 or len(clean_df) <= len(classes):
+            return {
+                'overall_score': 0.0,
+                'per_class_df': pd.DataFrame(),
+                'pairwise_matrix': {},
+                'bands_used': feature_cols,
+                'samples_analyzed': len(clean_df)
+            }
+
+        sub_df = self._stratified_subsample(clean_df, max_samples=max_samples, random_state=random_state)
+        X = StandardScaler().fit_transform(sub_df[feature_cols].values.astype(float))
+        y = sub_df[self.class_property].values
+
+        sample_scores = silhouette_samples(X, y, metric=metric)
+        overall_score = float(np.mean(sample_scores))
+
+        class_mapping = self.class_renaming() or {}
+        per_class_rows = []
+        unique_classes = sorted(sub_df[self.class_property].unique())
+
+        for cls_val in unique_classes:
+            mask = (y == cls_val)
+            cls_scores = sample_scores[mask]
+            if len(cls_scores) == 0:
+                continue
+            try:
+                cls_key = int(cls_val)
+            except (ValueError, TypeError):
+                cls_key = cls_val
+            cls_name = class_mapping.get(cls_key, f"Class {cls_val}")
+            mean_s = float(np.mean(cls_scores))
+            neg_ratio = float(np.mean(cls_scores < 0.0))
+            per_class_rows.append({
+                'Class_ID': cls_val,
+                'Class_Name': cls_name,
+                'Sample_Count': int(len(cls_scores)),
+                'Mean_Silhouette': round(mean_s, 3),
+                'Std_Silhouette': round(float(np.std(cls_scores)), 3),
+                'Min_Silhouette': round(float(np.min(cls_scores)), 3),
+                'Negative_Ratio': round(neg_ratio, 3),
+                'Separability_Level': self.separability_level(mean_s, method='SILHOUETTE')
+            })
+
+        per_class_df = pd.DataFrame(per_class_rows)
+        if not per_class_df.empty:
+            per_class_df = per_class_df.sort_values('Mean_Silhouette').reset_index(drop=True)
+
+        # Compute pairwise silhouette scores on each 2-class subset
+        pairwise_matrix: Dict[str, Dict[str, float]] = {str(c): {} for c in unique_classes}
+        for i, c1 in enumerate(unique_classes):
+            for j, c2 in enumerate(unique_classes):
+                if i == j:
+                    pairwise_matrix[str(c1)][str(c2)] = 0.0
+                elif j < i:
+                    pairwise_matrix[str(c1)][str(c2)] = pairwise_matrix[str(c2)][str(c1)]
+                else:
+                    pair_mask = (y == c1) | (y == c2)
+                    X_pair = X[pair_mask]
+                    y_pair = y[pair_mask]
+                    if len(np.unique(y_pair)) < 2 or len(y_pair) < 3:
+                        pair_score = 0.0
+                    else:
+                        try:
+                            pair_score = float(silhouette_score(X_pair, y_pair, metric=metric))
+                        except Exception:
+                            pair_score = 0.0
+                    pairwise_matrix[str(c1)][str(c2)] = pair_score
+
+        return {
+            'overall_score': round(overall_score, 4),
+            'per_class_df': per_class_df,
+            'pairwise_matrix': pairwise_matrix,
+            'bands_used': feature_cols,
+            'samples_analyzed': int(len(sub_df))
+        }
+
+    def get_class_silhouette_df(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        metric: str = 'euclidean',
+        max_samples: Optional[int] = 5000,
+        random_state: int = 42
+    ) -> pd.DataFrame:
+        """Return the per-class Silhouette summary DataFrame sorted from lowest to highest."""
+        res = self.compute_silhouette_analysis(
+            df, bands=bands, metric=metric, max_samples=max_samples, random_state=random_state
+        )
+        return res.get('per_class_df', pd.DataFrame())
+
+    def compare_predictor_sets(
+        self,
+        df: pd.DataFrame,
+        predictor_sets: Dict[str, List[str]],
+        metric: str = 'euclidean',
+        max_samples: Optional[int] = 5000,
+        random_state: int = 42
+    ) -> pd.DataFrame:
+        """
+        Compare multiple predictor subsets (e.g. Optical Only vs. Full Stack vs. RFECV)
+        using non-parametric Silhouette analysis.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Extracted sample pixel values containing all candidate predictor bands.
+        predictor_sets : dict[str, list[str]]
+            Mapping of subset name to list of band names.
+        metric : str, default='euclidean'
+            Distance metric for silhouette calculation.
+        max_samples : int or None, default=5000
+            Maximum samples (stratified) for evaluation.
+        random_state : int, default=42
+            Random seed for reproducible subsampling across sets.
+
+        Returns
+        -------
+        pd.DataFrame summarizing each predictor set's quality.
+        """
+        rows = []
+        for set_name, band_list in predictor_sets.items():
+            valid_bands = self._get_feature_columns(df, bands=band_list)
+            if not valid_bands:
+                continue
+            analysis = self.compute_silhouette_analysis(
+                df,
+                bands=valid_bands,
+                metric=metric,
+                max_samples=max_samples,
+                random_state=random_state
+            )
+            sep_df = self.get_separability_df(
+                df,
+                method='SILHOUETTE',
+                bands=valid_bands,
+                metric=metric,
+                max_samples=max_samples,
+                random_state=random_state
+            )
+            per_cls_df = analysis['per_class_df']
+            neg_ratio = float(per_cls_df['Negative_Ratio'].mean()) if not per_cls_df.empty else 0.0
+
+            if not sep_df.empty and 'Silhouette_Score' in sep_df.columns:
+                mean_pair = float(sep_df['Silhouette_Score'].mean())
+                min_row = sep_df.iloc[0]
+                min_pair = float(min_row['Silhouette_Score'])
+                worst_pair = f"{min_row['Class1_Name']} vs {min_row['Class2_Name']}"
+            else:
+                mean_pair = 0.0
+                min_pair = 0.0
+                worst_pair = "N/A"
+
+            rows.append({
+                'Predictor_Set': set_name,
+                'Num_Bands': len(valid_bands),
+                'Overall_Silhouette': round(analysis['overall_score'], 3),
+                'Mean_Pairwise_Silhouette': round(mean_pair, 3),
+                'Min_Pairwise_Silhouette': round(min_pair, 3),
+                'Worst_Class_Pair': worst_pair,
+                'Negative_Sample_Ratio': round(neg_ratio, 3),
+                'Bands': ', '.join(valid_bands)
+            })
+
+        result_df = pd.DataFrame(rows)
+        if not result_df.empty:
+            result_df = result_df.sort_values('Overall_Silhouette', ascending=False).reset_index(drop=True)
+        return result_df
+
+    def compute_tsne_coordinates(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        n_components: int = 2,
+        perplexity: float = 30.0,
+        max_samples: Optional[int] = 3000,
+        random_state: int = 42
+    ) -> pd.DataFrame:
+        """
+        Compute 2D or 3D t-SNE embedding coordinates on standardized predictor features.
+        Returns a DataFrame containing TSNE_1, TSNE_2 (, TSNE_3) and class metadata.
+        """
+        feature_cols = self._get_feature_columns(df, bands=bands)
+        if not feature_cols or df.empty or self.class_property not in df.columns:
+            return pd.DataFrame()
+
+        clean_df = df[[self.class_property] + feature_cols].dropna().copy()
+        if len(clean_df) < 4:
+            return pd.DataFrame()
+
+        sub_df = self._stratified_subsample(clean_df, max_samples=max_samples, random_state=random_state)
+        n_samples = len(sub_df)
+        effective_perplexity = float(min(perplexity, max(2.0, (n_samples - 1) / 3.0)))
+
+        X = StandardScaler().fit_transform(sub_df[feature_cols].values.astype(float))
+        tsne = TSNE(
+            n_components=n_components,
+            perplexity=effective_perplexity,
+            random_state=random_state,
+            init='pca',
+            learning_rate='auto'
+        )
+        coords = tsne.fit_transform(X)
+
+        out_df = pd.DataFrame()
+        out_df[self.class_property] = sub_df[self.class_property].values
+        class_mapping = self.class_renaming() or {}
+
+        def _fmt_display(val):
+            try:
+                key = int(val)
+            except (ValueError, TypeError):
+                key = val
+            if class_mapping and key in class_mapping:
+                return f"{class_mapping[key]} (ID: {val})"
+            return f"Class {val}"
+
+        out_df['Class_Display'] = [
+            _fmt_display(v) for v in sub_df[self.class_property].values
+        ]
+        for i in range(n_components):
+            out_df[f'TSNE_{i + 1}'] = coords[:, i]
+
+        return out_df
+
+    def compute_pca_coordinates(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        n_components: int = 2,
+        max_samples: Optional[int] = 5000,
+        random_state: int = 42
+    ) -> Dict[str, Any]:
+        """
+        Compute PCA projection coordinates, explained variance ratios, and feature loadings
+        on standardized predictor features.
+        """
+        feature_cols = self._get_feature_columns(df, bands=bands)
+        if not feature_cols or df.empty or self.class_property not in df.columns:
+            return {'coordinates_df': pd.DataFrame(), 'explained_variance_ratio': [], 'loadings_df': pd.DataFrame()}
+
+        clean_df = df[[self.class_property] + feature_cols].dropna().copy()
+        n_comp = min(n_components, len(feature_cols), len(clean_df))
+        if n_comp < 2:
+            return {'coordinates_df': pd.DataFrame(), 'explained_variance_ratio': [], 'loadings_df': pd.DataFrame()}
+
+        sub_df = self._stratified_subsample(clean_df, max_samples=max_samples, random_state=random_state)
+        X = StandardScaler().fit_transform(sub_df[feature_cols].values.astype(float))
+
+        pca = PCA(n_components=n_comp, random_state=random_state)
+        coords = pca.fit_transform(X)
+
+        out_df = pd.DataFrame()
+        out_df[self.class_property] = sub_df[self.class_property].values
+        class_mapping = self.class_renaming() or {}
+
+        def _fmt_display(val):
+            try:
+                key = int(val)
+            except (ValueError, TypeError):
+                key = val
+            if class_mapping and key in class_mapping:
+                return f"{class_mapping[key]} (ID: {val})"
+            return f"Class {val}"
+
+        out_df['Class_Display'] = [
+            _fmt_display(v) for v in sub_df[self.class_property].values
+        ]
+        pc_cols = []
+        for i in range(n_comp):
+            col_name = f'PC_{i + 1}'
+            pc_cols.append(col_name)
+            out_df[col_name] = coords[:, i]
+
+        loadings = pca.components_.T * np.sqrt(pca.explained_variance_)
+        loadings_df = pd.DataFrame(loadings, index=feature_cols, columns=pc_cols)
+        loadings_df['Magnitude'] = np.linalg.norm(loadings[:, :min(2, n_comp)], axis=1)
+        loadings_df = loadings_df.sort_values('Magnitude', ascending=False)
+
+        return {
+            'coordinates_df': out_df,
+            'explained_variance_ratio': [float(v) for v in pca.explained_variance_ratio_],
+            'loadings_df': loadings_df,
+            'bands_used': feature_cols
+        }
+
     #Calculate class separability using jeffries matusita distance
     #Note: This approach is not ideal for machine learning classifier, since JM distance works best with gaussian distribution
-    def check_class_separability(self, df, method='TD'):
+    def check_class_separability(self, df, method='TD', bands=None, **kwargs):
         """
-        Calculate class separability using Transformed Divergence.
-        Method: 'TD' (Transformed Divergence) - hardcoded for consistency
+        Calculate class separability using Transformed Divergence ('TD'),
+        Jeffries-Matusita ('JM'), or non-parametric Silhouette Score ('SILHOUETTE').
+        Default method is 'TD' for backward compatibility.
         """
-        spectral_bands = [col for col in df.columns if col != self.class_property and col in self.band_names]
+        method_upper = (method or 'TD').upper()
+        if method_upper == 'SILHOUETTE':
+            analysis = self.compute_silhouette_analysis(df, bands=bands, **kwargs)
+            return analysis.get('pairwise_matrix', {})
+
+        spectral_bands = self._get_feature_columns(df, bands=bands)
         classes = df[self.class_property].unique()
 
         if len(classes) < 2:
@@ -326,8 +723,10 @@ class sample_quality:
                             separability_matrix[str(class1)][str(class2)] = 0.0
                             continue
 
-                        # Always use Transformed Divergence
-                        sep = self.transform_divergence(data1, data2)
+                        if method_upper == 'JM':
+                            sep = self._jeffries_matusita_distance(data1, data2)
+                        else:
+                            sep = self.transform_divergence(data1, data2)
 
                         separability_matrix[str(class1)][str(class2)] = float(sep)
 
@@ -339,72 +738,84 @@ class sample_quality:
 
         return separability_matrix
 
-    def get_separability_df(self, df, method='TD'):
+    def _get_metric_column_name(self, method='TD') -> str:
+        method_upper = (method or 'TD').upper()
+        if method_upper == 'SILHOUETTE':
+            return 'Silhouette_Score'
+        if method_upper == 'JM':
+            return 'JM_Distance'
+        return 'TD_Distance'
+
+    def get_separability_df(self, df, method='TD', bands=None, **kwargs):
         """
         Get separability results as a DataFrame.
-        method: 'TD' (Transformed Divergence) - hardcoded for consistency
+        Supports method='TD' (default), 'JM', or 'SILHOUETTE'.
         """
-        separability = self.check_class_separability(df, method=method)
+        method_upper = (method or 'TD').upper()
+        separability = self.check_class_separability(df, method=method_upper, bands=bands, **kwargs)
         if not separability:
             return pd.DataFrame()
 
         pairs = []
-        class_mapping = self.class_renaming()
-        metric_name = "TD_Distance"  #Always use Transformed Divergence. Fyi JM avaliable in source code
+        class_mapping = self.class_renaming() or {}
+        metric_name = self._get_metric_column_name(method_upper)
         processed_pairs = set()  # Track processed pairs to avoid duplicates
 
         for class1_id, class1_data in separability.items():
             for class2_id, value in class1_data.items():
-                if value > 0:
-                    # Create a sorted tuple to ensure unique pairs (avoid Class1-Class2 and Class2-Class1)
-                    pair_key = tuple(sorted([class1_id, class2_id]))
-                    
-                    #Skip if pair is already process
-                    if pair_key in processed_pairs:
-                        continue
-                    
-                    processed_pairs.add(pair_key)
-                    
-                    # Use consistent key type for mapping
-                    try:
-                        class1_key = int(class1_id)
-                    except ValueError:
-                        class1_key = class1_id
-                    try:
-                        class2_key = int(class2_id)
-                    except ValueError:
-                        class2_key = class2_id
+                if str(class1_id) == str(class2_id):
+                    continue
+                if method_upper != 'SILHOUETTE' and value <= 0:
+                    continue
+                # Create a sorted tuple to ensure unique pairs (avoid Class1-Class2 and Class2-Class1)
+                pair_key = tuple(sorted([str(class1_id), str(class2_id)]))
 
-                    class1_name = class_mapping.get(class1_key, f"Class {class1_id}")
-                    class2_name = class_mapping.get(class2_key, f"Class {class2_id}")
-                    pairs.append({
-                        'Class1_ID': class1_id,
-                        'Class1_Name': class1_name,
-                        'Class2_ID': class2_id,
-                        'Class2_Name': class2_name,
-                        metric_name: round(value, 3),
-                        'Separability_Level': self.separability_level(value)
-                    })
+                #Skip if pair is already process
+                if pair_key in processed_pairs:
+                    continue
+
+                processed_pairs.add(pair_key)
+
+                # Use consistent key type for mapping
+                try:
+                    class1_key = int(class1_id)
+                except ValueError:
+                    class1_key = class1_id
+                try:
+                    class2_key = int(class2_id)
+                except ValueError:
+                    class2_key = class2_id
+
+                class1_name = class_mapping.get(class1_key, f"Class {class1_id}")
+                class2_name = class_mapping.get(class2_key, f"Class {class2_id}")
+                pairs.append({
+                    'Class1_ID': class1_id,
+                    'Class1_Name': class1_name,
+                    'Class2_ID': class2_id,
+                    'Class2_Name': class2_name,
+                    metric_name: round(float(value), 3),
+                    'Separability_Level': self.separability_level(value, method=method_upper)
+                })
 
         pairs_df = pd.DataFrame(pairs)
         if not pairs_df.empty:
             pairs_df = pairs_df.sort_values(metric_name).reset_index(drop=True)
         return pairs_df
 
-    def lowest_separability(self, df, top_n=10, method='TD'):
+    def lowest_separability(self, df, top_n=10, method='TD', bands=None, **kwargs):
         """
         Get the class pairs with the lowest separability value.
         Args:
             df: DataFrame with spectral values
             top_n: Number of lowest pairs to return
-            method: 'TD' (Transformed Divergence) - hardcoded
+            method: 'TD', 'JM', or 'SILHOUETTE'
         Returns:
             DataFrame of lowest separability pairs with interpretation
         """
-        separability_df = self.get_separability_df(df, method=method)
+        separability_df = self.get_separability_df(df, method=method, bands=bands, **kwargs)
         if separability_df.empty:
             return pd.DataFrame()
-        metric_name = "TD_Distance"  # Always use Transformed Divergence
+        metric_name = self._get_metric_column_name(method)
         lowest_pairs = separability_df.head(top_n).copy()
         lowest_pairs['Interpretation'] = lowest_pairs[metric_name].apply(
             lambda x: self.separability_level(x, method=method)
@@ -413,14 +824,23 @@ class sample_quality:
 
     def separability_level(self, value, method='TD'):
         """
-        Categorize separability value for TD (Transformed Divergence) distance.
+        Categorize separability value for TD/JM (0-2) or Silhouette (-1 to 1).
         Args:
             value: Separability metric value
-            method: 'TD' (Transformed Divergence) - now hardcoded
+            method: 'TD', 'JM', or 'SILHOUETTE'
         Returns:
             String interpretation with detailed explanation
         """
-        # Thresholds for TD (range 0–2)
+        method_upper = (method or 'TD').upper()
+        if method_upper == 'SILHOUETTE':
+            if value >= 0.50:
+                return "🟢 Good Separability (Silhouette ≥ 0.50)"
+            elif 0.25 <= value < 0.50:
+                return "🟡 Weak/Marginal Separability (0.25 ≤ Silhouette < 0.50)"
+            else:
+                return "🔴 Poor Separability (Silhouette < 0.25)"
+
+        # Thresholds for TD / JM (range 0–2)
         if value >= 1.8:
             return "🟢 Good Separability (TD ≥ 1.8)"
         elif 1.0 <= value < 1.8:
@@ -428,11 +848,11 @@ class sample_quality:
         else:
             return "🔴 Poor Separability (TD < 1.0)"
     #Summarize the separability
-    def sum_separability(self, df):
+    def sum_separability(self, df, method='TD', bands=None, **kwargs):
         """
         summarize the separability result
         """
-        sum_df = self.get_separability_df(df)
+        sum_df = self.get_separability_df(df, method=method, bands=bands, **kwargs)
         if sum_df.empty:
             return pd.DataFrame()
         
@@ -1041,4 +1461,336 @@ class spectral_plotter:
             )
         )
         
-        return fig       
+        return fig
+
+    #t-SNE & PCA Dimensionality Reduction Plots
+    #t-SNE (t-distributed stochastic neighbor embedding)
+    #PCA (Principal Component Analysis)
+    def plot_tsne(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        n_components: int = 2,
+        perplexity: float = 30.0,
+        max_samples: Optional[int] = 3000,
+        random_state: int = 42,
+        interactive: bool = True,
+        title: Optional[str] = None,
+        marker_size: int = 6,
+        opacity: float = 0.75,
+        figsize: tuple = (10, 8)
+    ):
+        """
+        Visualize high-dimensional predictor stacks in 2D or 3D using t-SNE.
+
+        Standardizes all selected predictors before computing t-SNE and performs
+        stratified subsampling so non-linear multi-band stacks render quickly.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Extracted sample pixel values.
+        bands : list of str, optional
+            Predictor subset to include (e.g. RFECV selected bands).
+        n_components : int, default=2
+            Embedding dimension (2 or 3).
+        perplexity : float, default=30.0
+            t-SNE perplexity parameter (automatically clamped for small sample sizes).
+        max_samples : int or None, default=3000
+            Maximum samples (stratified across classes) to embed.
+        random_state : int, default=42
+            Random seed for reproducible layout.
+        interactive : bool, default=True
+            If True, returns an interactive Plotly Figure; if False, returns a Matplotlib Figure.
+        title : str, optional
+            Custom plot title.
+        marker_size : int, default=6
+            Point size.
+        opacity : float, default=0.75
+            Point opacity.
+        figsize : tuple, default=(10, 8)
+            Figure size when interactive=False.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or matplotlib.figure.Figure or None
+        """
+        if df.empty:
+            print("No data available for t-SNE visualization")
+            return None
+
+        n_comp = 3 if n_components == 3 else 2
+        coords_df = self.sq.compute_tsne_coordinates(
+            df,
+            bands=bands,
+            n_components=n_comp,
+            perplexity=perplexity,
+            max_samples=max_samples,
+            random_state=random_state
+        )
+        if coords_df.empty:
+            print("Insufficient data or bands for t-SNE visualization")
+            return None
+
+        feature_cols = self.sq._get_feature_columns(df, bands=bands)
+        plot_title = title or f"t-SNE {n_comp}D Projection ({len(feature_cols)} Predictors, n={len(coords_df)})"
+
+        if interactive:
+            if n_comp == 3:
+                fig = px.scatter_3d(
+                    coords_df,
+                    x='TSNE_1',
+                    y='TSNE_2',
+                    z='TSNE_3',
+                    color='Class_Display',
+                    title=plot_title,
+                    labels={'Class_Display': 'Land Cover Class'},
+                    opacity=opacity
+                )
+            else:
+                fig = px.scatter(
+                    coords_df,
+                    x='TSNE_1',
+                    y='TSNE_2',
+                    color='Class_Display',
+                    title=plot_title,
+                    labels={'Class_Display': 'Land Cover Class'},
+                    opacity=opacity
+                )
+            fig.update_traces(
+                marker=dict(size=marker_size, line=dict(width=0.4, color='white'))
+            )
+            fig.update_layout(
+                template='plotly_white',
+                height=650,
+                legend=dict(
+                    title='Land Cover Classes',
+                    orientation='v',
+                    yanchor='top',
+                    y=1,
+                    xanchor='left',
+                    x=1.02
+                )
+            )
+            return fig
+
+        # Static Matplotlib fallback
+        if n_comp == 3:
+            fig = plt.figure(figsize=figsize)
+            ax = fig.add_subplot(111, projection='3d')
+            for cls_label, grp in coords_df.groupby('Class_Display'):
+                ax.scatter(
+                    grp['TSNE_1'], grp['TSNE_2'], grp['TSNE_3'],
+                    label=cls_label, s=marker_size * 4, alpha=opacity
+                )
+            ax.set_xlabel('t-SNE 1')
+            ax.set_ylabel('t-SNE 2')
+            ax.set_zlabel('t-SNE 3')
+        else:
+            fig, ax = plt.subplots(figsize=figsize)
+            for cls_label, grp in coords_df.groupby('Class_Display'):
+                ax.scatter(
+                    grp['TSNE_1'], grp['TSNE_2'],
+                    label=cls_label, s=marker_size * 5, alpha=opacity
+                )
+            ax.set_xlabel('t-SNE 1')
+            ax.set_ylabel('t-SNE 2')
+            ax.grid(True, alpha=0.3)
+
+        ax.set_title(plot_title)
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+        plt.tight_layout()
+        return fig
+
+    def plot_pca(
+        self,
+        df: pd.DataFrame,
+        bands: Optional[List[str]] = None,
+        n_components: int = 2,
+        max_samples: Optional[int] = 5000,
+        show_loadings: bool = True,
+        top_n_loadings: int = 8,
+        interactive: bool = True,
+        title: Optional[str] = None,
+        marker_size: int = 6,
+        opacity: float = 0.75,
+        figsize: tuple = (10, 8)
+    ):
+        """
+        Visualize predictor stack in 2D or 3D Principal Component space with optional
+        feature loading vectors (biplot) showing which predictors drive separation.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Extracted sample pixel values.
+        bands : list of str, optional
+            Predictor subset to include.
+        n_components : int, default=2
+            Number of principal components to plot (2 or 3).
+        max_samples : int or None, default=5000
+            Maximum samples (stratified across classes) to project.
+        show_loadings : bool, default=True
+            If True (in 2D mode), overlays predictor loading vectors on the plot.
+        top_n_loadings : int, default=8
+            Maximum number of top predictor loading arrows to display for readability.
+        interactive : bool, default=True
+            If True, returns an interactive Plotly Figure; if False, returns a Matplotlib Figure.
+        title : str, optional
+            Custom plot title.
+        marker_size : int, default=6
+            Point size.
+        opacity : float, default=0.75
+            Point opacity.
+        figsize : tuple, default=(10, 8)
+            Figure size when interactive=False.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or matplotlib.figure.Figure or None
+        """
+        if df.empty:
+            print("No data available for PCA visualization")
+            return None
+
+        n_comp = 3 if n_components == 3 else 2
+        pca_res = self.sq.compute_pca_coordinates(
+            df,
+            bands=bands,
+            n_components=n_comp,
+            max_samples=max_samples
+        )
+        coords_df = pca_res.get('coordinates_df', pd.DataFrame())
+        if coords_df.empty:
+            print("Insufficient data or bands for PCA visualization")
+            return None
+
+        evr = pca_res.get('explained_variance_ratio', [])
+        loadings_df = pca_res.get('loadings_df', pd.DataFrame())
+        bands_used = pca_res.get('bands_used', [])
+
+        pc1_pct = evr[0] * 100 if len(evr) > 0 else 0.0
+        pc2_pct = evr[1] * 100 if len(evr) > 1 else 0.0
+        pc3_pct = evr[2] * 100 if len(evr) > 2 else 0.0
+        total_pct = sum(evr[:n_comp]) * 100
+
+        plot_title = title or f"PCA {n_comp}D Projection ({len(bands_used)} Predictors, {total_pct:.1f}% Variance Explained)"
+        x_label = f"PC 1 ({pc1_pct:.1f}%)"
+        y_label = f"PC 2 ({pc2_pct:.1f}%)"
+        z_label = f"PC 3 ({pc3_pct:.1f}%)"
+
+        # Scale loading vectors to fit nicely within the score range
+        top_loadings = loadings_df.head(top_n_loadings) if not loadings_df.empty else pd.DataFrame()
+        scale_factor = 1.0
+        if not top_loadings.empty and 'PC_1' in coords_df.columns and 'PC_2' in coords_df.columns:
+            max_score = max(
+                float(np.percentile(np.abs(coords_df['PC_1']), 95)),
+                float(np.percentile(np.abs(coords_df['PC_2']), 95)),
+                1.0
+            )
+            max_loading = float(top_loadings['Magnitude'].max()) or 1.0
+            scale_factor = (max_score * 0.85) / max_loading
+
+        if interactive:
+            if n_comp == 3 and 'PC_3' in coords_df.columns:
+                fig = px.scatter_3d(
+                    coords_df,
+                    x='PC_1',
+                    y='PC_2',
+                    z='PC_3',
+                    color='Class_Display',
+                    title=plot_title,
+                    labels={'PC_1': x_label, 'PC_2': y_label, 'PC_3': z_label, 'Class_Display': 'Land Cover Class'},
+                    opacity=opacity
+                )
+            else:
+                fig = px.scatter(
+                    coords_df,
+                    x='PC_1',
+                    y='PC_2',
+                    color='Class_Display',
+                    title=plot_title,
+                    labels={'PC_1': x_label, 'PC_2': y_label, 'Class_Display': 'Land Cover Class'},
+                    opacity=opacity
+                )
+                if show_loadings and not top_loadings.empty:
+                    for band_name, row in top_loadings.iterrows():
+                        lx = float(row['PC_1']) * scale_factor
+                        ly = float(row['PC_2']) * scale_factor
+                        fig.add_annotation(
+                            x=lx,
+                            y=ly,
+                            ax=0,
+                            ay=0,
+                            xref='x',
+                            yref='y',
+                            axref='x',
+                            ayref='y',
+                            text=f"<b>{band_name}</b>",
+                            showarrow=True,
+                            arrowhead=2,
+                            arrowsize=1.2,
+                            arrowwidth=1.8,
+                            arrowcolor='#222222',
+                            font=dict(size=11, color='#111111'),
+                            bgcolor='rgba(255,255,255,0.75)'
+                        )
+
+            fig.update_traces(
+                marker=dict(size=marker_size, line=dict(width=0.4, color='white'))
+            )
+            fig.update_layout(
+                template='plotly_white',
+                height=650,
+                legend=dict(
+                    title='Land Cover Classes',
+                    orientation='v',
+                    yanchor='top',
+                    y=1,
+                    xanchor='left',
+                    x=1.02
+                )
+            )
+            return fig
+
+        # Static Matplotlib fallback
+        if n_comp == 3 and 'PC_3' in coords_df.columns:
+            fig = plt.figure(figsize=figsize)
+            ax = fig.add_subplot(111, projection='3d')
+            for cls_label, grp in coords_df.groupby('Class_Display'):
+                ax.scatter(
+                    grp['PC_1'], grp['PC_2'], grp['PC_3'],
+                    label=cls_label, s=marker_size * 4, alpha=opacity
+                )
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            ax.set_zlabel(z_label)
+        else:
+            fig, ax = plt.subplots(figsize=figsize)
+            for cls_label, grp in coords_df.groupby('Class_Display'):
+                ax.scatter(
+                    grp['PC_1'], grp['PC_2'],
+                    label=cls_label, s=marker_size * 5, alpha=opacity
+                )
+            if show_loadings and not top_loadings.empty:
+                for band_name, row in top_loadings.iterrows():
+                    lx = float(row['PC_1']) * scale_factor
+                    ly = float(row['PC_2']) * scale_factor
+                    ax.annotate(
+                        band_name,
+                        xy=(lx, ly),
+                        xytext=(lx * 1.08, ly * 1.08),
+                        arrowprops=dict(arrowstyle='<-', color='#222222', lw=1.5),
+                        fontsize=9,
+                        fontweight='bold',
+                        color='#111111'
+                    )
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            ax.grid(True, alpha=0.3)
+
+        ax.set_title(plot_title)
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+        plt.tight_layout()
+        return fig
+
