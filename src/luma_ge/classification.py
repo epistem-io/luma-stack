@@ -1,8 +1,81 @@
+import logging
+import re
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Sequence, cast
 import ee
 from .ee_config import ensure_ee_initialized
+
+logger = logging.getLogger(__name__)
+
+
+def extract_class_name_map(class_names: Any) -> Dict[int, str]:
+    """Normalize a dict, DataFrame scheme, or class-dict list into ``{class_id: class_name}``."""
+    if class_names is None:
+        return {}
+    if isinstance(class_names, dict):
+        return {int(k): str(v).strip() for k, v in class_names.items() if v is not None}
+    if isinstance(class_names, pd.DataFrame):
+        id_col = next((c for c in ('ID', 'id', 'class_id', 'ID_Kelas') if c in class_names.columns), None)
+        name_col = next(
+            (
+                c
+                for c in ('Class Name', 'Land Cover Class', 'LULC_Type', 'class_name', 'name', 'KelasTupla')
+                if c in class_names.columns
+            ),
+            None,
+        )
+        if id_col is None or name_col is None:
+            return {}
+        out: Dict[int, str] = {}
+        for _, row in class_names.iterrows():
+            if pd.notna(row[id_col]) and pd.notna(row[name_col]):
+                out[int(row[id_col])] = str(row[name_col]).strip()
+        return out
+    if isinstance(class_names, (list, tuple)):
+        out = {}
+        for item in class_names:
+            if isinstance(item, dict) and 'ID' in item:
+                nm = item.get('Class Name') or item.get('Land Cover Class') or item.get('LULC_Type')
+                if nm is not None:
+                    out[int(item['ID'])] = str(nm).strip()
+        return out
+    return {}
+
+
+def build_prob_band_names(
+    class_ids: Sequence[int],
+    class_names: Any = None,
+    prefix: str = 'prob_',
+) -> Tuple[List[str], Dict[int, str]]:
+    """
+    Build Earth Engine-safe probability band names and ``{class_id: band_name}`` map.
+
+    When ``class_names`` is omitted (or lacks an ID), defaults to ``prob_<id>``.
+    When provided, sanitizes scheme class names to ``[A-Za-z0-9_]+`` (e.g.
+    ``prob_Hutan_Lahan_Kering``) and guarantees uniqueness across classes.
+    """
+    name_map = extract_class_name_map(class_names)
+    band_names: List[str] = []
+    cid_to_band: Dict[int, str] = {}
+    seen = set()
+
+    for raw_cid in class_ids:
+        cid = int(raw_cid)
+        raw_name = name_map.get(cid)
+        if raw_name:
+            sanitized = re.sub(r'[^A-Za-z0-9]+', '_', raw_name).strip('_')
+            candidate = f"{prefix}{sanitized}" if sanitized else f"{prefix}{cid}"
+        else:
+            candidate = f"{prefix}{cid}"
+
+        if candidate in seen:
+            candidate = f"{candidate}_{cid}"
+        seen.add(candidate)
+        band_names.append(candidate)
+        cid_to_band[cid] = candidate
+
+    return band_names, cid_to_band
 
 # Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
 
@@ -56,7 +129,7 @@ class FeatureExtraction:
         return training_pixels, testing_pixels
     ############################## 2. Strafied Random Split ###########################
     # Conduct stratified train and test split, ideal for proportional split of the data
-    def stratified_split (self, roi, image, class_prop, pixel_size= 30, train_ratio = 0.7, seed=0):
+    def stratified_split (self, roi, image, class_prop, pixel_size= 30, train_ratio = 0.7, seed=0, tile_scale=16):
         """
         Used stratified random split to partitioned the original sample data into training and testing data used for model development
         Args:
@@ -91,15 +164,192 @@ class FeatureExtraction:
                             collection=train_fc,
                             properties = [class_prop],
                             scale = pixel_size,
-                            tileScale = 16)
+                            tileScale = tile_scale)
         test_pix = image.sampleRegions(
                             collection = test_fc,
                             properties = [class_prop],
                             scale = pixel_size,
-                            tileScale = 16
+                            tileScale = tile_scale
         )
   
         return train_pix, test_pix
+
+    ############################## 3. Multitemporal Feature Extraction ###########################
+    def extract_multitemporal_samples(
+        self,
+        predictor_stacks: Dict[str, ee.Image],
+        training_splits: Dict[str, Any],
+        class_property: str = 'class_id',
+        reference_period: str = 'baseline',
+        common_bands: Optional[List[str]] = None,
+        mode: str = 'auto',
+        scale: int = 30,
+        tile_scale: int = 4,
+        split_method: str = 'stratified',
+        train_ratio: float = 0.7,
+        seed: int = 0,
+        period_order: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extract pixel values (`sampleRegions`) from multitemporal predictor stacks.
+
+        Routes automatically based on the supplied training datasets:
+        - **1 dataset (only ``reference_period`` / most recent imagery)**: executes
+          **single feature extraction** on ``reference_period`` only
+          (``mode_used='model_transfer'``, ``extraction_type='single'``), aligning
+          to ``common_bands`` when provided.
+        - **$N$ datasets (one per period)**: executes **batch feature extraction**
+          independently across every period (``mode_used='batch'``,
+          ``extraction_type='batch'``).
+
+        Each period entry in ``training_splits`` may be:
+        - An unsplit ``ee.FeatureCollection`` or ``GeoDataFrame`` (split internally via
+          ``stratified_split`` or ``random_split``);
+        - A ``dict`` returned by ``SyncTrainData.LoadMultitemporalTrainData()``
+          containing ``'training_data'``;
+        - A pre-split ``(train, test)`` tuple/list of ``ee.FeatureCollection`` / ``GeoDataFrame``; or
+        - ``None`` (for target periods without reference samples in Model Transfer).
+        """
+        order = list(period_order) if period_order is not None else list(predictor_stacks.keys())
+        if len(order) < 2:
+            raise ValueError(
+                f"extract_multitemporal_samples requires at least 2 periods, got {len(order)}."
+            )
+
+        def _is_non_empty(obj: Any) -> bool:
+            if obj is None:
+                return False
+            if isinstance(obj, dict) and 'training_data' in obj:
+                return _is_non_empty(obj['training_data'])
+            if isinstance(obj, (tuple, list)):
+                return len(obj) > 0 and _is_non_empty(obj[0])
+            if isinstance(obj, pd.DataFrame):
+                return not obj.empty
+            return True
+
+        provided = [p for p in order if _is_non_empty((training_splits or {}).get(p))]
+
+        if mode == 'auto':
+            if len(provided) == 1 and provided[0] == reference_period:
+                mode_used = 'model_transfer'
+            elif len(provided) == len(order):
+                mode_used = 'batch'
+            else:
+                raise ValueError(
+                    f"Cannot infer feature extraction mode from training_splits keys {provided} "
+                    f"for period_order={order} and reference_period='{reference_period}'."
+                )
+        elif mode in ('batch', 'model_transfer'):
+            mode_used = mode
+            if mode_used == 'model_transfer' and reference_period not in provided:
+                raise ValueError(
+                    f"Model Transfer feature extraction requires training data for reference_period '{reference_period}'."
+                )
+            if mode_used == 'batch' and len(provided) != len(order):
+                missing = [p for p in order if p not in provided]
+                raise ValueError(
+                    f"Batch feature extraction requires training data for all periods; missing {missing}."
+                )
+        else:
+            raise ValueError(f"mode must be 'auto', 'batch', or 'model_transfer', got '{mode}'")
+
+        extraction_type = 'single' if mode_used == 'model_transfer' else 'batch'
+        target_periods = [reference_period] if mode_used == 'model_transfer' else list(order)
+        skipped_periods = [p for p in order if p not in target_periods]
+
+        def _to_ee_fc(obj: Any) -> Optional[ee.FeatureCollection]:
+            if obj is None:
+                return None
+            if isinstance(obj, ee.FeatureCollection):
+                return obj
+            if isinstance(obj, pd.DataFrame):
+                if obj.empty:
+                    return None
+                from .input_utils import EE_converter
+                cols = [c for c in (class_property, 'geometry') if c in obj.columns]
+                sub_gdf = obj[cols] if 'geometry' in cols and class_property in cols else obj
+                return EE_converter(verbose=False).convert_roi_gdf(sub_gdf)
+            return obj
+
+        sampled_splits: Dict[str, Tuple[ee.FeatureCollection, Optional[ee.FeatureCollection]]] = {}
+        for label in target_periods:
+            if label not in predictor_stacks:
+                raise ValueError(f"Period '{label}' missing from predictor_stacks.")
+
+            img = predictor_stacks[label]
+            if mode_used == 'model_transfer' and common_bands is not None:
+                img = img.select(list(common_bands))
+
+            entry = training_splits[label]
+            if isinstance(entry, dict) and 'training_data' in entry:
+                entry = entry['training_data']
+
+            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                train_fc = _to_ee_fc(entry[0])
+                test_fc = _to_ee_fc(entry[1])
+                if train_fc is None:
+                    raise ValueError(f"Training split for period '{label}' is empty or None.")
+                train_pix = img.sampleRegions(
+                    collection=train_fc,
+                    properties=[class_property],
+                    scale=scale,
+                    tileScale=tile_scale,
+                )
+                test_pix = (
+                    img.sampleRegions(
+                        collection=test_fc,
+                        properties=[class_property],
+                        scale=scale,
+                        tileScale=tile_scale,
+                    )
+                    if test_fc is not None
+                    else None
+                )
+            else:
+                roi_fc = _to_ee_fc(entry)
+                if roi_fc is None:
+                    raise ValueError(f"Training data for period '{label}' is empty or None.")
+                if split_method == 'stratified':
+                    train_pix, test_pix = self.stratified_split(
+                        roi=roi_fc,
+                        image=img,
+                        class_prop=class_property,
+                        pixel_size=scale,
+                        train_ratio=train_ratio,
+                        seed=seed,
+                        tile_scale=tile_scale,
+                    )
+                elif split_method == 'random':
+                    train_pix, test_pix = self.random_split(
+                        image=img,
+                        roi=roi_fc,
+                        class_property=class_property,
+                        split_ratio=train_ratio,
+                        pixel_size=scale,
+                        tile_scale=tile_scale,
+                    )
+                else:
+                    raise ValueError(
+                        f"split_method must be 'stratified' or 'random', got '{split_method}'"
+                    )
+
+            sampled_splits[label] = (train_pix, test_pix)
+
+        logger.info(
+            "Multitemporal feature extraction (%s / %s): extracted=%s, skipped=%s",
+            extraction_type,
+            mode_used,
+            target_periods,
+            skipped_periods,
+        )
+
+        return {
+            'mode_used': mode_used,
+            'extraction_type': extraction_type,
+            'sampled_splits': sampled_splits,
+            'extracted_periods': target_periods,
+            'skipped_periods': skipped_periods,
+        }
 
 class Generate_LULC:
     def __init__(self):
@@ -177,7 +427,8 @@ class Generate_LULC:
     ############################# 1. One-vs-rest (OVR) & Multiprobability Soft Classification ###########################
     def soft_classification(self, training_data, class_property, image, include_final_map=True,
                                 ntrees = 100, v_split = None, min_leaf=1, seed=0, probability_scale = 100,
-                                mode: str = 'ovr', return_model: bool = False):
+                                mode: str = 'ovr', return_model: bool = False,
+                                class_names: Optional[Any] = None):
         """
         Perform soft (probabilistic) multi-class land cover classification.
 
@@ -242,6 +493,7 @@ class Generate_LULC:
                 classProperty=class_property,
                 inputProperties=image.bandNames(),
             )
+            prob_band_names, prob_band_map = build_prob_band_names(class_ids, class_names=class_names)
             stacked = self.classify_with_model(
                 trained_model=trained_model,
                 image=image,
@@ -249,11 +501,14 @@ class Generate_LULC:
                 class_ids=class_ids,
                 include_final_map=include_final_map,
                 probability_scale=probability_scale,
+                class_names=class_names,
             )
             if return_model:
                 return stacked, {
                     'model': trained_model,
                     'class_ids': class_ids,
+                    'prob_band_names': prob_band_names,
+                    'prob_band_map': prob_band_map,
                     'mode': 'multiprobability',
                 }
             return stacked
@@ -261,6 +516,12 @@ class Generate_LULC:
         # Get distinct classes ID from the training data. It should be noted that unique ID should be in integer, since 
         # float types tend to resulted in error during the band naming process 
         class_list = training_data.aggregate_array(class_property).distinct()
+        ovr_name_dict = None
+        if class_names is not None:
+            parsed_names = extract_class_name_map(class_names)
+            if parsed_names:
+                _, ovr_prob_map = build_prob_band_names(sorted(parsed_names.keys()), class_names=parsed_names)
+                ovr_name_dict = ee.Dictionary({str(k): v for k, v in ovr_prob_map.items()})
         
         #Define how to train one vs rest classification and map them all across the class
         def per_class(class_id):
@@ -292,7 +553,12 @@ class Generate_LULC:
             #rename the bands
             #Ensure class_id is integer. 
             class_id_str = class_id.int().format()
-            band_name = ee.String ('prob_').cat(class_id_str)
+            default_band_name = ee.String('prob_').cat(class_id_str)
+            band_name = (
+                ee.String(ovr_name_dict.get(class_id_str, default_band_name))
+                if ovr_name_dict is not None
+                else default_band_name
+            )
 
             return prob_img.rename(band_name)
         # Map over classes to get probability bands
@@ -331,6 +597,7 @@ class Generate_LULC:
         class_ids: Optional[List[int]] = None,
         include_final_map: bool = True,
         probability_scale: int = 100,
+        class_names: Optional[Any] = None,
     ) -> ee.Image:
         """
         Apply a previously trained ``ee.Classifier`` (hard or MULTIPROBABILITY)
@@ -348,7 +615,7 @@ class Generate_LULC:
             raise ValueError("class_ids (sorted list of integer class IDs) is required for soft/multiprobability transfer.")
 
         sorted_ids = sorted(int(c) for c in class_ids)
-        prob_band_names = [f"prob_{cid}" for cid in sorted_ids]
+        prob_band_names, _ = build_prob_band_names(sorted_ids, class_names=class_names)
         raw_prob_img = image.classify(trained_model)
         prob_stack = (
             raw_prob_img
@@ -718,6 +985,7 @@ class Generate_LULC:
             "scheme":          scheme_name,
         }
 
+    #migt be removed, not used in the current workflow
     def classify_from_prebuilt_multitemporal(
         self,
         scheme_name: str,
@@ -737,7 +1005,7 @@ class Generate_LULC:
             )
             for label, year in years_by_period.items()
         }
-
+    #core function for multitemporal classification
     def classify_multitemporal(
         self,
         predictor_stacks: Dict[str, ee.Image],
@@ -754,6 +1022,7 @@ class Generate_LULC:
         probability_scale: int = 100,
         common_bands: Optional[List[str]] = None,
         period_order: Optional[List[str]] = None,
+        class_names: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Run multitemporal Random Forest classification across N >= 2 periods in either
@@ -794,6 +1063,7 @@ class Generate_LULC:
         feature_importance: Dict[str, pd.DataFrame] = {}
         model_evaluation: Dict[str, Dict[str, Any]] = {}
         class_ids_by_period: Dict[str, List[int]] = {}
+        prob_bands_by_period: Dict[str, Dict[int, str]] = {}
 
         if mode_used == 'batch':
             for label in period_order:
@@ -801,7 +1071,7 @@ class Generate_LULC:
                 stack = predictor_stacks[label]
 
                 if classification_type == 'hard':
-                    lulc_img, trained_model = self.hard_classification(
+                    lulc_img, trained_model = cast(Tuple[ee.Image, Dict[str, Any]], self.hard_classification(
                         training_data=train_fc,
                         class_property=class_property,
                         image=stack,
@@ -810,11 +1080,11 @@ class Generate_LULC:
                         min_leaf=min_leaf,
                         return_model=True,
                         seed=seed,
-                    )
+                    ))
                     is_multiprob = False
                     cids = None
                 else:
-                    lulc_img, model_info = self.soft_classification(
+                    lulc_img, model_info = cast(Tuple[ee.Image, Dict[str, Any]], self.soft_classification(
                         training_data=train_fc,
                         class_property=class_property,
                         image=stack,
@@ -826,12 +1096,15 @@ class Generate_LULC:
                         probability_scale=probability_scale,
                         mode=soft_mode,
                         return_model=True,
-                    )
+                        class_names=class_names,
+                    ))
                     trained_model = model_info.get('model')
                     cids = model_info.get('class_ids')
                     is_multiprob = soft_mode == 'multiprobability'
                     if cids is not None:
                         class_ids_by_period[label] = cids
+                    if model_info.get('prob_band_map'):
+                        prob_bands_by_period[label] = model_info['prob_band_map']
 
                 maps[label] = lulc_img
                 models[label] = trained_model
@@ -857,7 +1130,7 @@ class Generate_LULC:
                 ref_stack = ref_stack.select(common_bands)
 
             if classification_type == 'hard':
-                ref_map, ref_model = self.hard_classification(
+                ref_map, ref_model = cast(Tuple[ee.Image, Dict[str, Any]], self.hard_classification(
                     training_data=ref_train_fc,
                     class_property=class_property,
                     image=ref_stack,
@@ -866,7 +1139,7 @@ class Generate_LULC:
                     min_leaf=min_leaf,
                     return_model=True,
                     seed=seed,
-                )
+                ))
                 is_multiprob = False
                 ref_cids = None
                 transfer_mode = 'hard'
@@ -876,7 +1149,7 @@ class Generate_LULC:
                         "Model Transfer with soft classification requires soft_mode='multiprobability' "
                         "so a single trained classifier can be applied across periods."
                     )
-                ref_map, model_info = self.soft_classification(
+                ref_map, model_info = cast(Tuple[ee.Image, Dict[str, Any]],self.soft_classification(
                     training_data=ref_train_fc,
                     class_property=class_property,
                     image=ref_stack,
@@ -888,7 +1161,8 @@ class Generate_LULC:
                     probability_scale=probability_scale,
                     mode='multiprobability',
                     return_model=True,
-                )
+                    class_names=class_names,
+                ))
                 ref_model = model_info['model']
                 ref_cids = model_info['class_ids']
                 is_multiprob = True
@@ -898,6 +1172,8 @@ class Generate_LULC:
             models[reference_period] = ref_model
             if ref_cids is not None:
                 class_ids_by_period[reference_period] = ref_cids
+            if classification_type == 'soft' and model_info.get('prob_band_map'):
+                prob_bands_by_period[reference_period] = model_info['prob_band_map']
 
             feature_importance[reference_period] = self.get_feature_importance(
                 ref_model, training_data=ref_train_fc, class_property=class_property
@@ -925,10 +1201,14 @@ class Generate_LULC:
                     class_ids=ref_cids,
                     include_final_map=True,
                     probability_scale=probability_scale,
+                    class_names=class_names,
                 )
                 models[label] = ref_model
                 if ref_cids is not None:
                     class_ids_by_period[label] = ref_cids
+                    if classification_type == 'soft':
+                        _, pb_map = build_prob_band_names(ref_cids, class_names=class_names)
+                        prob_bands_by_period[label] = pb_map
 
         return {
             'mode_used': mode_used,
@@ -941,4 +1221,5 @@ class Generate_LULC:
             'feature_importance': feature_importance,
             'model_evaluation': model_evaluation,
             'class_ids': class_ids_by_period,
+            'prob_bands': prob_bands_by_period,
         }
