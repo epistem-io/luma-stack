@@ -9,10 +9,10 @@ Provides:
   mapping periods for Batch and Model Transfer workflows.
 """
 
+from dataclasses import dataclass
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import ee
-
 from .ee_config import ensure_ee_initialized
 from .predictor import SpectralCalculator, terrain_calculator
 
@@ -373,3 +373,510 @@ def compute_multitemporal_predictors(
         'terrain_bands': terrain_bands,
         'period_order': period_order,
     }
+
+
+@dataclass
+class PeriodConfig:
+    """Configuration for a single mapping period in multitemporal analysis."""
+
+    label: str
+    start_date: Union[int, str]
+    end_date: Union[int, str]
+    sensor: str
+    cloud_cover: int = 30
+    order_index: Optional[int] = None
+    scale: Optional[int] = None
+    cs_threshold: float = 0.7
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to a serializable dictionary."""
+        return {
+            'label': self.label,
+            'start_date': self.start_date,
+            'end_date': self.end_date,
+            'sensor': self.sensor,
+            'cloud_cover': self.cloud_cover,
+            'order_index': self.order_index,
+            'scale': self.scale,
+            'cs_threshold': self.cs_threshold,
+        }
+
+
+def normalize_period_configs(
+    periods: Union[Dict[str, Union[PeriodConfig, Dict[str, Any]]], Sequence[Union[PeriodConfig, Dict[str, Any]]]]
+) -> Tuple[List[PeriodConfig], List[str]]:
+    """
+    Validate and chronologically order ``N >= 2`` period definitions.
+
+    Returns ``(ordered_configs, period_order)``.
+    """
+    from .data_acquisition import parse_date_input
+
+    configs: List[PeriodConfig] = []
+    if isinstance(periods, dict):
+        for idx, (label, cfg) in enumerate(periods.items()):
+            raw = cfg.to_dict() if isinstance(cfg, PeriodConfig) else dict(cfg)
+            raw['label'] = label
+            if raw.get('order_index') is None:
+                raw['order_index'] = idx
+            configs.append(PeriodConfig(**{k: v for k, v in raw.items() if k in PeriodConfig.__dataclass_fields__}))
+    elif isinstance(periods, (list, tuple)):
+        for idx, cfg in enumerate(periods):
+            if isinstance(cfg, PeriodConfig):
+                c_dict = cfg.to_dict()
+            elif isinstance(cfg, dict):
+                c_dict = dict(cfg)
+            else:
+                c_dict = vars(cfg).copy()
+            if not c_dict.get('label'):
+                raise ValueError(f"Period at index {idx} is missing a 'label'.")
+            if c_dict.get('order_index') is None:
+                c_dict['order_index'] = idx
+            configs.append(
+                PeriodConfig(**{k: v for k, v in c_dict.items() if k in PeriodConfig.__dataclass_fields__})
+            )
+    else:
+        raise ValueError("periods must be a dict or a list/tuple of PeriodConfig/dict items.")
+
+    if len(configs) < 2:
+        raise ValueError(f"Multitemporal analysis requires at least 2 periods, got {len(configs)}.")
+
+    labels = [c.label for c in configs]
+    if len(set(labels)) != len(labels):
+        raise ValueError(f"Period labels must be unique, got {labels}.")
+
+    ordered = sorted(
+        configs,
+        key=lambda c: (parse_date_input(c.start_date, is_start=True), c.order_index or 0),
+    )
+    return ordered, [c.label for c in ordered]
+
+
+class MultitemporalAnalysis:
+    """
+    Lightweight orchestrator for N >= 2 period LULC mapping across Modules 1 and 3-7.
+
+    Supports both **Batch Mode** (independent training data and models per period)
+    and **Model Transfer Mode** (single training set on ``reference_period`` transferred
+    across harmonized historical/target periods).
+    """
+
+    def __init__(
+        self,
+        aoi,
+        periods: Union[Dict[str, Union[PeriodConfig, Dict[str, Any]]], Sequence[Union[PeriodConfig, Dict[str, Any]]]],
+        reference_period: str = 'baseline',
+        harmonize_landsat: bool = True,
+        apply_brdf: bool = False,
+        apply_topo_correction: bool = False,
+        dem: Optional[ee.Image] = None,
+        drop_aerosol: bool = True,
+        harmonize_sensors: bool = True,
+        histogram_match: bool = True,
+        reducer: str = 'median',
+        scale: int = 30,
+        max_buckets: int = 256,
+    ):
+        if aoi is None:
+            raise ValueError("aoi must not be None.")
+
+        self.aoi = aoi
+        self.period_configs, self.period_order = normalize_period_configs(periods)
+        self.periods_by_label: Dict[str, PeriodConfig] = {c.label: c for c in self.period_configs}
+
+        if reference_period not in self.periods_by_label:
+            raise ValueError(
+                f"reference_period '{reference_period}' not found in periods {self.period_order}."
+            )
+        self.reference_period = reference_period
+
+        self.harmonize_landsat = harmonize_landsat
+        self.apply_brdf = apply_brdf
+        self.apply_topo_correction = apply_topo_correction
+        self.dem = dem
+        self.drop_aerosol = drop_aerosol
+        self.harmonize_sensors = harmonize_sensors
+        self.histogram_match = histogram_match
+        self.reducer = reducer
+        self.scale = scale
+        self.max_buckets = max_buckets
+
+        # Pipeline stage state
+        self.optical_data: Optional[Dict[str, Any]] = None
+        self.composites_result: Optional[Dict[str, Any]] = None
+        self.training_result: Optional[Dict[str, Any]] = None
+        self.landcover_df: Optional[Any] = None
+        self.separability_result: Optional[Dict[str, Any]] = None
+        self.predictors_result: Optional[Dict[str, Any]] = None
+        self.feature_extraction_result: Optional[Dict[str, Any]] = None
+        self.classification_result: Optional[Dict[str, Any]] = None
+        self.accuracy_result: Optional[Dict[str, Any]] = None
+        self.mode: Optional[str] = None
+
+    def acquire_imagery(
+        self,
+        include_thermal: bool = False,
+        verbose: bool = True,
+        compute_detailed_stats: bool = True,
+        calculate_coverage: bool = False,
+        sharpen_s2: bool = False,
+        ccdc_images: Optional[Dict[str, ee.Image]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Acquire optical collections and build harmonized/histogram-matched composites
+        for all periods (`Module 1` + `imagery_correction.py`).
+
+        Future hook: if ``ccdc_images`` is supplied (e.g. `{period_label: ee.Image}`
+        from a CCDC synthetic generator), matching periods may bypass raw mosaic creation.
+        """
+        ensure_ee_initialized()
+        from .data_acquisition import Reflectance_Data, final_Image
+
+        rd = Reflectance_Data()
+        period_dicts = [cfg.to_dict() for cfg in self.period_configs]
+
+        self.optical_data = rd.get_multitemporal_optical_data(
+            aoi=self.aoi,
+            periods=period_dicts,
+            harmonize_landsat=self.harmonize_landsat,
+            apply_brdf=self.apply_brdf,
+            apply_topo_correction=self.apply_topo_correction,
+            dem=self.dem,
+            include_thermal=include_thermal,
+            verbose=verbose,
+            compute_detailed_stats=compute_detailed_stats,
+        )
+
+        fi = final_Image()
+        self.composites_result = fi.get_multitemporal_composites(
+            collections_by_period=self.optical_data,
+            aoi=self.aoi,
+            reference_period=self.reference_period,
+            reducer=self.reducer,
+            drop_aerosol=self.drop_aerosol,
+            harmonize_sensors=self.harmonize_sensors,
+            histogram_match=self.histogram_match,
+            scale=self.scale,
+            max_buckets=self.max_buckets,
+            sharpen_s2=sharpen_s2,
+            calculate_coverage=calculate_coverage,
+            verbose=verbose,
+        )
+
+        if ccdc_images:
+            # Future hook for synthetic CCDC composite substitution per period
+            for label, syn_img in ccdc_images.items():
+                if label in self.composites_result.get('composites', {}) and syn_img is not None:
+                    self.composites_result['composites'][label] = syn_img
+
+        return {
+            'optical_data': self.optical_data,
+            'composites': self.composites_result,
+            'period_order': self.period_order,
+            'common_bands': self.composites_result.get('common_bands'),
+        }
+
+    def load_training_data(
+        self,
+        training_sources: Dict[str, Any],
+        landcover_df: Optional[Any] = None,
+        class_field: Optional[str] = None,
+        use_class_ids: bool = True,
+        min_samples: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Load and validate 1-or-N training datasets (`Module 3`), automatically
+        detecting ``'model_transfer'`` vs ``'batch'`` mode.
+
+        Train/test stratified splitting is performed downstream inside
+        ``extract_features()`` via ``FeatureExtraction.stratified_split()``.
+        """
+        from .sample_data import SyncTrainData
+
+        self.landcover_df = landcover_df
+        self.training_result = SyncTrainData.LoadMultitemporalTrainData(
+            training_sources=training_sources,
+            landcover_df=landcover_df,
+            aoi_geometry=self.aoi,
+            period_order=self.period_order,
+            reference_period=self.reference_period,
+            class_field=class_field,
+            use_class_ids=use_class_ids,
+            min_samples=min_samples,
+        )
+        self.mode = self.training_result['mode']
+        self.feature_extraction_result = None
+        return self.training_result
+
+    def check_separability(
+        self,
+        class_property: str = 'class_id',
+        class_name_property: Optional[str] = None,
+        region: Optional[Any] = None,
+        scale: Optional[int] = None,
+        max_pixels_per_class: int = 5000,
+        method: str = 'TD',
+    ) -> Dict[str, Any]:
+        """Run spectral separability (`Module 4`) on periods that have training data."""
+        if self.composites_result is None:
+            raise RuntimeError("Call acquire_imagery() before check_separability().")
+        if self.training_result is None:
+            raise RuntimeError("Call load_training_data() before check_separability().")
+
+        from .sample_data_quality import sample_quality
+
+        geom = region
+        if geom is None:
+            geom = self.aoi.geometry() if isinstance(self.aoi, ee.FeatureCollection) else self.aoi
+
+        self.separability_result = sample_quality.run_multitemporal_separability(
+            composites_by_period=self.composites_result,
+            training_by_period=self.training_result['training_by_period'],
+            class_property=class_property,
+            region=geom,
+            class_name_property=class_name_property,
+            scale=scale or self.scale,
+            max_pixels_per_class=max_pixels_per_class,
+            method=method,
+            period_order=self.period_order,
+        )
+        return self.separability_result
+
+    def compute_predictors(
+        self,
+        predictor_config: Dict[str, Any],
+        dem_source: str = 'NASADEM',
+        mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Compute predictor stacks (`Module 5`) across all mapping periods."""
+        if self.composites_result is None:
+            raise RuntimeError("Call acquire_imagery() before compute_predictors().")
+
+        effective_mode = mode or self.mode or 'model_transfer'
+        self.predictors_result = compute_multitemporal_predictors(
+            composites_by_period=self.composites_result,
+            aoi=self.aoi,
+            predictor_config=predictor_config,
+            collections_by_period=self.optical_data,
+            common_bands=self.composites_result.get('common_bands'),
+            histogram_matched=bool(self.composites_result.get('histogram_matched', self.histogram_match)),
+            mode=effective_mode,
+            dem_source=dem_source,
+            period_order=self.period_order,
+        )
+        self.feature_extraction_result = None
+        return self.predictors_result
+
+    def extract_features(
+        self,
+        class_property: str = 'class_id',
+        mode: str = 'auto',
+        scale: Optional[int] = None,
+        tile_scale: int = 4,
+        split_method: str = 'stratified',
+        train_ratio: float = 0.7,
+        seed: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Execute single feature extraction (1 training set on ``reference_period``)
+        or batch feature extraction (N training sets across all periods) via
+        ``FeatureExtraction.extract_multitemporal_samples()``.
+        """
+        if self.predictors_result is None:
+            raise RuntimeError("Call compute_predictors() before extract_features().")
+        if self.training_result is None:
+            raise RuntimeError("Call load_training_data() before extract_features().")
+
+        from .classification import FeatureExtraction
+
+        effective_mode = mode if mode != 'auto' else (self.mode or 'auto')
+        common_bands = (
+            self.predictors_result.get('common_feature_bands')
+            if effective_mode in ('model_transfer', 'auto')
+            else None
+        )
+
+        fe = FeatureExtraction()
+        self.feature_extraction_result = fe.extract_multitemporal_samples(
+            predictor_stacks=self.predictors_result['predictor_stacks'],
+            training_splits=self.training_result['training_by_period'],
+            class_property=class_property,
+            reference_period=self.reference_period,
+            common_bands=common_bands,
+            mode=effective_mode,
+            scale=scale or self.scale,
+            tile_scale=tile_scale,
+            split_method=split_method,
+            train_ratio=train_ratio,
+            seed=seed,
+            period_order=self.period_order,
+        )
+        return self.feature_extraction_result
+
+    def run_classification(
+        self,
+        class_property: str = 'class_id',
+        mode: str = 'auto',
+        classification_type: str = 'soft',
+        soft_mode: str = 'multiprobability',
+        ntrees: int = 100,
+        v_split: Optional[int] = None,
+        min_leaf: int = 1,
+        seed: int = 0,
+        probability_scale: int = 100,
+        scale: Optional[int] = None,
+        tile_scale: int = 4,
+        train_ratio: float = 0.7,
+        split_method: str = 'stratified',
+        class_names: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extract pixel features via ``FeatureExtraction`` (if not already cached) and
+        run ``Generate_LULC.classify_multitemporal()`` (`Module 6`).
+        """
+        if self.predictors_result is None:
+            raise RuntimeError("Call compute_predictors() before run_classification().")
+
+        if self.feature_extraction_result is None:
+            self.extract_features(
+                class_property=class_property,
+                mode=mode,
+                scale=scale,
+                tile_scale=tile_scale,
+                split_method=split_method,
+                train_ratio=train_ratio,
+                seed=seed,
+            )
+
+        from .classification import Generate_LULC
+
+        lulc = Generate_LULC()
+        common_bands = (
+            self.predictors_result.get('common_feature_bands')
+            if self.feature_extraction_result['mode_used'] == 'model_transfer'
+            else None
+        )
+        resolved_names = class_names if class_names is not None else self.landcover_df
+        self.classification_result = lulc.classify_multitemporal(
+            predictor_stacks=self.predictors_result['predictor_stacks'],
+            training_splits=self.feature_extraction_result['sampled_splits'],
+            class_property=class_property,
+            mode=self.feature_extraction_result['mode_used'],
+            reference_period=self.reference_period,
+            classification_type=classification_type,
+            soft_mode=soft_mode,
+            ntrees=ntrees,
+            v_split=v_split,
+            min_leaf=min_leaf,
+            seed=seed,
+            probability_scale=probability_scale,
+            common_bands=common_bands,
+            period_order=self.period_order,
+            class_names=resolved_names,
+        )
+        return self.classification_result
+
+    def assess_accuracy(
+        self,
+        validation_by_period: Dict[str, Optional[ee.FeatureCollection]],
+        class_property: str = 'class_id',
+        scale: Optional[int] = None,
+        confidence: float = 0.95,
+        required_periods: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        """Run multitemporal thematic accuracy assessment (`Module 7`)."""
+        if self.classification_result is None:
+            raise RuntimeError("Call run_classification() before assess_accuracy().")
+
+        from .accuracy import thematic_accuracy
+
+        req = [self.reference_period] if required_periods is None else list(required_periods)
+        taa = thematic_accuracy()
+        self.accuracy_result = taa.run_multitemporal_assessment(
+            maps_by_period=self.classification_result['maps'],
+            validation_by_period=validation_by_period,
+            class_property=class_property,
+            scale=scale or self.scale,
+            confidence=confidence,
+            required_periods=req,
+            period_order=self.period_order,
+        )
+        return self.accuracy_result
+
+    def run_pipeline(
+        self,
+        training_sources: Dict[str, Any],
+        landcover_df: Any,
+        predictor_config: Dict[str, Any],
+        validation_by_period: Optional[Dict[str, Optional[ee.FeatureCollection]]] = None,
+        class_field: str = 'class_id',
+        class_name_property: Optional[str] = None,
+        use_class_ids: bool = True,
+        min_samples: int = 20,
+        train_split_pct: float = 0.7,
+        random_state: int = 42,
+        run_separability: bool = True,
+        classification_type: str = 'soft',
+        soft_mode: str = 'multiprobability',
+        ntrees: int = 100,
+        v_split: Optional[int] = None,
+        min_leaf: int = 1,
+        seed: int = 0,
+        probability_scale: int = 100,
+        tile_scale: int = 4,
+        required_periods: Optional[Sequence[str]] = None,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """Execute the full multitemporal LULC mapping pipeline end-to-end."""
+        self.acquire_imagery(verbose=verbose)
+        self.load_training_data(
+            training_sources=training_sources,
+            landcover_df=landcover_df,
+            class_field=class_field,
+            use_class_ids=use_class_ids,
+            min_samples=min_samples,
+        )
+        if run_separability:
+            self.check_separability(
+                class_property=class_field,
+                class_name_property=class_name_property,
+            )
+        self.compute_predictors(predictor_config=predictor_config)
+        self.extract_features(
+            class_property=class_field,
+            tile_scale=tile_scale,
+            train_ratio=train_split_pct,
+            seed=random_state if seed == 0 else seed,
+        )
+        self.run_classification(
+            class_property=class_field,
+            classification_type=classification_type,
+            soft_mode=soft_mode,
+            ntrees=ntrees,
+            v_split=v_split,
+            min_leaf=min_leaf,
+            seed=seed,
+            probability_scale=probability_scale,
+            tile_scale=tile_scale,
+            class_names=landcover_df,
+        )
+        if validation_by_period is not None:
+            self.assess_accuracy(
+                validation_by_period=validation_by_period,
+                class_property=class_field,
+                required_periods=required_periods,
+            )
+
+        return {
+            'period_order': self.period_order,
+            'reference_period': self.reference_period,
+            'mode': self.mode,
+            'optical_data': self.optical_data,
+            'composites': self.composites_result,
+            'training': self.training_result,
+            'separability': self.separability_result,
+            'predictors': self.predictors_result,
+            'feature_extraction': self.feature_extraction_result,
+            'classification': self.classification_result,
+            'accuracy': self.accuracy_result,
+        }
