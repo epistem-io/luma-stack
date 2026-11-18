@@ -36,11 +36,11 @@ class get_sar_data:
     and JAXA/ALOS/PALSAR/YEARLY/SAR_EPOCH (v2: 2007-2010, 2015-2024), with nearest-year fallback
     for the 2011-2014 mission gap or years beyond coverage.
     """
-
+    #define valid years for PALSAR v1 and v2 collections
     PALSAR_V1_YEARS = [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020]
     PALSAR_EPOCH_YEARS = [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
     ALL_AVAILABLE_PALSAR_YEARS = sorted(list(set(PALSAR_V1_YEARS + PALSAR_EPOCH_YEARS)))
-
+    #dictionary of radar datasets with their properties for retrieval and preprocessing
     SAR_DATASETS = {
         "S1_GRD": {
             "collection": "COPERNICUS/S1_GRD",
@@ -101,7 +101,7 @@ class get_sar_data:
         if reducer == "mean":
             return collection.mean()
         return collection.median()
-
+    #preprocessing: speckle filtering
     def apply_speckle_filter(self, image: ee.Image, method: str = "focal_median",
                              radius_m: float = 30.0) -> ee.Image:
         """
@@ -146,6 +146,7 @@ class get_sar_data:
     # ------------------------------------------------------------------
     # Sentinel-1
     # ------------------------------------------------------------------
+    #preprocesisng: mask border and angle
     def mask_s1_border_and_angle(self, image: ee.Image, min_angle: float = 30.63993,
                                  max_angle: float = 45.23728,
                                  edge_db_floor: float = -35.0) -> ee.Image:
@@ -163,7 +164,7 @@ class get_sar_data:
         return image.select(["VV", "VH"]).updateMask(valid).copyProperties(
             image, ["system:time_start"]
         )
-
+    #core function to retrieve sentinel-1 data
     def get_sentinel1(self, aoi: ee.Geometry, start_date: Union[int, str],
                       end_date: Union[int, str], orbit_pass: str = "BOTH",
                       reducer: str = "median", speckle_filter: str = "focal_median",
@@ -244,7 +245,7 @@ class get_sar_data:
         return image.clip(aoi).toFloat()
 
     # ------------------------------------------------------------------
-    # ALOS PALSAR / PALSAR-2 (Phase 2)
+    # ALOS PALSAR / PALSAR-2
     # ------------------------------------------------------------------
     def mask_and_calibrate_palsar(self, image: ee.Image,
                                   mask_layover_shadow: bool = True) -> ee.Image:

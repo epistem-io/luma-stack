@@ -1,8 +1,15 @@
+"""
+Module 2: Classification Scheme Manager 
+
+Provides:
+- Data retrieval and preprocessing (non correction) from Google Earth Engine
+- Support for handling various satellite image collections. Currently supports Landsat 1-9, Sentinel-2, and NASA Harmonized Landsat Sentinel-2 (HLS v2.0) datasets.
+"""
 import pandas as pd
 import random
 from typing import List, Dict, Optional, Any, Tuple
 
-
+#methods for classification scheme manager
 class LULC_Scheme_Manager:
     """
     Class for facilitating land cover classification scheme definition.
@@ -140,7 +147,7 @@ class LULC_Scheme_Manager:
         # Validate input
         is_valid, error_msg = self.validate_class_input(class_id, class_name)
         if not is_valid:
-            return False, error_msg
+            return False, error_msg # type: ignore
         
         class_id = int(class_id)
         class_name = class_name.strip()

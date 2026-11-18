@@ -1,3 +1,10 @@
+"""
+Module 1: Data Acquisition 
+
+Provides:
+- Data retrieval and preprocessing (non correction) from Google Earth Engine
+- Support for handling various satellite image collections. Currently supports Landsat 1-9, Sentinel-2, and NASA Harmonized Landsat Sentinel-2 (HLS v2.0) datasets.
+"""
 import ee
 from datetime import datetime
 import logging
@@ -1446,6 +1453,11 @@ class Reflectance_Data:
         if verbose:
             self.logger.info(f"Retrieved {config['description']} for {start_date} to {end_date}")
 
+        collection = collection.set({
+            'query_start_date': str(start_date),
+            'query_end_date': str(end_date),
+        })
+
         return collection, {
             'dataset': config['description'],
             'sensor': config['sensor'],
@@ -1669,6 +1681,12 @@ class Reflectance_Data:
                     f"Unsupported sensor '{sensor_key}' for period '{label}'. "
                     f"Supported: {list(self.OPTICAL_DATASETS.keys()) + list(self.S2_DATASETS.keys()) + list(self.HLS_DATASETS.keys())}"
                 )
+
+            if hasattr(col, 'set'):
+                col = col.set({
+                    'query_start_date': str(start_d),
+                    'query_end_date': str(end_d),
+                })
 
             results[label] = {
                 'collection': col,

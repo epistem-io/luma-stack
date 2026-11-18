@@ -8,7 +8,7 @@ to enhance land cover classification. This version is revised to follow the late
 import ee
 import logging
 import datetime
-from typing import List, Optional, Dict, Any, Union, Set
+from typing import List, Optional, Dict, Any, Union, Set, Tuple, Callable, Sequence
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -390,7 +390,7 @@ class sensor_detector:
         s = sensor_hint.strip().upper()
         if any(token in s for token in ["SENTINEL", "S2", "COPERNICUS/S2", "MSI"]):
             return "SENTINEL"
-        if any(token in s for token in ["LANDSAT", "LC08", "LC09", "LE07", "LT05", "LT04",
+        if any(token in s for token in ["LANDSAT", "HLS", "LC08", "LC09", "LE07", "LT05", "LT04",
                                         "LM01", "LM02", "LM03", "L8", "L9", "L7", "L5", "L4", "L1", "L2", "L3"]):
             return "LANDSAT"
         return "UNKNOWN"
@@ -820,10 +820,14 @@ class predictor_catalog:
             disabled = False
 
             # Sensor compatibility check
+            is_hls = "HLS" in str(sensor or "").upper()
             if item_sensor != "ALL" and item_sensor != sensor_norm:
-                is_avail = False
-                disabled = True
-                reason = meta.get("sensor_note", f"Requires {item_sensor} sensor")
+                if is_hls and meta.get("type") == "radar":
+                    pass
+                else:
+                    is_avail = False
+                    disabled = True
+                    reason = meta.get("sensor_note", f"Requires {item_sensor} sensor")
 
             # Temporal range check
             if is_avail and "min_date" in meta and end_dt:
@@ -853,6 +857,76 @@ class predictor_catalog:
             }
 
         return results
+
+    @classmethod
+    def check_multitemporal_availability(
+        cls,
+        periods: Any,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluate predictor availability across N >= 2 periods.
+
+        A predictor is marked ``available=True`` only when it is available across
+        **all** periods (so the same predictor set can be applied consistently
+        across historical and baseline periods).
+        """
+        from .data_acquisition import parse_date_input
+
+        norm_periods = []
+        if isinstance(periods, dict):
+            for lbl, cfg in periods.items():
+                d = cfg.to_dict() if hasattr(cfg, 'to_dict') else (dict(cfg) if isinstance(cfg, dict) else vars(cfg).copy())
+                d['label'] = lbl
+                norm_periods.append(d)
+        elif isinstance(periods, (list, tuple)):
+            for idx, cfg in enumerate(periods):
+                d = cfg.to_dict() if hasattr(cfg, 'to_dict') else (dict(cfg) if isinstance(cfg, dict) else vars(cfg).copy())
+                d.setdefault('label', f'period_{idx}')
+                norm_periods.append(d)
+        else:
+            raise ValueError("periods must be a dict or sequence of PeriodConfig/dict items.")
+
+        if len(norm_periods) < 2:
+            raise ValueError(f"check_multitemporal_availability requires >= 2 periods, got {len(norm_periods)}.")
+
+        per_period_checks: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for p in norm_periods:
+            lbl = str(p['label'])
+            sensor_str = str(p.get('sensor') or p.get('optical_data') or 'L8_SR')
+            s_date = parse_date_input(p['start_date'], is_start=True) if p.get('start_date') is not None else None
+            e_date = parse_date_input(p['end_date'], is_start=False) if p.get('end_date') is not None else None
+            per_period_checks[lbl] = cls.check_availability(sensor=sensor_str, start_date=s_date, end_date=e_date)
+
+        period_labels = [str(p['label']) for p in norm_periods]
+        combined: Dict[str, Dict[str, Any]] = {}
+        for name, meta in cls.PREDICTORS.items():
+            unavail_periods = [
+                lbl for lbl in period_labels if not per_period_checks[lbl][name]['available']
+            ]
+            is_avail = len(unavail_periods) == 0
+            reasons = []
+            for lbl in unavail_periods:
+                r = per_period_checks[lbl][name].get('reason')
+                if r and r not in reasons:
+                    reasons.append(r)
+            reason_str = (
+                f"{'; '.join(reasons)} (unavailable in period(s): {', '.join(unavail_periods)})"
+                if unavail_periods
+                else ""
+            )
+            combined[name] = {
+                "name": name,
+                "category": meta["category"],
+                "long_name": meta.get("long_name", name),
+                "type": meta.get("type", "spectral"),
+                "description": meta.get("description", ""),
+                "available": is_avail,
+                "disabled": not is_avail,
+                "reason": reason_str,
+                "unavailable_periods": unavail_periods,
+                "sensor_compatibility": meta.get("sensor", "ALL"),
+            }
+        return combined
 
 #=================================== Spectral Calculator Backend ===================================
 #reference for the use of spectral index in LC mapping: https://doi.org/10.3390/rs12183062
@@ -1123,20 +1197,21 @@ class SpectralCalculator:
                         pass
 
         # Fallback for standard names if band_set was empty
-        fallbacks = [
-            ("N", "NIR"),
-            ("R", "RED"),
-            ("G", "GREEN"),
-            ("B", "BLUE"),
-            ("S1", "SWIR1"),
-            ("S2", "SWIR2"),
-        ]
-        for spyndex_code, band_name in fallbacks:
-            if spyndex_code not in params:
-                try:
-                    params[spyndex_code] = image.select(band_name)
-                except Exception:
-                    pass
+        if not bands_set:
+            fallbacks = [
+                ("N", "NIR"),
+                ("R", "RED"),
+                ("G", "GREEN"),
+                ("B", "BLUE"),
+                ("S1", "SWIR1"),
+                ("S2", "SWIR2"),
+            ]
+            for spyndex_code, band_name in fallbacks:
+                if spyndex_code not in params:
+                    try:
+                        params[spyndex_code] = image.select(band_name)
+                    except Exception:
+                        pass
 
         if base_params:
             params.update(base_params)
@@ -2409,6 +2484,37 @@ class PredictorCalculation:
                 "error": str(e),
                 "timestamp": datetime.datetime.now().isoformat()
             }
+    def compute_multitemporal_predictors(
+        self,
+        composites_by_period: Dict[str, Any],
+        aoi: ee.Geometry,
+        predictor_config: Dict[str, Any],
+        collections_by_period: Optional[Dict[str, Any]] = None,
+        common_bands: Optional[List[str]] = None,
+        histogram_matched: bool = False,
+        mode: str = 'model_transfer',
+        dem_source: str = 'NASADEM',
+        period_order: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Compute unified predictor stacks across all multitemporal periods (static
+        terrain/landform/distance computed once per AOI; compatible spectral indices
+        and cross-period validated SAR computed per period).
+        """
+        from .multitemporal import compute_multitemporal_predictors as _compute_mt_predictors
+
+        return _compute_mt_predictors(
+            composites_by_period=composites_by_period,
+            aoi=aoi,
+            predictor_config=predictor_config,
+            collections_by_period=collections_by_period,
+            common_bands=common_bands,
+            histogram_matched=histogram_matched,
+            mode=mode,
+            dem_source=dem_source,
+            period_order=period_order,
+        )
+
 #=================================== Correlation Analysis ===================================
 class EECorrelationAnalysis:
     """
