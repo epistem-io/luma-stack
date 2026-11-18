@@ -1,5 +1,5 @@
 """
-EpistemX - Earth Observation Data Processing Package
+Luma Geospatial Engine - Earth Observation Data Processing Package
 
 A comprehensive package for processing and analyzing Earth observation data
 using Google Earth Engine and other remote sensing tools.
@@ -178,7 +178,29 @@ def auto_initialize():
         return False
 
 __version__ = "0.1.0"
-__author__ = "EpistemX Team"
+__author__ = "Luma Developer Team"
+
+_LAZY_EXPORTS = {
+    'BRDF_Correction': ('imagery_correction', 'BRDF_Correction'),
+    'Topographic_Correction': ('imagery_correction', 'Topographic_Correction'),
+    'PeriodConfig': ('multitemporal', 'PeriodConfig'),
+    'MultitemporalAnalysis': ('multitemporal', 'MultitemporalAnalysis'),
+    'compute_multitemporal_predictors': ('multitemporal', 'compute_multitemporal_predictors'),
+    'ConsistencyAnalyzer': ('post_classification', 'ConsistencyAnalyzer'),
+    'compute_log_loss_from_arrays': ('classification', 'compute_log_loss_from_arrays'),
+}
+
+
+def __getattr__(name):
+    if name in _LAZY_EXPORTS:
+        import importlib
+        mod_name, attr_name = _LAZY_EXPORTS[name]
+        module = importlib.import_module(f".{mod_name}", __name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Make key functions available at package level
 __all__ = [
@@ -191,5 +213,12 @@ __all__ = [
     'print_auth_instructions',
     'setup_earth_engine',
     'reset_ee_initialization',
-    'auto_initialize'
+    'auto_initialize',
+    'BRDF_Correction',
+    'Topographic_Correction',
+    'PeriodConfig',
+    'MultitemporalAnalysis',
+    'compute_multitemporal_predictors',
+    'ConsistencyAnalyzer',
+    'compute_log_loss_from_arrays',
 ]
