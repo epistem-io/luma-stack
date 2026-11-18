@@ -1013,6 +1013,9 @@ class sample_quality:
         max_pixels_per_class=5000,
         method='TD',
         period_order=None,
+        bands=None,
+        include_silhouette: bool = False,
+        silhouette_metric: str = 'euclidean',
     ):
         """
         Run separability analysis across multitemporal periods.
@@ -1056,6 +1059,14 @@ class sample_quality:
             if period_order is None:
                 period_order = composites_by_period.get('period_order')
             composites = composites_by_period['composites']
+        elif isinstance(composites_by_period, dict) and isinstance(
+            composites_by_period.get('predictor_stacks'), dict
+        ):
+            if period_order is None:
+                period_order = composites_by_period.get('period_order')
+            if bands is None:
+                bands = composites_by_period.get('common_feature_bands')
+            composites = composites_by_period['predictor_stacks']
         else:
             composites = composites_by_period
 
@@ -1102,15 +1113,30 @@ class sample_quality:
                 scale=scale,
                 max_pixels_per_class=max_pixels_per_class,
             )
-            separability_df = analyzer.get_separability_df(spectral_df, method=method)
-            summary_df = analyzer.sum_separability(spectral_df)
+            if bands is not None:
+                separability_df = analyzer.get_separability_df(spectral_df, method=method, bands=bands)
+                summary_df = analyzer.sum_separability(spectral_df, method=method, bands=bands)
+            else:
+                separability_df = analyzer.get_separability_df(spectral_df, method=method)
+                summary_df = (
+                    analyzer.sum_separability(spectral_df)
+                    if method == 'TD'
+                    else analyzer.sum_separability(spectral_df, method=method)
+                )
 
-            per_period[label] = {
+            period_entry = {
                 'spectral_df': spectral_df,
                 'separability_df': separability_df,
                 'summary_df': summary_df,
                 'analyzer': analyzer,
             }
+            if include_silhouette or str(method).upper() == 'SILHOUETTE':
+                period_entry['silhouette'] = analyzer.compute_silhouette_analysis(
+                    spectral_df,
+                    bands=bands,
+                    metric=silhouette_metric,
+                )
+            per_period[label] = period_entry
             analyzed_periods.append(label)
 
         return {
