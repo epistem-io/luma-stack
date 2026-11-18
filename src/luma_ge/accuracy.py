@@ -729,10 +729,30 @@ class thematic_accuracy:
         skipped_periods: List[str] = []
 
         for label in period_order:
-            val_fc = (validation_by_period or {}).get(label)
-            if val_fc is None:
+            val_src = (validation_by_period or {}).get(label)
+            if val_src is None:
                 skipped_periods.append(label)
                 continue
+            if isinstance(val_src, gpd.GeoDataFrame) and val_src.empty:
+                skipped_periods.append(label)
+                continue
+
+            if isinstance(val_src, ee.FeatureCollection):
+                val_fc = val_src
+            elif isinstance(val_src, gpd.GeoDataFrame) and hasattr(val_src, 'geometry'):
+                from .input_utils import EE_converter
+                cols = [c for c in (class_property, 'geometry') if c in val_src.columns]
+                sub_gdf = val_src[cols] if 'geometry' in cols and class_property in cols else val_src
+                val_fc = EE_converter(verbose=False).convert_roi_gdf(sub_gdf)
+            elif isinstance(val_src, str):
+                if val_src.lower().endswith(('.shp', '.geojson', '.gpkg', '.kml')):
+                    from .input_utils import EE_converter
+                    gdf = gpd.read_file(val_src)
+                    val_fc = EE_converter(verbose=False).convert_roi_gdf(gdf)
+                else:
+                    val_fc = ee.FeatureCollection(val_src)
+            else:
+                val_fc = val_src
 
             success, res = self.run_accuracy_assessment(
                 lcmap=maps_by_period[label],

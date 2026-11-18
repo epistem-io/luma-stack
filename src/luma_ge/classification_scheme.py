@@ -119,7 +119,6 @@ class LULC_Scheme_Manager:
                 return False, f"Class ID {class_id} already exists!"
         
         return True, None
-    #adapted from line 184, but tailored with streamlit compability    
     def add_class(self, class_id: Any, class_name: str, color_code: str) -> Tuple[bool, str]:
         """
         Add or update a class in the classification scheme.

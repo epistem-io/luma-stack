@@ -19,7 +19,7 @@ from .ee_config import ensure_ee_initialized
 # IMAGERY CORRECTION MODULES
 logger = logging.getLogger(__name__)
 
-
+#core methods for topographic correction
 class Topographic_Correction:
     """
     Topographic correction for satellite imagery using the SCSc (Sun-Canopy-Sensor
@@ -387,7 +387,7 @@ class Topographic_Correction:
 
         return corrected
 
-
+#core methods for Radiometric normalzation using BRDF
 class BRDF_Correction:
     """
     Bidirectional Reflectance Distribution Function (BRDF) c-factor normalisation
@@ -414,7 +414,7 @@ class BRDF_Correction:
     - Roy, D.P. et al. (2016). A general method to normalize Landsat reflectance data
       to nadir BRDF adjusted reflectance. *Remote Sensing of Environment*, 176, 255–271.
     """
-
+    #default configurations value
     MAX_SATELLITE_ZENITH: float = 7.5
     MAX_DISTANCE: int = 1_000_000
     UPPER_LEFT: int = 0

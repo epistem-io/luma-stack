@@ -238,7 +238,6 @@ class terrain_calculator:
 class SpectralCalculator:
     """
     Backend service for spectral index calculations using spyndex library.
-    Migrated from Streamlit UI to follow clean architecture patterns.
     """
     
     def __init__(self):
