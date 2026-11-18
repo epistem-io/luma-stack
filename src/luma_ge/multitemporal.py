@@ -14,7 +14,14 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import ee
 from .ee_config import ensure_ee_initialized
-from .predictor import SpectralCalculator, terrain_calculator
+from .predictor import (
+    RFE_CV,
+    SpectralCalculator,
+    distance_calculator,
+    predictor_catalog,
+    terrain_calculator,
+)
+from .sar import get_sar_data
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +111,8 @@ def compute_single_image_indices(
 
     calc = spectral_calc or SpectralCalculator()
 
-    # Delegate if SpectralCalculator already exposes calculate_indices()
-    if hasattr(calc, 'calculate_indices'):
+    # Delegate if SpectralCalculator exposes calculate_indices() and available_bands wasn't pre-resolved
+    if hasattr(calc, 'calculate_indices') and available_bands is None:
         return calc.calculate_indices(
             image=image,
             index_list=list(index_list),
@@ -147,27 +154,76 @@ def _extract_predictor_selections(predictor_config: Dict[str, Any]) -> Dict[str,
             'elevation': False,
             'slope': False,
             'aspect': False,
+            'landform': False,
+            'dist_roads': False,
+            'dist_coast': False,
+            'dist_settlement': False,
+            's1_bands': [],
+            'palsar_bands': [],
             'spectral_indices': [],
             'index_coefficients': None,
+            'distance_options': {},
+            'sentinel1_options': {},
+            'palsar_options': {},
         }
 
-    if 'individual_predictors' in predictor_config:
-        ind = predictor_config['individual_predictors'] or {}
-        return {
-            'elevation': bool(ind.get('elevation', False)),
-            'slope': bool(ind.get('slope', False)),
-            'aspect': bool(ind.get('aspect', False)),
-            'spectral_indices': list(ind.get('spectral_indices', []) or []),
-            'index_coefficients': ind.get('index_coefficients', predictor_config.get('index_coefficients')),
-        }
-
+    ind = (predictor_config.get('individual_predictors') or {}) if 'individual_predictors' in predictor_config else {}
     terrain_all = bool(predictor_config.get('terrain', False))
+    dist_all = bool(predictor_config.get('distance', False) or ind.get('distance', False))
+
+    raw_indices = list(
+        (ind.get('spectral_indices') if 'individual_predictors' in predictor_config else predictor_config.get('spectral_indices'))
+        or []
+    )
+
+    all_s1 = ['S1_VV', 'S1_VH', 'S1_VV_VH']
+    all_palsar = ['PALSAR_HH', 'PALSAR_HV', 'PALSAR_HH_HV']
+    s1_bands: List[str] = []
+    palsar_bands: List[str] = []
+
+    def _collect_sar(val, target, defaults):
+        if val is True:
+            for b in defaults:
+                if b not in target:
+                    target.append(b)
+        elif isinstance(val, (list, tuple, set)):
+            for v in val:
+                vu = str(v).upper()
+                if vu in defaults and vu not in target:
+                    target.append(vu)
+
+    _collect_sar(predictor_config.get('sentinel1'), s1_bands, all_s1)
+    _collect_sar(ind.get('sentinel1'), s1_bands, all_s1)
+    _collect_sar(predictor_config.get('palsar'), palsar_bands, all_palsar)
+    _collect_sar(ind.get('palsar'), palsar_bands, all_palsar)
+
+    spectral_indices: List[str] = []
+    for item in raw_indices:
+        iu = str(item).upper()
+        if iu in all_s1:
+            if iu not in s1_bands:
+                s1_bands.append(iu)
+        elif iu in all_palsar:
+            if iu not in palsar_bands:
+                palsar_bands.append(iu)
+        else:
+            spectral_indices.append(str(item))
+
     return {
-        'elevation': terrain_all,
-        'slope': terrain_all,
-        'aspect': terrain_all,
-        'spectral_indices': list(predictor_config.get('spectral_indices', []) or []),
-        'index_coefficients': predictor_config.get('index_coefficients'),
+        'elevation': bool(ind.get('elevation', terrain_all)),
+        'slope': bool(ind.get('slope', terrain_all)),
+        'aspect': bool(ind.get('aspect', terrain_all)),
+        'landform': bool(ind.get('landform', predictor_config.get('landform', False))),
+        'dist_roads': bool(ind.get('dist_roads', dist_all)),
+        'dist_coast': bool(ind.get('dist_coast', dist_all)),
+        'dist_settlement': bool(ind.get('dist_settlement', dist_all)),
+        's1_bands': s1_bands,
+        'palsar_bands': palsar_bands,
+        'spectral_indices': spectral_indices,
+        'index_coefficients': ind.get('index_coefficients', predictor_config.get('index_coefficients')),
+        'distance_options': predictor_config.get('distance_options') or {},
+        'sentinel1_options': predictor_config.get('sentinel1_options') or {},
+        'palsar_options': predictor_config.get('palsar_options') or {},
     }
 
 
@@ -242,10 +298,10 @@ def compute_multitemporal_predictors(
     selections = _extract_predictor_selections(predictor_config)
     spectral_calc = SpectralCalculator()
 
-    # Compute static terrain layers once for AOI
+    # Compute static terrain + landform + distance layers once for AOI
     terrain_layers: List[ee.Image] = []
     terrain_bands: List[str] = []
-    if any([selections['elevation'], selections['slope'], selections['aspect']]):
+    if any([selections['elevation'], selections['slope'], selections['aspect'], selections['landform']]):
         tc = terrain_calculator()
         if selections['elevation']:
             elev = tc.calculate_elevation(aoi, dem_source=dem_source)
@@ -262,6 +318,35 @@ def compute_multitemporal_predictors(
             if asp is not None:
                 terrain_layers.append(asp)
                 terrain_bands.append('aspect')
+        if selections['landform']:
+            lf = tc.get_landform(aoi)
+            if lf is not None:
+                terrain_layers.append(lf)
+                terrain_bands.append('landform')
+
+    distance_bands: List[str] = []
+    if any([selections['dist_roads'], selections['dist_coast'], selections['dist_settlement']]):
+        dc = distance_calculator()
+        d_opts = selections['distance_options']
+        dist_img = dc.calculate_distance_metrics(
+            aoi=aoi,
+            max_dist=d_opts.get('max_dist', 50000),
+            in_meters=d_opts.get('in_meters', True),
+            include_roads=selections['dist_roads'],
+            include_coast=selections['dist_coast'],
+            include_settlement=selections['dist_settlement'],
+            road_source=d_opts.get('road_source', 'grip4'),
+            main_roads_only=d_opts.get('main_roads_only', True),
+            precomputed_road_asset=d_opts.get('precomputed_road_asset'),
+        )
+        if dist_img is not None:
+            terrain_layers.append(dist_img)
+            if selections['dist_roads']:
+                distance_bands.append('dist_roads')
+            if selections['dist_coast']:
+                distance_bands.append('dist_coast')
+            if selections['dist_settlement']:
+                distance_bands.append('dist_settlement')
 
     terrain_stack = None
     if terrain_layers:
@@ -317,6 +402,7 @@ def compute_multitemporal_predictors(
         if terrain_stack is not None:
             stacked = stacked.addBands(terrain_stack)
             period_bands.extend(terrain_bands)
+            period_bands.extend(distance_bands)
 
         if requested_indices:
             if common_bands is not None:
@@ -359,6 +445,86 @@ def compute_multitemporal_predictors(
         predictor_stacks[label] = stacked
         feature_bands[label] = period_bands
 
+    # Period-specific SAR predictors (Sentinel-1 & ALOS PALSAR): only stacked when available across ALL periods
+    sar_bands_added: List[str] = []
+    if selections['s1_bands'] or selections['palsar_bands']:
+        sar_calc = get_sar_data()
+        period_dates: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+        col_entries = (
+            collections_by_period['periods']
+            if isinstance(collections_by_period, dict) and isinstance(collections_by_period.get('periods'), dict)
+            else (collections_by_period or {})
+        )
+        for label in period_order:
+            entry = col_entries.get(label) if isinstance(col_entries, dict) else None
+            if isinstance(entry, dict) and entry.get('start_date') and entry.get('end_date'):
+                period_dates[label] = (str(entry['start_date']), str(entry['end_date']))
+            else:
+                period_dates[label] = (None, None)
+
+        if selections['s1_bands']:
+            s1_opts = selections['sentinel1_options']
+            s1_by_period: Dict[str, ee.Image] = {}
+            for label in period_order:
+                sd, ed = period_dates[label]
+                if sd and ed:
+                    s1_img = sar_calc.get_sentinel1(
+                        aoi=aoi,
+                        start_date=sd,
+                        end_date=ed,
+                        orbit_pass=s1_opts.get('orbit_pass', 'BOTH'),
+                        reducer=s1_opts.get('reducer', 'median'),
+                        speckle_filter=s1_opts.get('speckle_filter', 'focal_median'),
+                        filter_radius_m=s1_opts.get('filter_radius_m', 30.0),
+                        include_ratio=True,
+                    )
+                    if s1_img is not None:
+                        s1_by_period[label] = s1_img.select(selections['s1_bands'])
+            if len(s1_by_period) == len(period_order):
+                for label in period_order:
+                    predictor_stacks[label] = predictor_stacks[label].addBands(s1_by_period[label])
+                    feature_bands[label].extend(selections['s1_bands'])
+                sar_bands_added.extend(selections['s1_bands'])
+            else:
+                logger.warning(
+                    "Skipping Sentinel-1 bands %s: not available across all periods %s.",
+                    selections['s1_bands'],
+                    period_order,
+                )
+                skipped_indices.extend(b for b in selections['s1_bands'] if b not in skipped_indices)
+
+        if selections['palsar_bands']:
+            p_opts = selections['palsar_options']
+            palsar_by_period: Dict[str, ee.Image] = {}
+            for label in period_order:
+                sd, ed = period_dates[label]
+                if sd and ed:
+                    p_img = sar_calc.get_palsar(
+                        aoi=aoi,
+                        start_date=sd,
+                        end_date=ed,
+                        reducer=p_opts.get('reducer', 'median'),
+                        speckle_filter=p_opts.get('speckle_filter', 'focal_median'),
+                        filter_radius_m=p_opts.get('filter_radius_m', 30.0),
+                        include_ratio=True,
+                        mask_layover_shadow=p_opts.get('mask_layover_shadow', True),
+                        allow_nearest_year_fallback=p_opts.get('allow_nearest_year_fallback', True),
+                    )
+                    if p_img is not None:
+                        palsar_by_period[label] = p_img.select(selections['palsar_bands'])
+            if len(palsar_by_period) == len(period_order):
+                for label in period_order:
+                    predictor_stacks[label] = predictor_stacks[label].addBands(palsar_by_period[label])
+                    feature_bands[label].extend(selections['palsar_bands'])
+                sar_bands_added.extend(selections['palsar_bands'])
+            else:
+                logger.warning(
+                    "Skipping PALSAR bands %s: not available across all periods %s.",
+                    selections['palsar_bands'],
+                    period_order,
+                )
+                skipped_indices.extend(b for b in selections['palsar_bands'] if b not in skipped_indices)
+
     # Compute common feature intersection across all periods
     common_feature_set = set(feature_bands[period_order[0]])
     for label in period_order[1:]:
@@ -372,6 +538,8 @@ def compute_multitemporal_predictors(
         'compatible_indices': compatible_indices,
         'skipped_indices': skipped_indices,
         'terrain_bands': terrain_bands,
+        'distance_bands': distance_bands,
+        'sar_bands': sar_bands_added,
         'period_order': period_order,
     }
 
@@ -510,6 +678,7 @@ class MultitemporalAnalysis:
         self.separability_result: Optional[Dict[str, Any]] = None
         self.predictors_result: Optional[Dict[str, Any]] = None
         self.feature_extraction_result: Optional[Dict[str, Any]] = None
+        self.rfe_result: Optional[Dict[str, Any]] = None
         self.classification_result: Optional[Dict[str, Any]] = None
         self.accuracy_result: Optional[Dict[str, Any]] = None
         self.mode: Optional[str] = None
@@ -609,6 +778,10 @@ class MultitemporalAnalysis:
         self.feature_extraction_result = None
         return self.training_result
 
+    def check_predictor_availability(self) -> Dict[str, Dict[str, Any]]:
+        """Check which predictors are available across all configured periods."""
+        return predictor_catalog.check_multitemporal_availability(self.period_configs)
+
     def check_separability(
         self,
         class_property: str = 'class_id',
@@ -617,9 +790,13 @@ class MultitemporalAnalysis:
         scale: Optional[int] = None,
         max_pixels_per_class: int = 5000,
         method: str = 'TD',
+        bands: Optional[List[str]] = None,
+        include_silhouette: bool = False,
+        silhouette_metric: str = 'euclidean',
+        use_predictors: bool = False,
     ) -> Dict[str, Any]:
-        """Run spectral separability (`Module 4`) on periods that have training data."""
-        if self.composites_result is None:
+        """Run spectral/predictor separability (`Module 4`) on periods that have training data."""
+        if self.composites_result is None and self.predictors_result is None:
             raise RuntimeError("Call acquire_imagery() before check_separability().")
         if self.training_result is None:
             raise RuntimeError("Call load_training_data() before check_separability().")
@@ -630,8 +807,13 @@ class MultitemporalAnalysis:
         if geom is None:
             geom = self.aoi.geometry() if isinstance(self.aoi, ee.FeatureCollection) else self.aoi
 
+        img_source = (
+            self.predictors_result
+            if (use_predictors and self.predictors_result is not None)
+            else self.composites_result
+        )
         self.separability_result = sample_quality.run_multitemporal_separability(
-            composites_by_period=self.composites_result,
+            composites_by_period=img_source,
             training_by_period=self.training_result['training_by_period'],
             class_property=class_property,
             region=geom,
@@ -640,6 +822,9 @@ class MultitemporalAnalysis:
             max_pixels_per_class=max_pixels_per_class,
             method=method,
             period_order=self.period_order,
+            bands=bands,
+            include_silhouette=include_silhouette,
+            silhouette_metric=silhouette_metric,
         )
         return self.separability_result
 
@@ -714,6 +899,103 @@ class MultitemporalAnalysis:
         )
         return self.feature_extraction_result
 
+    def run_feature_selection(
+        self,
+        class_property: str = 'class_id',
+        n_features_to_select: Optional[int] = None,
+        step: Union[int, float] = 1,
+        cv: int = 3,
+        n_trees: int = 50,
+        max_depth: Optional[int] = 12,
+        min_samples_leaf: int = 2,
+        seed: int = 42,
+        max_samples: Optional[int] = 5000,
+        per_period_rfe: bool = False,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Run optional ``RFE_CV`` recursive feature elimination.
+
+        By default (``per_period_rfe=False``), selects a single unified predictor
+        subset on ``reference_period`` and applies that band subset across **all**
+        periods so Model Transfer and Batch workflows share the exact same features.
+        """
+        if self.predictors_result is None:
+            raise RuntimeError("Call compute_predictors() before run_feature_selection().")
+        if self.feature_extraction_result is None:
+            self.extract_features(class_property=class_property, seed=seed)
+
+        common_features = list(self.predictors_result['common_feature_bands'])
+        sampled_splits = self.feature_extraction_result['sampled_splits']
+
+        if not per_period_rfe or self.feature_extraction_result['mode_used'] == 'model_transfer':
+            ref_train_fc, _ = sampled_splits[self.reference_period]
+            rfe = RFE_CV(
+                training_data=ref_train_fc,
+                class_property=class_property,
+                features=common_features,
+                n_features_to_select=n_features_to_select,
+                step=step,
+                cv=cv,
+                n_trees=n_trees,
+                max_depth=max_depth,
+                min_samples_leaf=min_samples_leaf,
+                seed=seed,
+                max_samples=max_samples,
+                verbose=verbose,
+            ).fit()
+            selected = rfe.get_selected_features()
+            for lbl in self.period_order:
+                self.predictors_result['predictor_stacks'][lbl] = (
+                    self.predictors_result['predictor_stacks'][lbl].select(selected)
+                )
+                self.predictors_result['feature_bands'][lbl] = list(selected)
+            self.predictors_result['common_feature_bands'] = list(selected)
+            self.rfe_result = {
+                'mode': 'unified',
+                'selected_features': selected,
+                'ranking': rfe.get_ranking(),
+                'rfe_objects': {self.reference_period: rfe},
+            }
+            return self.rfe_result
+
+        # Per-period RFE in Batch mode
+        selected_by_period: Dict[str, List[str]] = {}
+        rankings_by_period: Dict[str, Dict[str, int]] = {}
+        rfe_objs: Dict[str, RFE_CV] = {}
+        for lbl in self.period_order:
+            train_fc, _ = sampled_splits[lbl]
+            rfe = RFE_CV(
+                training_data=train_fc,
+                class_property=class_property,
+                features=list(self.predictors_result['feature_bands'][lbl]),
+                n_features_to_select=n_features_to_select,
+                step=step,
+                cv=cv,
+                n_trees=n_trees,
+                max_depth=max_depth,
+                min_samples_leaf=min_samples_leaf,
+                seed=seed,
+                max_samples=max_samples,
+                verbose=verbose,
+            ).fit()
+            sel = rfe.get_selected_features()
+            self.predictors_result['predictor_stacks'][lbl] = (
+                self.predictors_result['predictor_stacks'][lbl].select(sel)
+            )
+            self.predictors_result['feature_bands'][lbl] = list(sel)
+            selected_by_period[lbl] = sel
+            rankings_by_period[lbl] = rfe.get_ranking()
+            rfe_objs[lbl] = rfe
+
+        self.rfe_result = {
+            'mode': 'per_period',
+            'selected_features_by_period': selected_by_period,
+            'ranking_by_period': rankings_by_period,
+            'rfe_objects': rfe_objs,
+        }
+        return self.rfe_result
+
     def run_classification(
         self,
         class_property: str = 'class_id',
@@ -731,6 +1013,9 @@ class MultitemporalAnalysis:
         split_method: str = 'stratified',
         class_names: Optional[Any] = None,
         include_log_loss: bool = False,
+        spatial_smoothing: bool = False,
+        smoothing_radius: int = 1,
+        smoothing_sigma: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Extract pixel features via ``FeatureExtraction`` (if not already cached) and
@@ -776,6 +1061,9 @@ class MultitemporalAnalysis:
             period_order=self.period_order,
             class_names=resolved_names,
             include_log_loss=include_log_loss,
+            spatial_smoothing=spatial_smoothing,
+            smoothing_radius=smoothing_radius,
+            smoothing_sigma=smoothing_sigma,
         )
         return self.classification_result
 
@@ -829,6 +1117,11 @@ class MultitemporalAnalysis:
         tile_scale: int = 4,
         required_periods: Optional[Sequence[str]] = None,
         include_log_loss: bool = False,
+        include_silhouette: bool = False,
+        rfe_config: Optional[Dict[str, Any]] = None,
+        spatial_smoothing: bool = False,
+        smoothing_radius: int = 1,
+        smoothing_sigma: float = 1.0,
         verbose: bool = True,
     ) -> Dict[str, Any]:
         """Execute the full multitemporal LULC mapping pipeline end-to-end."""
@@ -840,11 +1133,6 @@ class MultitemporalAnalysis:
             use_class_ids=use_class_ids,
             min_samples=min_samples,
         )
-        if run_separability:
-            self.check_separability(
-                class_property=class_field,
-                class_name_property=class_name_property,
-            )
         self.compute_predictors(predictor_config=predictor_config)
         self.extract_features(
             class_property=class_field,
@@ -852,6 +1140,18 @@ class MultitemporalAnalysis:
             train_ratio=train_split_pct,
             seed=random_state if seed == 0 else seed,
         )
+        if rfe_config:
+            rfe_kwargs = dict(rfe_config)
+            rfe_kwargs.setdefault('class_property', class_field)
+            rfe_kwargs.setdefault('verbose', verbose)
+            self.run_feature_selection(**rfe_kwargs)
+        if run_separability:
+            self.check_separability(
+                class_property=class_field,
+                class_name_property=class_name_property,
+                include_silhouette=include_silhouette,
+                use_predictors=include_silhouette,
+            )
         self.run_classification(
             class_property=class_field,
             classification_type=classification_type,
@@ -864,6 +1164,9 @@ class MultitemporalAnalysis:
             tile_scale=tile_scale,
             class_names=landcover_df,
             include_log_loss=include_log_loss,
+            spatial_smoothing=spatial_smoothing,
+            smoothing_radius=smoothing_radius,
+            smoothing_sigma=smoothing_sigma,
         )
         if validation_by_period is not None:
             self.assess_accuracy(
@@ -882,6 +1185,7 @@ class MultitemporalAnalysis:
             'separability': self.separability_result,
             'predictors': self.predictors_result,
             'feature_extraction': self.feature_extraction_result,
+            'rfe': self.rfe_result,
             'classification': self.classification_result,
             'accuracy': self.accuracy_result,
         }
