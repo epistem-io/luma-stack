@@ -1,3 +1,10 @@
+"""
+Module 6: Classification
+
+Provides:
+- Hard direct classification (`hard_classification`) and soft probabilistic classification
+- Support feature extraction, model training, and model evaluation
+"""
 import logging
 import re
 import pandas as pd
@@ -8,7 +15,7 @@ from .ee_config import ensure_ee_initialized
 
 logger = logging.getLogger(__name__)
 
-
+#return class label name from scheme (module 2)
 def extract_class_name_map(class_names: Any) -> Dict[int, str]:
     """Normalize a dict, DataFrame scheme, or class-dict list into ``{class_id: class_name}``."""
     if class_names is None:
@@ -42,7 +49,7 @@ def extract_class_name_map(class_names: Any) -> Dict[int, str]:
         return out
     return {}
 
-
+#build probability band names from class scheme (module 2)
 def build_prob_band_names(
     class_ids: Sequence[int],
     class_names: Any = None,
@@ -77,7 +84,7 @@ def build_prob_band_names(
 
     return band_names, cid_to_band
 
-
+#compuete cross entropy loss from predicted probability 
 def compute_log_loss_from_arrays(
     y_true: Sequence[int],
     y_prob: Any,
@@ -127,8 +134,6 @@ def compute_log_loss_from_arrays(
         total_nll -= float(np.log(p))
     return total_nll / float(len(y_true_arr))
 
-# Do not initialize Earth Engine at import time. Initialize when classes are instantiated.
-# Module 6: Land Cover Classification
 ## System Response 6.2 Classification
 class FeatureExtraction:
     """
@@ -477,7 +482,10 @@ class Generate_LULC:
     def soft_classification(self, training_data, class_property, image, include_final_map=True,
                                 ntrees = 100, v_split = None, min_leaf=1, seed=0, probability_scale = 100,
                                 mode: str = 'ovr', return_model: bool = False,
-                                class_names: Optional[Any] = None):
+                                class_names: Optional[Any] = None,
+                                spatial_smoothing: bool = False,
+                                smoothing_radius: int = 1,
+                                smoothing_sigma: float = 1.0):
         """
         Perform soft (probabilistic) multi-class land cover classification.
 
@@ -526,7 +534,7 @@ class Generate_LULC:
 
         if mode == 'multiprobability':
             class_ids_raw = training_data.aggregate_array(class_property).distinct().sort().getInfo()
-            class_ids = sorted(int(c) for c in class_ids_raw)
+            class_ids = sorted(int(c) for c in class_ids_raw) # type: ignore
             if not class_ids:
                 raise ValueError("No distinct classes found in training_data.")
 
@@ -551,6 +559,9 @@ class Generate_LULC:
                 include_final_map=include_final_map,
                 probability_scale=probability_scale,
                 class_names=class_names,
+                spatial_smoothing=spatial_smoothing,
+                smoothing_radius=smoothing_radius,
+                smoothing_sigma=smoothing_sigma,
             )
             if return_model:
                 return stacked, {
@@ -614,6 +625,20 @@ class Generate_LULC:
         prob_imgs = class_list.map(per_class)
         prob_imgcol = ee.ImageCollection(prob_imgs)
         prob_stack = prob_imgcol.toBands()
+        if spatial_smoothing:
+            prob_stack = (
+                prob_stack.toFloat()
+                .convolve(
+                    ee.Kernel.gaussian(
+                        radius=smoothing_radius,
+                        sigma=smoothing_sigma,
+                        units='pixels',
+                        normalize=True,
+                    )
+                )
+                .round()
+                .byte()
+            )
 
         #if final map  is not needed, the functin will return prob bands only
         if not include_final_map:
@@ -647,6 +672,9 @@ class Generate_LULC:
         include_final_map: bool = True,
         probability_scale: int = 100,
         class_names: Optional[Any] = None,
+        spatial_smoothing: bool = False,
+        smoothing_radius: int = 1,
+        smoothing_sigma: float = 1.0,
     ) -> ee.Image:
         """
         Apply a previously trained ``ee.Classifier`` (hard or MULTIPROBABILITY)
@@ -673,6 +701,20 @@ class Generate_LULC:
             .round()
             .byte()
         )
+        if spatial_smoothing:
+            prob_stack = (
+                prob_stack.toFloat()
+                .convolve(
+                    ee.Kernel.gaussian(
+                        radius=smoothing_radius,
+                        sigma=smoothing_sigma,
+                        units='pixels',
+                        normalize=True,
+                    )
+                )
+                .round()
+                .byte()
+            )
         if not include_final_map:
             return prob_stack
 
@@ -766,7 +808,7 @@ class Generate_LULC:
         """
         if not class_ids:
             class_ids = sorted(
-                int(c) for c in test_data.aggregate_array(class_property).distinct().sort().getInfo()
+                int(c) for c in (test_data.aggregate_array(class_property).distinct().sort().getInfo() or [])
             )
         sorted_ids = sorted(int(c) for c in class_ids)
         sorted_ids_ee = ee.List(sorted_ids)
@@ -975,11 +1017,11 @@ class Generate_LULC:
             reducer=ee.Reducer.frequencyHistogram(),
             geometry=classification_map.geometry(),
             scale=scale,
-            maxPixels=1e13
+            maxPixels=1e13 # type: ignore
         ).getInfo()
 
-        band_name = list(histogram_dict.keys())[0]
-        histogram = histogram_dict[band_name]
+        band_name = list(histogram_dict.keys())[0] # type: ignore
+        histogram = histogram_dict[band_name] # type: ignore
 
         existing_classes = [c for c in classes_of_interest if str(c) in histogram]
         missing_classes = [c for c in classes_of_interest if str(c) not in histogram]
@@ -1137,6 +1179,9 @@ class Generate_LULC:
         period_order: Optional[List[str]] = None,
         class_names: Optional[Any] = None,
         include_log_loss: bool = False,
+        spatial_smoothing: bool = False,
+        smoothing_radius: int = 1,
+        smoothing_sigma: float = 1.0,
     ) -> Dict[str, Any]:
         """
         Run multitemporal Random Forest classification across N >= 2 periods in either
@@ -1211,6 +1256,9 @@ class Generate_LULC:
                         mode=soft_mode,
                         return_model=True,
                         class_names=class_names,
+                        spatial_smoothing=spatial_smoothing,
+                        smoothing_radius=smoothing_radius,
+                        smoothing_sigma=smoothing_sigma,
                     ))
                     trained_model = model_info.get('model')
                     cids = model_info.get('class_ids')
@@ -1277,6 +1325,9 @@ class Generate_LULC:
                     mode='multiprobability',
                     return_model=True,
                     class_names=class_names,
+                    spatial_smoothing=spatial_smoothing,
+                    smoothing_radius=smoothing_radius,
+                    smoothing_sigma=smoothing_sigma,
                 ))
                 ref_model = model_info['model']
                 ref_cids = model_info['class_ids']
@@ -1287,8 +1338,8 @@ class Generate_LULC:
             models[reference_period] = ref_model
             if ref_cids is not None:
                 class_ids_by_period[reference_period] = ref_cids
-            if classification_type == 'soft' and model_info.get('prob_band_map'):
-                prob_bands_by_period[reference_period] = model_info['prob_band_map']
+            if classification_type == 'soft' and model_info.get('prob_band_map'): # type: ignore
+                prob_bands_by_period[reference_period] = model_info['prob_band_map'] # type: ignore
 
             feature_importance[reference_period] = self.get_feature_importance(
                 ref_model, training_data=ref_train_fc, class_property=class_property
@@ -1311,13 +1362,16 @@ class Generate_LULC:
                     target_stack = target_stack.select(common_bands)
 
                 maps[label] = self.classify_with_model(
-                    trained_model=ref_model,
+                    trained_model=ref_model, # type: ignore
                     image=target_stack,
                     mode=transfer_mode,
                     class_ids=ref_cids,
                     include_final_map=True,
                     probability_scale=probability_scale,
                     class_names=class_names,
+                    spatial_smoothing=spatial_smoothing,
+                    smoothing_radius=smoothing_radius,
+                    smoothing_sigma=smoothing_sigma,
                 )
                 models[label] = ref_model
                 if ref_cids is not None:
