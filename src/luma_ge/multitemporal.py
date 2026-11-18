@@ -1,5 +1,5 @@
 """
-Multitemporal Analysis & Predictor Orchestration Module
+Multitemporal Analysis Modules
 
 Provides:
 - Conflict-safe multitemporal predictor computation & cross-sensor index filtering
@@ -272,8 +272,9 @@ def compute_multitemporal_predictors(
     requested_indices = selections['spectral_indices']
     index_coefficients = selections['index_coefficients']
 
-    # Determine common optical bands if model_transfer and not provided explicitly
-    if mode == 'model_transfer' and common_bands is None:
+    # Always determine common optical bands across all periods so both Batch and
+    # Model Transfer modes share the exact same predictor set
+    if common_bands is None:
         band_sets = []
         for label in period_order:
             band_sets.append(list(composites[label].bandNames().getInfo()))
@@ -299,7 +300,7 @@ def compute_multitemporal_predictors(
 
     for label in period_order:
         comp_img = composites[label]
-        if common_bands is not None and mode == 'model_transfer':
+        if common_bands is not None:
             base_img = comp_img.select(list(common_bands))
             period_optical_bands = list(common_bands)
         else:
@@ -318,7 +319,7 @@ def compute_multitemporal_predictors(
             period_bands.extend(terrain_bands)
 
         if requested_indices:
-            if common_bands is not None and mode == 'model_transfer':
+            if common_bands is not None:
                 period_indices = compatible_indices
             else:
                 period_indices, period_skipped = filter_compatible_indices(
@@ -729,6 +730,7 @@ class MultitemporalAnalysis:
         train_ratio: float = 0.7,
         split_method: str = 'stratified',
         class_names: Optional[Any] = None,
+        include_log_loss: bool = False,
     ) -> Dict[str, Any]:
         """
         Extract pixel features via ``FeatureExtraction`` (if not already cached) and
@@ -773,6 +775,7 @@ class MultitemporalAnalysis:
             common_bands=common_bands,
             period_order=self.period_order,
             class_names=resolved_names,
+            include_log_loss=include_log_loss,
         )
         return self.classification_result
 
@@ -825,6 +828,7 @@ class MultitemporalAnalysis:
         probability_scale: int = 100,
         tile_scale: int = 4,
         required_periods: Optional[Sequence[str]] = None,
+        include_log_loss: bool = False,
         verbose: bool = True,
     ) -> Dict[str, Any]:
         """Execute the full multitemporal LULC mapping pipeline end-to-end."""
@@ -859,6 +863,7 @@ class MultitemporalAnalysis:
             probability_scale=probability_scale,
             tile_scale=tile_scale,
             class_names=landcover_df,
+            include_log_loss=include_log_loss,
         )
         if validation_by_period is not None:
             self.assess_accuracy(
