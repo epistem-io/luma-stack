@@ -7,17 +7,22 @@ to enhance land cover classification. This version is revised to follow the late
 """
 import ee
 import logging
-from typing import List, Optional, Dict, Any
+import datetime
+from typing import List, Optional, Dict, Any, Union, Set
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import RFECV
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from tqdm.auto import tqdm
 from .ee_config import ensure_ee_initialized
+from .sar import get_sar_data
 
 # Configure logging for development
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO,
+format='%(asctime)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
 #=================================== Terrain Metrics ===================================
@@ -133,7 +138,7 @@ class terrain_calculator:
                     return dem
                 except Exception as fallback_e:
                     logger.error(f"Fallback to NASADEM also failed: {str(fallback_e)}")
-            return None
+            return None # type: ignore
 
     #calculate slope from elevation data 
     def calculate_slope(self, aoi: ee.Geometry, dem_source: str = "NASADEM") -> ee.Image:
@@ -232,12 +237,630 @@ class terrain_calculator:
         except Exception as e:
             logger.error(f"Failed to calculate aspect using {dem_source}: {str(e)}")
             return None
+    def get_landform(self, aoi: ee.Geometry, landform_source: str = "ALOS") -> ee.Image:
+        """
+        Retrieve global landform classification data.
+
+        Landform data describes the shape and structure of the terrain surface
+        (e.g. peak, ridge, slope, valley, plain) derived from DEM analysis.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry
+            Area of interest geometry for clipping the result.
+        landform_source : str, default="ALOS"
+            Landform dataset to use. Supported options:
+
+            - ``"ALOS"``  : Global ALOS Landform
+              (``CSP/ERGo/1_0/Global/ALOS_landforms``, ~90 m)
+            - ``"SRTM"``  : Global SRTM Landform
+              (``CSP/ERGo/1_0/Global/SRTM_landforms``, ~90 m)
+
+        Returns
+        -------
+        ee.Image or None
+            Single-band image with band name ``'landform'`` containing
+            landform class codes (11–62). Returns ``None`` if retrieval fails.
+
+        Example
+        -------
+        >>> calc = terrain_calculator()
+        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
+        >>> lf = calc.get_landform(aoi, landform_source="ALOS")
+        >>> # Class 11 = Peak/Ridge top, 41 = Slope, 51 = Valley, etc.
+
+        References
+        ----------
+        Theobald et al. (2015) *Ecologically-Relevant Maps of Landforms and
+        Physiographic Diversity for Climate Adaptation Planning.*
+        https://doi.org/10.1371/journal.pone.0143619
+        """
+        # Map human-readable keys to GEE asset IDs
+        LANDFORM_SOURCES = {
+            "ALOS": "CSP/ERGo/1_0/Global/ALOS_landforms",
+            "SRTM": "CSP/ERGo/1_0/Global/SRTM_landforms",
+        }
+
+        source_upper = landform_source.upper()
+        if source_upper not in LANDFORM_SOURCES:
+            logger.error(
+                f"Unsupported landform_source '{landform_source}'. "
+                f"Choose from: {list(LANDFORM_SOURCES.keys())}"
+            )
+            return None
+
+        asset_id = LANDFORM_SOURCES[source_upper]
+
+        try:
+            logger.info(f"Retrieving landform layer from {asset_id}...")
+
+            landform = (
+                ee.Image(asset_id)
+                .select("constant")          # only band in both datasets
+                .clip(aoi)
+                .rename("landform")
+            )
+
+            logger.info(
+                f"Successfully retrieved landform layer using {landform_source} source"
+            )
+            return landform
+
+        except ee.EEException as e:
+            logger.error(f"Earth Engine error retrieving landform ({landform_source}): {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to retrieve landform ({landform_source}): {str(e)}")
+            return None
+
+#=================================== Sensor Identification & Predictor Catalog ===================================
+class sensor_detector:
+    """
+    Utility for detecting satellite sensor family and resolving sensor-specific band mappings.
+
+    Supported sensor families:
+    - 'LANDSAT': Landsat 4, 5, 7, 8, 9 (and legacy MSS 1-3)
+    - 'SENTINEL': Sentinel-2 MSI (S2A, S2B, Harmonized)
+    - 'UNKNOWN': Unrecognized sensor family
+    """
+
+    # Semantic band name to spyndex parameter abbreviations
+    BAND_TO_SPYNDEX = {
+        "BLUE": "B",
+        "GREEN": "G",
+        "RED": "R",
+        "NIR": "N",
+        "SWIR1": "S1",
+        "SWIR2": "S2",
+        "RED_EDGE1": "RE1",
+        "RED_EDGE2": "RE2",
+        "RED_EDGE3": "RE3",
+        "RED_EDGE4": "RE4",
+        "THERMAL": "T",
+        "ST_B10": "T",
+        "B6": "T",
+        "B6_VCID_2": "T",
+        "B2": "B",
+        "B3": "G",
+        "B4": "R",
+        "B8": "N",
+        "B8A": "RE4",
+        "B5": "RE1",
+        "B6": "RE2",
+        "B7": "RE3",
+        "B11": "S1",
+        "B12": "S2",
+    }
+
+    # Reverse lookup: spyndex code to primary semantic band name
+    SPYNDEX_TO_BAND = {
+        "B": "BLUE",
+        "G": "GREEN",
+        "R": "RED",
+        "N": "NIR",
+        "S1": "SWIR1",
+        "S2": "SWIR2",
+        "RE1": "RED_EDGE1",
+        "RE2": "RED_EDGE2",
+        "RE3": "RED_EDGE3",
+        "RE4": "RED_EDGE4",
+        "T": "THERMAL",
+    }
+
+    SENTINEL_INDICATOR_BANDS = {"RED_EDGE1", "RED_EDGE2", "RED_EDGE3", "RED_EDGE4", "B5", "B6", "B7", "B8A"}
+    LANDSAT_INDICATOR_BANDS = {"THERMAL", "ST_B10", "SR_B1", "AEROSOL", "B6_VCID_2", "QA_PIXEL", "NIR1", "NIR2"}
+
+    @classmethod
+    def normalize_sensor_name(cls, sensor_hint: Optional[str]) -> str:
+        """
+        Normalize a sensor string hint into a canonical sensor family.
+
+        Parameters
+        ----------
+        sensor_hint : str, optional
+            Sensor identifier string (e.g. 'Landsat', 'Sentinel', 'L8_SR', 'S2_SR')
+
+        Returns
+        -------
+        str : 'LANDSAT', 'SENTINEL', or 'UNKNOWN'
+        """
+        if not sensor_hint or not isinstance(sensor_hint, str):
+            return "UNKNOWN"
+
+        s = sensor_hint.strip().upper()
+        if any(token in s for token in ["SENTINEL", "S2", "COPERNICUS/S2", "MSI"]):
+            return "SENTINEL"
+        if any(token in s for token in ["LANDSAT", "LC08", "LC09", "LE07", "LT05", "LT04",
+                                        "LM01", "LM02", "LM03", "L8", "L9", "L7", "L5", "L4", "L1", "L2", "L3"]):
+            return "LANDSAT"
+        return "UNKNOWN"
+
+    @classmethod
+    def detect_sensor_from_bands(cls, band_names: List[str]) -> str:
+        """
+        Detect sensor family from a list of band names.
+
+        Parameters
+        ----------
+        band_names : List[str]
+            List of band names from the image or collection
+
+        Returns
+        -------
+        str : 'SENTINEL', 'LANDSAT', or 'UNKNOWN'
+        """
+        if not band_names:
+            return "UNKNOWN"
+
+        band_set = set(band_names)
+        if band_set.intersection(cls.SENTINEL_INDICATOR_BANDS):
+            return "SENTINEL"
+        if band_set.intersection(cls.LANDSAT_INDICATOR_BANDS):
+            return "LANDSAT"
+
+        # Check standard 6 optical bands: if NIR and SWIR1 present without Red-Edge, standard Landsat convention
+        if {"NIR", "RED", "GREEN", "BLUE"}.issubset(band_set):
+            return "LANDSAT"
+
+        return "UNKNOWN"
+
+    @classmethod
+    def detect_sensor(
+        cls,
+        sensor_hint: Optional[str] = None,
+        band_names: Optional[List[str]] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> str:
+        """
+        Comprehensive sensor detection strategy combining hints, band names, and Earth Engine objects.
+        """
+        # 1. Try explicit hint first
+        norm = cls.normalize_sensor_name(sensor_hint)
+        if norm != "UNKNOWN":
+            return norm
+
+        # 2. Try explicit band names list
+        if band_names:
+            detected = cls.detect_sensor_from_bands(band_names)
+            if detected != "UNKNOWN":
+                return detected
+
+        # 3. Try composite band names / metadata
+        if composite is not None:
+            try:
+                bands = composite.bandNames().getInfo()
+                detected = cls.detect_sensor_from_bands(bands)
+                if detected != "UNKNOWN":
+                    return detected
+            except Exception as e:
+                logger.debug(f"Could not read bandNames from composite: {e}")
+
+        # 4. Try collection metadata or first image
+        if collection is not None:
+            try:
+                first_img = collection.first()
+                if first_img is not None:
+                    bands = first_img.bandNames().getInfo()
+                    detected = cls.detect_sensor_from_bands(bands)
+                    if detected != "UNKNOWN":
+                        return detected
+            except Exception as e:
+                logger.debug(f"Could not read bandNames from collection: {e}")
+
+        # Default fallback
+        return "LANDSAT"
+
+#centralize predictor catalog to ease up addition or substraction of predictor
+class predictor_catalog:
+    """
+    Central registry and metadata catalog for all supported predictors in Luma-GE,
+    including spectral indices, topography, radar backscatter, and distance based metrics.
+    """
+    PREDICTORS = {
+        # --- Vegetation Indices ---
+        "NDVI": {
+            "name": "NDVI",
+            "category": "Vegetasi",
+            "long_name": "Normalized Difference Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "General canopy greenness and biomass",
+        },
+        "EVI": {
+            "name": "EVI",
+            "category": "Vegetasi",
+            "long_name": "Enhanced Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R", "B"],
+            "type": "spectral",
+            "description": "High-biomass canopy greenness with aerosol correction",
+        },
+        "SAVI": {
+            "name": "SAVI",
+            "category": "Vegetasi",
+            "long_name": "Soil Adjusted Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "Soil-brightness compensated vegetation index",
+        },
+        "MSAVI": {
+            "name": "MSAVI",
+            "category": "Vegetasi",
+            "long_name": "Modified Soil Adjusted Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "R"],
+            "type": "spectral",
+            "description": "Vegetation index for sparse canopy / arid areas",
+        },
+        "GNDVI": {
+            "name": "GNDVI",
+            "category": "Vegetasi",
+            "long_name": "Green Normalized Difference Vegetation Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "G"],
+            "type": "spectral",
+            "description": "Chlorophyll concentration and plant senescence",
+        },
+        "MCARI": {
+            "name": "MCARI",
+            "category": "Vegetasi",
+            "long_name": "Modified Chlorophyll Absorption in Reflectance Index",
+            "sensor": "SENTINEL",
+            "required_bands": ["RE1", "R", "G"],
+            "type": "spectral",
+            "description": "Canopy chlorophyll absorption (requires Sentinel-2 Red-Edge 1)",
+            "sensor_note": "Requires Sentinel-2 Red-Edge band (RE1)",
+        },
+        "RENDVI": {
+            "name": "RENDVI",
+            "category": "Vegetasi",
+            "long_name": "Red Edge Normalized Difference Vegetation Index",
+            "sensor": "SENTINEL",
+            "required_bands": ["RE2", "RE1"],
+            "type": "spectral",
+            "description": "Red-Edge vegetation index (requires Sentinel-2 Red-Edge 1 & 2)",
+            "sensor_note": "Requires Sentinel-2 Red-Edge bands (RE1, RE2)",
+        },
+        "MCARI1": {
+            "name": "MCARI1",
+            "category": "Vegetasi",
+            "long_name": "Modified Chlorophyll Absorption in Reflectance Index 1",
+            "sensor": "ALL",
+            "required_bands": ["N", "R", "G"],
+            "type": "spectral",
+            "description": "Chlorophyll variation without red-edge requirement",
+        },
+
+        # --- Water Indices ---
+        "MNDWI": {
+            "name": "MNDWI",
+            "category": "Air & Kelembaban",
+            "long_name": "Modified Normalized Difference Water Index",
+            "sensor": "ALL",
+            "required_bands": ["G", "S1"],
+            "type": "spectral",
+            "description": "Open water delineation with shadow suppression",
+        },
+        "NDMI": {
+            "name": "NDMI",
+            "category": "Air & Kelembaban",
+            "long_name": "Normalized Difference Moisture Index",
+            "sensor": "ALL",
+            "required_bands": ["N", "S1"],
+            "type": "spectral",
+            "description": "Canopy water content and wetland soil moisture",
+        },
+        "AWEIsh": {
+            "name": "AWEIsh",
+            "category": "Air & Kelembaban",
+            "long_name": "Automated Water Extraction Index (with shadow)",
+            "sensor": "ALL",
+            "required_bands": ["B", "G", "N", "S1", "S2"],
+            "type": "spectral",
+            "description": "Water extraction in shadow-heavy mountainous/urban regions",
+        },
+        "NDTI": {
+            "name": "NDTI",
+            "category": "Air & Kelembaban",
+            "long_name": "Normalized Difference Turbidity Index",
+            "sensor": "ALL",
+            "required_bands": ["R", "G"],
+            "type": "spectral",
+            "description": "Water turbidity and suspended sediment detection",
+        },
+        "ANDWI": {
+            "name": "ANDWI",
+            "category": "Air & Kelembaban",
+            "long_name": "Augmented Normalized Difference Water Index",
+            "sensor": "ALL",
+            "required_bands": ["B", "G", "R", "N", "S1", "S2"],
+            "type": "spectral",
+            "description": "Multi-band augmented water extraction",
+        },
+
+        # --- Build-up and Bare Soil ---
+        "NDBI": {
+            "name": "NDBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Normalized Difference Built-Up Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "N"],
+            "type": "spectral",
+            "description": "Impervious surface and built-up land",
+        },
+        "DBSI": {
+            "name": "DBSI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Dry Bare-Soil Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "G", "N", "R"],
+            "type": "spectral",
+            "description": "Dry bare soil separation from urban areas",
+        },
+        "BLFEI": {
+            "name": "BLFEI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Built-Up Land Features Extraction Index",
+            "sensor": "ALL",
+            "required_bands": ["G", "R", "S2", "S1"],
+            "type": "spectral",
+            "description": "Built-up footprint extraction",
+        },
+        "MBI": {
+            "name": "MBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Modified Bare Soil Index",
+            "sensor": "ALL",
+            "required_bands": ["S1", "S2", "N"],
+            "type": "spectral",
+            "description": "Bare soil and fallow agricultural land discrimination",
+        },
+        "EBBI": {
+            "name": "EBBI",
+            "category": "Tanah dan Lahan Terbangun",
+            "long_name": "Enhanced Built-Up and Bareness Index",
+            "sensor": "LANDSAT",
+            "required_bands": ["S1", "N", "T"],
+            "type": "spectral",
+            "description": "Built-up and bareness extraction (requires Landsat Thermal band)",
+            "sensor_note": "Requires Landsat Thermal band (not available on Sentinel-2)",
+        },
+
+        # --- Topography ---
+        "Elevation": {
+            "name": "Elevation",
+            "category": "Topografi",
+            "long_name": "Digital Elevation Model",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Elevation above sea level in meters (NASADEM / Copernicus / ALOS)",
+        },
+        "Slope": {
+            "name": "Slope",
+            "category": "Topografi",
+            "long_name": "Terrain Slope",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Terrain gradient in degrees (0-90°)",
+        },
+        "Aspect": {
+            "name": "Aspect",
+            "category": "Topografi",
+            "long_name": "Terrain Aspect",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Compass direction of steepest slope (0-360°)",
+        },
+        "Landform": {
+            "name": "Landform",
+            "category": "Topografi",
+            "long_name": "Landform Classification",
+            "sensor": "ALL",
+            "type": "terrain",
+            "description": "Discrete landform morphological classes (ALOS / SRTM)",
+        },
+
+        # --- Radar Polarization ---
+        "VV": {
+            "name": "VV",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VV Backscatter",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Vertical-transmit Vertical-receive C-band backscatter (10m, dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "VH": {
+            "name": "VH",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VH Backscatter",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Vertical-transmit Horizontal-receive C-band backscatter (10m, dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "VV-VH Ratio": {
+            "name": "VV-VH Ratio",
+            "category": "Polarisasi Radar",
+            "long_name": "Sentinel-1 VV/VH Polarization Ratio",
+            "sensor": "SENTINEL",
+            "type": "radar",
+            "min_date": "2014-10-03",
+            "description": "Sentinel-1 cross-polarization ratio (VV - VH in dB)",
+            "sensor_note": "Available when Sentinel workflow is selected (active >= Oct 2014)",
+        },
+        "HH": {
+            "name": "HH",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HH Backscatter",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "Horizontal-transmit Horizontal-receive L-band backscatter (25m, dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+        "HV": {
+            "name": "HV",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HV Backscatter",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "Horizontal-transmit Vertical-receive L-band backscatter (25m, dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+        "HV-HH Ratio": {
+            "name": "HV-HH Ratio",
+            "category": "Polarisasi Radar",
+            "long_name": "ALOS PALSAR HH/HV Polarization Ratio",
+            "sensor": "LANDSAT",
+            "type": "radar",
+            "valid_years": [2007, 2008, 2009, 2010, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
+            "description": "ALOS PALSAR cross-polarization ratio (HH - HV in dB)",
+            "sensor_note": "Available when Landsat workflow is selected (2007-2010, 2015-2024)",
+        },
+        # --- Distance & Accessibility Predictors ---
+        "dist_roads": {
+            "name": "dist_roads",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Main Roads (GRIP4)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest main road (GRIP4 highways, primary & secondary roads)",
+        },
+        "dist_coast": {
+            "name": "dist_coast",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Coastline (S2COAST-2023)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest S2COAST-2023 shoreline",
+        },
+        "dist_settlement": {
+            "name": "dist_settlement",
+            "category": "Jarak & Aksesibilitas",
+            "long_name": "Distance to Settlement (HRSL)",
+            "sensor": "ALL",
+            "type": "distance",
+            "description": "Euclidean distance to nearest High Resolution Settlement Layer (HRSL) built-up pixel",
+        },
+    }
+
+    @classmethod
+    def get_all_catalog(cls) -> dict:
+        """Return a copy of the entire predictor catalog dictionary."""
+        return cls.PREDICTORS.copy()
+
+    @classmethod
+    def check_availability(
+        cls,
+        sensor: str = "LANDSAT",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluate availability for all registered predictors based on sensor and temporal range.
+        """
+        sensor_norm = sensor_detector.normalize_sensor_name(sensor)
+        if sensor_norm == "UNKNOWN":
+            sensor_norm = "LANDSAT"
+
+        # Parse date range
+        start_dt = None
+        end_dt = None
+        year_set = set()
+        if start_date:
+            try:
+                start_dt = datetime.datetime.strptime(str(start_date)[:10], "%Y-%m-%d").date()
+            except Exception:
+                pass
+        if end_date:
+            try:
+                end_dt = datetime.datetime.strptime(str(end_date)[:10], "%Y-%m-%d").date()
+            except Exception:
+                pass
+
+        if start_dt and end_dt:
+            year_set = set(range(start_dt.year, end_dt.year + 1))
+        elif start_dt:
+            year_set = {start_dt.year}
+        elif end_dt:
+            year_set = {end_dt.year}
+
+        results = {}
+        for name, meta in cls.PREDICTORS.items():
+            item_sensor = meta.get("sensor", "ALL")
+            is_avail = True
+            reason = ""
+            disabled = False
+
+            # Sensor compatibility check
+            if item_sensor != "ALL" and item_sensor != sensor_norm:
+                is_avail = False
+                disabled = True
+                reason = meta.get("sensor_note", f"Requires {item_sensor} sensor")
+
+            # Temporal range check
+            if is_avail and "min_date" in meta and end_dt:
+                min_dt = datetime.datetime.strptime(meta["min_date"], "%Y-%m-%d").date()
+                if end_dt < min_dt:
+                    is_avail = False
+                    disabled = True
+                    reason = f"Only available from {meta['min_date']} onwards"
+
+            if is_avail and "valid_years" in meta and year_set:
+                valid_set = set(meta["valid_years"])
+                if not year_set.intersection(valid_set):
+                    is_avail = False
+                    disabled = True
+                    reason = f"Unavailable for year(s) {sorted(list(year_set))} (active years: {meta['valid_years'][0]}-{meta['valid_years'][-1]})"
+
+            results[name] = {
+                "name": name,
+                "category": meta["category"],
+                "long_name": meta.get("long_name", name),
+                "type": meta.get("type", "spectral"),
+                "description": meta.get("description", ""),
+                "available": is_avail,
+                "disabled": disabled,
+                "reason": reason,
+                "sensor_compatibility": item_sensor
+            }
+
+        return results
 
 #=================================== Spectral Calculator Backend ===================================
 #reference for the use of spectral index in LC mapping: https://doi.org/10.3390/rs12183062
 class SpectralCalculator:
     """
     Backend service for spectral index calculations using spyndex library.
+    Migrated from Streamlit UI to follow clean architecture patterns.
+    Enhanced to support dynamic sensor band mapping (Red-Edge, Thermal) and sensor-aware availability.
     """
     
     def __init__(self):
@@ -257,32 +880,14 @@ class SpectralCalculator:
             logger.error(f"Failed to import spyndex library: {str(e)}")
             raise ImportError("spyndex library is required for spectral calculations")
         
-        #Define supported indices with categories
-        #check for more index here: https://awesome-ee-spectral-indices.readthedocs.io/en/latest/list.html
-        #main reference: https://doi.org/10.3390/rs12183062 and remap
-        #can be added more
+        # Define supported indices from PredictorCatalog
         self.supported_indices = {
-            #Vegetation Indices
-            "NDVI": "🌿 Vegetasi", 
-            "EVI": "🌿 Vegetasi", 
-            "SAVI": "🌿 Vegetasi", #https://doi.org/10.1080/24749508.2019.1608409
-            "MSAVI": "🌿 Vegetasi",
-            "OSAVI": "🌿 Vegetasi",
-            "ARVI": "🌿 Vegetasi",
-            "GBNDVI": "🌿 Vegetasi",
-            "GNDVI": "🌿 Vegetasi",
-            #Water Indices
-            "MNDWI": "💧 Air & Kelembaban",
-            "NDMI": "💧 Air & Kelembaban",
-            "AWEInsh" : "💧 Air & Kelembaban",
-            #Soil and build-up Indices
-            "NDBI": "🟫 Tanah dan Lahan Terbangun",
-            "DBSI": "🟫 Tanah dan Lahan Terbangun",
-            "MBI": "🟫 Tanah dan Lahan Terbangun",
+            name: meta["category"]
+            for name, meta in predictor_catalog.PREDICTORS.items()
+            if meta.get("type", "spectral") == "spectral"
         }
-        #Define default coefficients for indices that require them
-        #ref: https://www.usgs.gov/landsat-missions/landsat-enhanced-vegetation-index
-        #https://doi.org/10.1016/0034-4257(94)90018-3
+
+        # Define default coefficients for indices that require them
         self.default_coefficients = {
             "EVI": {
                 "g": 2.5,      # Gain factor
@@ -291,29 +896,34 @@ class SpectralCalculator:
                 "L": 1.0       # Canopy background adjustment factor
             },
             "SAVI": {
-                "L": 0.5       #Soil brightness correction factor (0-1)
-            },                 #ref https://doi.org/10.3390/agronomy11040652 and https://www.usgs.gov/landsat-missions/landsat-soil-adjusted-vegetation-index
+                "L": 0.5       # Soil brightness correction factor (0-1)
+            },
             "MSAVI": {
-                "L": 0.5       #Soil adjustment factor
-            },                
+                "L": 0.5       # Soil adjustment factor
+            },
             "EVI2": {
-                "g": 2.5,      #Gain factor
-                "L": 1.0       #Canopy background adjustment 
-            },                 #ref https://www.usgs.gov/landsat-missions/landsat-enhanced-vegetation-index
+                "g": 2.5,
+                "L": 1.0
+            },
             "ARVI": {
-                "gamma": 1.0   #Atmospheric resistance coefficient
-            }                  #ref https://doi.org/10.1109/36.134076
+                "gamma": 1.0
+            }
         }
         
         self.calculated_count = 0
     
-    #Get the list of avaliable indices from previously defined list
-    def get_available_indices(self, band_names: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+    def get_available_indices(
+        self,
+        sensor: Optional[str] = None,
+        band_names: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
         """
-        Get available spectral indices with metadata 
+        Get available spectral indices with metadata, filtered by sensor and/or available bands.
         
         Parameters:
         -----------
+        sensor : str, optional
+            Satellite sensor family ('LANDSAT' or 'SENTINEL')
         band_names : List[str], optional
             Available band names to filter compatible indices
             
@@ -323,24 +933,38 @@ class SpectralCalculator:
         """
         try:
             available_indices = {}
+            sensor_norm = sensor_detector.normalize_sensor_name(sensor) if sensor else None
             
-            for idx_name in self.supported_indices.keys():
+            for idx_name, category in self.supported_indices.items():
+                cat_meta = predictor_catalog.PREDICTORS.get(idx_name, {})
+                idx_sensor = cat_meta.get("sensor", "ALL")
+
+                # Filter by sensor compatibility if sensor is provided
+                if sensor_norm and sensor_norm != "UNKNOWN" and idx_sensor != "ALL" and idx_sensor != sensor_norm:
+                    continue
+
+                # Filter by band names if band_names list is provided
+                if band_names and not self.validate_index_requirements(idx_name, band_names):
+                    continue
+
                 if idx_name in self.spyndex_indices:
                     idx_info = self.spyndex_indices[idx_name]
                     available_indices[idx_name] = {
-                        "long_name": idx_info.long_name,
+                        "long_name": getattr(idx_info, 'long_name', cat_meta.get("long_name", idx_name)),
                         "formula": getattr(idx_info, 'formula', ''),
                         "reference": getattr(idx_info, 'reference', ''),
-                        "category": self.supported_indices[idx_name],
+                        "category": category,
+                        "sensor_compatibility": idx_sensor,
+                        "required_bands": cat_meta.get("required_bands", getattr(idx_info, 'bands', [])),
                     }
                 else:
-                    # If index not found in spyndex, still add it with warning
-                    logger.warning(f"Index '{idx_name}' not found in spyndex library")
                     available_indices[idx_name] = {
-                        "long_name": idx_name,
+                        "long_name": cat_meta.get("long_name", idx_name),
                         "formula": "Formula not available",
                         "reference": "",
-                        "category": self.supported_indices[idx_name],
+                        "category": category,
+                        "sensor_compatibility": idx_sensor,
+                        "required_bands": cat_meta.get("required_bands", []),
                     }
             
             logger.info(f"Found {len(available_indices)} available spectral indices")
@@ -350,34 +974,9 @@ class SpectralCalculator:
             logger.error(f"Failed to get available indices: {str(e)}")
             return {}
     
-    #Used to handle spectral index that have coefficient
     def get_index_coefficients(self, index_name: str) -> Dict[str, float]:
         """
         Get default coefficient values for a spectral index.
-        Some spectral indices require additional coefficients beyond the standard
-        band inputs (e.g., EVI requires gain factor 'g' and correction coefficients).
-        This method returns the default coefficient values from literature.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index (e.g., "EVI", "SAVI")
-            
-        Returns:
-        --------
-        Dict[str, float] : Dictionary of coefficient names and their default values.
-                          Returns empty dict if index doesn't require coefficients.
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> evi_coeffs = calc.get_index_coefficients("EVI")
-        >>> print(evi_coeffs)
-        {'g': 2.5, 'C1': 6.0, 'C2': 7.5, 'L': 1.0}
-        >>> 
-        >>> ndvi_coeffs = calc.get_index_coefficients("NDVI")
-        >>> print(ndvi_coeffs)
-        {}  # NDVI doesn't require coefficients
         """
         try:
             if index_name in self.default_coefficients:
@@ -387,12 +986,10 @@ class SpectralCalculator:
             else:
                 logger.debug(f"Index {index_name} does not require coefficients")
                 return {}
-                
         except Exception as e:
             logger.error(f"Failed to get coefficients for {index_name}: {str(e)}")
             return {}
     
-    #validate the input coefficient for spectral index calc
     def validate_coefficients(
         self, 
         index_name: str, 
@@ -400,45 +997,21 @@ class SpectralCalculator:
     ) -> Dict[str, Any]:
         """
         Validate coefficient values for a spectral index.
-        
-        Checks that provided coefficients are within reasonable ranges
-        and provides warnings for unusual values that might indicate errors.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index
-        coefficients : Dict[str, float]
-            User-provided coefficient values to validate
-            
-        Returns:
-        --------
-        Dict[str, Any] : Validation result with 'valid' flag and any warnings
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> result = calc.validate_coefficients("EVI", {"g": 2.5, "C1": 6.0, "C2": 7.5, "L": 1.0})
-        >>> print(result)
-        {'valid': True, 'warnings': []}
         """
         validation_result = {
             "valid": True,
             "warnings": []
         }
-        
         try:
-            # Define reasonable ranges for common coefficients
             coefficient_ranges = {
-                "g": (0.1, 10.0),      # Gain factor range
-                "C1": (0.0, 20.0),     # Aerosol correction range
-                "C2": (0.0, 20.0),     # Aerosol correction range
-                "L": (0.0, 2.0),       # Canopy/soil adjustment range
-                "gamma": (0.1, 5.0)    # Atmospheric resistance range
+                "g": (0.1, 10.0),
+                "C1": (0.0, 20.0),
+                "C2": (0.0, 20.0),
+                "L": (0.0, 2.0),
+                "gamma": (0.1, 5.0)
             }
             
             for coeff_name, coeff_value in coefficients.items():
-                # Check if coefficient value is numeric
                 if not isinstance(coeff_value, (int, float)):
                     validation_result["warnings"].append(
                         f"Coefficient '{coeff_name}' has non-numeric value: {coeff_value}"
@@ -446,7 +1019,6 @@ class SpectralCalculator:
                     validation_result["valid"] = False
                     continue
                 
-                # Check if coefficient is within reasonable range
                 if coeff_name in coefficient_ranges:
                     min_val, max_val = coefficient_ranges[coeff_name]
                     if coeff_value < min_val or coeff_value > max_val:
@@ -468,170 +1040,245 @@ class SpectralCalculator:
                 "valid": False,
                 "warnings": [f"Validation error: {str(e)}"]
             }
-    #validate the required band
+
     def validate_index_requirements(self, index_name: str, available_bands: List[str]) -> bool:
         """
         Validate that required bands are available for index computation.
-        
-        Parameters:
-        -----------
-        index_name : str
-            Name of the spectral index
-        available_bands : List[str]
-            List of available band names
-            
-        Returns:
-        --------
-        bool : True if requirements are met, False otherwise
+        Maps available semantic band names to spyndex abbreviations.
         """
         try:
-            if index_name not in self.spyndex_indices:
-                logger.warning(f"Index '{index_name}' not found in spyndex library")
+            avail_spyndex_symbols = set()
+            for b in available_bands:
+                b_u = str(b).upper()
+                if b_u in sensor_detector.BAND_TO_SPYNDEX:
+                    avail_spyndex_symbols.add(sensor_detector.BAND_TO_SPYNDEX[b_u])
+                avail_spyndex_symbols.add(b_u)
+
+            if index_name in predictor_catalog.PREDICTORS:
+                required = predictor_catalog.PREDICTORS[index_name].get("required_bands", [])
+            elif index_name in self.spyndex_indices:
+                required = getattr(self.spyndex_indices[index_name], 'bands', [])
+            else:
+                logger.warning(f"Index '{index_name}' not found in catalog or spyndex")
                 return False
-            
-            # Get required bands from spyndex
-            idx_info = self.spyndex_indices[index_name]
-            required_bands = getattr(idx_info, 'bands', [])
-            
-            # Check if all required bands are available
-            missing_bands = [band for band in required_bands if band not in available_bands]
-            
-            if missing_bands:
-                logger.warning(f"Index '{index_name}' requires bands {missing_bands} which are not available")
+
+            missing = [band for band in required if band not in avail_spyndex_symbols]
+            if missing:
+                logger.debug(f"Index '{index_name}' requires bands {missing} not in available bands {available_bands}")
                 return False
-            
+
             return True
             
         except Exception as e:
             logger.error(f"Failed to validate requirements for {index_name}: {str(e)}")
             return False
+
+    def _build_spyndex_params(
+        self,
+        image: ee.Image,
+        available_bands: Optional[List[str]] = None,
+        base_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Dynamically build the spyndex parameter dictionary by inspecting available bands in the image.
+        Supports standard optical bands (B, G, R, N, S1, S2), Red-Edge bands (RE1, RE2, RE3, RE4),
+        and Thermal band (T).
+        """
+        params = {}
+        bands_set = set(available_bands) if available_bands else set()
+
+        # Primary semantic band to spyndex parameter mappings
+        primary_mappings = [
+            ("NIR", "N"),
+            ("RED", "R"),
+            ("GREEN", "G"),
+            ("BLUE", "B"),
+            ("SWIR1", "S1"),
+            ("SWIR2", "S2"),
+            ("RED_EDGE1", "RE1"),
+            ("RED_EDGE2", "RE2"),
+            ("RED_EDGE3", "RE3"),
+            ("RED_EDGE4", "RE4"),
+            ("THERMAL", "T"),
+            ("ST_B10", "T"),
+            ("B6", "T"),
+            ("B2", "B"),
+            ("B3", "G"),
+            ("B4", "R"),
+            ("B8", "N"),
+            ("B8A", "RE4"),
+            ("B5", "RE1"),
+            ("B6", "RE2"),
+            ("B7", "RE3"),
+            ("B11", "S1"),
+            ("B12", "S2"),
+        ]
+
+        for band_name, spyndex_code in primary_mappings:
+            if not bands_set or band_name in bands_set:
+                if spyndex_code not in params:
+                    try:
+                        params[spyndex_code] = image.select(band_name)
+                    except Exception:
+                        pass
+
+        # Fallback for standard names if band_set was empty
+        fallbacks = [
+            ("N", "NIR"),
+            ("R", "RED"),
+            ("G", "GREEN"),
+            ("B", "BLUE"),
+            ("S1", "SWIR1"),
+            ("S2", "SWIR2"),
+        ]
+        for spyndex_code, band_name in fallbacks:
+            if spyndex_code not in params:
+                try:
+                    params[spyndex_code] = image.select(band_name)
+                except Exception:
+                    pass
+
+        if base_params:
+            params.update(base_params)
+
+        return params
+
+    def calculate_indices(
+        self,
+        image: ee.Image,
+        index_list: List[str],
+        coefficients: Optional[Dict[str, Dict[str, float]]] = None,
+        sensor: Optional[str] = None
+    ) -> Optional[ee.Image]:
+        """
+        Calculate spectral indices for a single image using spyndex with dynamic band mapping.
         
-    #calculate index across the collection, composite them into an image using mean reducer
+        Parameters:
+        -----------
+        image : ee.Image
+            Input image containing optical/thermal/red-edge bands
+        index_list : List[str]
+            List of spectral index names to calculate
+        coefficients : Dict[str, Dict[str, float]], optional
+            Custom coefficient values for indices that require them
+        sensor : str, optional
+            Sensor family hint ('LANDSAT' or 'SENTINEL')
+            
+        Returns:
+        --------
+        ee.Image or None : Multi-band image containing calculated indices
+        """
+        try:
+            if not index_list:
+                return None
+
+            try:
+                available_bands = image.bandNames().getInfo()
+            except Exception:
+                available_bands = []
+
+            # Filter valid indices for this image
+            valid_indices = []
+            for idx in index_list:
+                if not available_bands or self.validate_index_requirements(idx, available_bands):
+                    valid_indices.append(idx)
+                else:
+                    logger.warning(f"Skipping index '{idx}': required bands not present in image ({available_bands})")
+
+            if not valid_indices:
+                logger.warning("No requested spectral indices are compatible with the image bands")
+                return None
+
+            base_params = {}
+            if coefficients:
+                for idx_name, index_coeffs in coefficients.items():
+                    if idx_name in valid_indices:
+                        validation = self.validate_coefficients(idx_name, index_coeffs)
+                        if validation["valid"]:
+                            base_params.update(index_coeffs)
+            else:
+                for idx_name in valid_indices:
+                    default_coeffs = self.get_index_coefficients(idx_name)
+                    if default_coeffs:
+                        base_params.update(default_coeffs)
+
+            params = self._build_spyndex_params(image, available_bands=available_bands, base_params=base_params)
+            spectral_indices = self.spyndex.computeIndex(
+                index=valid_indices,
+                params=params
+            )
+            self.calculated_count += len(valid_indices)
+            return spectral_indices
+
+        except Exception as e:
+            logger.error(f"Failed to calculate spectral indices on single image: {str(e)}")
+            return None
+
     def calculate_indices_with_collection(
         self, 
         collection: ee.ImageCollection, 
         aoi: ee.Geometry,
         index_list: List[str],
         coefficients: Optional[Dict[str, Dict[str, float]]] = None,
-        reducer_method: str = "mean"
-    ) -> ee.Image:
+        reducer_method: str = "mean",
+        sensor: Optional[str] = None
+    ) -> Optional[ee.Image]:
         """
-        This method applies the spectral index calculation to each image in the collection
-        using the map function, then reduces the results using the specified reducer method.
-        preserving the spectral characteristics of each individual image.
-        
-        Parameters:
-        -----------
-        collection : ee.ImageCollection. Earth Engine image collection with required spectral bands
-        aoi : ee.Geometry. Area of interest geometry for clipping results
-        index_list : List[str]. List of spectral index names to calculate
-        coefficients : Dict[str, Dict[str, float]], optional
-            Custom coefficient values for indices that require them.
-            Format: {"EVI": {"g": 2.5, "C1": 6.0, "C2": 7.5, "L": 1.0}}
-            If not provided, default coefficients will be used.
-        reducer_method : str, default="mean". Supported reducer: min, max, median, mean
-
-        Returns:
-        --------
-        ee.Image : Calculated and reduced spectral indices, or None if calculation fails
-        
-        Example:
-        --------
-        >>> calc = SpectralCalculator()
-        >>> collection = ee.ImageCollection("COPERNICUS/S2_SR").filterDate("2023-01-01", "2023-12-31")
-        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
-        >>> 
-        >>> # Using default coefficients
-        >>> indices = calc.calculate_indices_with_collection(
-        ...     collection=collection,
-        ...     aoi=aoi,
-        ...     index_list=["NDVI", "EVI"],
-        ...     reducer_method="median"
-        ... )
-        >>> 
-        >>> # Using custom coefficients
-        >>> custom_coeffs = {"EVI": {"g": 3.0, "C1": 6.0, "C2": 7.5, "L": 1.0}}
-        >>> indices = calc.calculate_indices_with_collection(
-        ...     collection=collection,
-        ...     aoi=aoi,
-        ...     index_list=["EVI"],
-        ...     coefficients=custom_coeffs,
-        ...     reducer_method="mean"
-        ... )
+        Calculate spectral indices over an image collection using map and reducer.
+        Preserves per-scene spectral characteristics before composite reduction.
         """
         try:
             logger.info(f"Calculating spectral indices using map and {reducer_method} reducer on collection")
             
-            # Validate reducer method
             valid_reducers = ["mean", "median", "max", "min"]
             if reducer_method not in valid_reducers:
                 logger.warning(f"Unsupported reducer method: {reducer_method}, using mean")
                 reducer_method = "mean"
-            
+
+            # Inspect available bands from the collection
+            try:
+                available_bands = collection.first().bandNames().getInfo()
+            except Exception:
+                available_bands = []
+
+            # Filter indices that are compatible with available bands
+            valid_indices = []
+            for idx in index_list:
+                if not available_bands or self.validate_index_requirements(idx, available_bands):
+                    valid_indices.append(idx)
+                else:
+                    logger.warning(f"Skipping index '{idx}': required bands not present in collection ({available_bands})")
+
+            if not valid_indices:
+                logger.warning("No requested spectral indices are compatible with collection bands")
+                return None
+
             # Prepare base parameters for spyndex
             base_params = {}
-            
-            # Add coefficients to params if provided
             if coefficients:
-                logger.info(f"Using custom coefficients for indices: {list(coefficients.keys())}")
-                for index_name, index_coeffs in coefficients.items():
-                    if index_name in index_list:
-                        # Validate coefficients
-                        validation = self.validate_coefficients(index_name, index_coeffs)
+                for idx_name, index_coeffs in coefficients.items():
+                    if idx_name in valid_indices:
+                        validation = self.validate_coefficients(idx_name, index_coeffs)
                         if not validation["valid"]:
-                            logger.error(f"Invalid coefficients for {index_name}: {validation['warnings']}")
-                            raise ValueError(f"Invalid coefficients for {index_name}: {validation['warnings']}")
-                        
-                        if validation["warnings"]:
-                            logger.warning(f"Coefficient warnings for {index_name}: {validation['warnings']}")
-                        
-                        # Add coefficients to base params
+                            raise ValueError(f"Invalid coefficients for {idx_name}: {validation['warnings']}")
                         base_params.update(index_coeffs)
-                        logger.info(f"Added coefficients for {index_name}: {index_coeffs}")
             else:
-                # Use default coefficients for indices that require them
-                logger.info("Using default coefficients where required")
-                for index_name in index_list:
-                    default_coeffs = self.get_index_coefficients(index_name)
+                for idx_name in valid_indices:
+                    default_coeffs = self.get_index_coefficients(idx_name)
                     if default_coeffs:
                         base_params.update(default_coeffs)
-                        logger.info(f"Added default coefficients for {index_name}: {default_coeffs}")
             
-            # Step 1: Map the index calculation function over each image in the collection. Define as server side computation
-            logger.info(f"Mapping index calculation over collection...")
-            
+            # Map calculation over collection
             def calculate_indices_for_image(image):
-                """
-                Calculate spectral indices for a single image using spyndex.
-                
-                This function is mapped over each image in the collection.
-                Since spyndex.computeIndex returns an ee.Image, this works within
-                Earth Engine's server-side execution model.
-                """
-                # Prepare params with band selections for this image
-                params = {
-                    "N": image.select("NIR"),
-                    "R": image.select("RED"),
-                    "G": image.select("GREEN"),
-                    "B": image.select("BLUE"),
-                    "S1": image.select("SWIR1"),
-                    "S2": image.select("SWIR2")
-                }
-                
-                # Add coefficients to params
-                params.update(base_params)
-                
-                # Use spyndex to compute indices for this image. spyndex.computeIndex returns an ee.Image that can be used in map
-                spectral_indices = self.spyndex.computeIndex(
-                    index=index_list,
+                params = self._build_spyndex_params(image, available_bands=available_bands, base_params=base_params)
+                return self.spyndex.computeIndex(
+                    index=valid_indices,
                     params=params
                 )
-                return spectral_indices
             
-            # Apply the function to each image in the collection
             indices_collection = collection.map(calculate_indices_for_image)
             
-            # Step 2: Apply the specified reducer to the collection
+            # Reducer
             logger.info(f"Applying {reducer_method} reducer to collection...")
             if reducer_method == "mean":
                 reduced_indices = indices_collection.mean()
@@ -642,14 +1289,13 @@ class SpectralCalculator:
             elif reducer_method == "min":
                 reduced_indices = indices_collection.min()
             
-            # Step 3: Clip to AOI
             reduced_indices = reduced_indices.clip(aoi)
             
-            # Validate results
             if reduced_indices is not None:
                 band_count = reduced_indices.bandNames().size().getInfo()
                 if band_count > 0:
-                    logger.info(f"Successfully calculated {band_count} spectral indices using map and {reducer_method} reducer")
+                    self.calculated_count += len(valid_indices)
+                    logger.info(f"Successfully calculated {band_count} spectral indices using {reducer_method} reducer")
                     return reduced_indices
                 else:
                     logger.error("No valid bands in reduced indices")
@@ -665,10 +1311,6 @@ class SpectralCalculator:
     def get_calculation_summary(self) -> Dict[str, Any]:
         """
         Get summary of calculation process.
-        
-        Returns:
-        --------
-        Dict[str, Any] : Summary information
         """
         return {
             'indices_calculated': self.calculated_count,
@@ -679,213 +1321,414 @@ class SpectralCalculator:
 #=================================== Distance Metrics ===================================
 class distance_calculator:
     """
-    This class computes distance-based predictors that measure proximity to various
-    geographic features like roads, coastlines, and settlements.
-    Supported Distance Metrics:
-    - Roads: Distance to road networks 
-    - Coastline: Distance to coastline features
-    - Settlements: Distance to populated areas
-    Data Sources:
-    - Natural Earth Coastline: https://www.naturalearthdata.com/
-    - OpenStreetMap (OSM) Roads: Community-contributed road data
-    - RBI Roads: Regional road network data
-    - HRSL Settlements: High Resolution Settlement Layer
+    Computes fast Euclidean distance-based predictors measuring proximity to:
+    - Main Roads (`dist_roads`): On-the-fly from Global Roads Inventory Project (GRIP4, main roads
+      GP_RTP in [1, 2, 3]) or from a pre-computed raster asset.
+    - Coastline (`dist_coast`): Derived from S2COAST-2023 (`projects/sat-io/open-datasets/S2COAST-2023`)
+      with outward spatial buffering to preserve high/low-tide shoreline continuity.
+    - Settlements (`dist_settlement`): Derived from High Resolution Settlement Layer (HRSL).
 
-    Usage Example:
-        calc = distance_calculator()
-        
-        # Calculate all distance metrics
-        distances = calc.calculate_distance_metrics(
-            aoi=aoi_geometry,
-            max_dist=50000,  # 50km maximum distance
-            in_meters=True   # Output in meters
-        )
-        
-        # Result contains: dist_roads, dist_coast, dist_settlement bands
+    Uses Earth Engine's linear-time `fastDistanceTransform()` instead of `cumulativeCost()`
+    to avoid neighborhood size limits and timeouts.
     """
-    
+
+    S2COAST_ASSET = "projects/sat-io/open-datasets/S2COAST-2023"
+
+    # GRIP4 regional collections covering Southeast Asia & PNG/Oceania
+    GRIP4_REGIONAL_ASSETS = [
+        "projects/sat-io/open-datasets/GRIP4/South-East-Asia",
+        "projects/sat-io/open-datasets/GRIP4/Oceania",
+    ]
+
+    # GRIP4 road types (GP_RTP): 1=Highway, 2=Primary, 3=Secondary (excludes 4=Tertiary, 5=Local)
+    MAIN_ROAD_TYPES = [1, 2, 3]
+
+    HRSL_ASSET = "projects/sat-io/open-datasets/hrsl/hrslpop"
+
+    # Default canonical base resolution (meters) for sensor-independent distance computation
+    DEFAULT_BASE_SCALE_M = 30
+
     def __init__(self):
         """
-        Initialize the distance calculator.
-        
-        Ensures Earth Engine is initialized and sets up logging.
-        No heavy computations are performed during initialization.
+        Initialize the distance calculator lazily without heavy GEE computations.
         """
         ensure_ee_initialized()
         logger.info("Distance calculator initialized")
-    
-    def calculate_distance_metrics(self, 
-                                   aoi: ee.Geometry, 
-                                   max_dist: float = 500000, 
-                                   in_meters: bool = False) -> ee.Image:
+
+    @staticmethod
+    def _resolve_geometry(aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature]) -> ee.Geometry:
         """
-        Create distance images based on predefined datasets.
-        
-        This method calculates cumulative cost distance from various geographic
-        features to create spatial predictors for land cover classification using Earth Engine's cumulativeCost().
-        Distance metrics help capture accessibility patterns and spatial
-        relationships that influence land use decisions.
-        
-        Parameters:
-        -----------
-        aoi : ee.Geometry
-            Area of interest geometry for clipping results
-        max_dist : float, default=500000
-            Maximum cumulative cost distance in meters or pixels.
-            Larger values increase computation time but provide more complete coverage.
-        in_meters : bool, default=False
-            Distance unit selection:
-            - True: Output distance in meters (more accurate, slower computation)
-            - False: Output distance in pixels (faster, less precise)
-            
-        Returns:
-        --------
+        Normalize `aoi` (whether passed as `ee.Geometry`, `ee.FeatureCollection`, or `ee.Feature`)
+        into an `ee.Geometry` so `.buffer()` works reliably.
+        """
+        if hasattr(aoi, "geometry") and not hasattr(aoi, "buffer"):
+            return aoi.geometry()
+        try:
+            if isinstance(aoi, (ee.FeatureCollection, ee.Feature)):
+                return aoi.geometry()
+        except TypeError:
+            pass
+        return aoi
+
+    def _resolve_compute_scale(
+        self,
+        max_dist: float = 50000,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> float:
+        """
+        Determine canonical computation scale (in meters) so that `max_dist` fits within
+        `neighborhood_px` pixels regardless of target optical sensor resolution:
+            compute_scale = max(base_scale, ceil(max_dist / neighborhood_px))
+        """
+        base_scale = float(scale) if scale is not None else float(self.DEFAULT_BASE_SCALE_M)
+        min_scale_for_reach = float(np.ceil(float(max_dist) / max(1, int(neighborhood_px))))
+        return max(base_scale, min_scale_for_reach)
+
+    def _compute_fast_distance(
+        self,
+        source_binary_mask: ee.Image,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        band_name: str,
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> ee.Image:
+        """
+        Compute Euclidean distance from a binary source mask (1=feature, 0=background)
+        using a canonical sensor-independent grid (`reproject`) + `fastDistanceTransform`
+        + `resample('bilinear')`, and clip to `aoi`.
+        """
+        compute_scale = self._resolve_compute_scale(
+            max_dist=max_dist,
+            neighborhood_px=neighborhood_px,
+            scale=scale
+        )
+        clean_mask = (
+            source_binary_mask
+            .unmask(0)
+            .gt(0)
+            .reproject(crs="EPSG:4326", scale=compute_scale)
+        )
+        dist_px = clean_mask.fastDistanceTransform(
+            neighborhood=neighborhood_px,
+            units="pixels",
+            metric="squared_euclidean"
+        ).sqrt()
+
+        if in_meters:
+            dist_img = dist_px.multiply(ee.Image.pixelArea().sqrt())
+        else:
+            dist_img = dist_px
+
+        return (
+            dist_img
+            .clamp(0, max_dist)
+            .unmask(max_dist)
+            .resample("bilinear")
+            .clip(aoi)
+            .toFloat()
+            .rename(band_name)
+        )
+
+    def extract_s2_coastline(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        buffer_m: float = 10000
+    ) -> ee.FeatureCollection:
+        """
+        Extract coastline polyline segments from S2COAST-2023 within the user-defined AOI.
+
+        Applies an outward spatial buffer (`buffer_m`, default 10 km) around `aoi` so that
+        shoreline segments (and high/low-tide lines) just outside the AOI boundary are
+        captured when computing proximity.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
+            User-defined area of interest geometry or FeatureCollection.
+        buffer_m : float, default=10000
+            Outward search buffer in meters around `aoi` to capture nearby coastlines.
+        """
+        s2_coast = ee.FeatureCollection(self.S2COAST_ASSET)
+        aoi_geom = self._resolve_geometry(aoi)
+        target_buffer = aoi_geom.buffer(buffer_m)
+        return s2_coast.filter(ee.Filter.bounds(target_buffer))
+
+    def extract_grip4_roads(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        buffer_m: float = 50000,
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        grip4_assets: Optional[List[str]] = None
+    ) -> ee.FeatureCollection:
+        """
+        Extract road network features from the Global Roads Inventory Project (GRIP4).
+
+        Parameters
+        ----------
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
+            Area of interest geometry or FeatureCollection.
+        buffer_m : float, default=50000
+            Outward search buffer in meters around `aoi` so nearby roads outside the
+            AOI boundary are accounted for.
+        main_roads_only : bool, default=True
+            If True, filters `GP_RTP` to main roads (`[1, 2, 3]`: Highways, Primary, Secondary).
+        road_types : list of int, optional
+            Custom list of `GP_RTP` road type codes.
+        grip4_assets : list of str, optional
+            Custom GRIP4 FeatureCollection asset IDs.
+        """
+        aoi_geom = self._resolve_geometry(aoi)
+        search_geom = aoi_geom.buffer(buffer_m)
+        assets = grip4_assets or self.GRIP4_REGIONAL_ASSETS
+        target_types = road_types or self.MAIN_ROAD_TYPES
+
+        collections = []
+        for asset_id in assets:
+            fc = ee.FeatureCollection(asset_id).filter(ee.Filter.bounds(search_geom))
+            if main_roads_only:
+                fc = fc.filter(ee.Filter.inList("GP_RTP", target_types))
+            collections.append(fc)
+
+        merged_roads = collections[0]
+        for fc in collections[1:]:
+            merged_roads = merged_roads.merge(fc)
+
+        return merged_roads
+
+    def calculate_distance_to_coast(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> ee.Image:
+        """
+        Compute Euclidean distance to nearest S2COAST-2023 shoreline (`dist_coast`),
+        clipped to the user-defined `aoi`.
+        """
+        search_buffer = max(10000.0, float(max_dist))
+        filtered_coast = self.extract_s2_coastline(
+            aoi=aoi,
+            buffer_m=search_buffer
+        )
+        coast_mask = (
+            filtered_coast
+            .map(lambda ft: ft.set("constant", 1))
+            .reduceToImage(["constant"], ee.Reducer.first())
+            .unmask(0)
+        )
+        return self._compute_fast_distance(
+            source_binary_mask=coast_mask,
+            aoi=aoi,
+            band_name="dist_coast",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px,
+            scale=scale
+        )
+
+    def calculate_distance_to_roads(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        road_source: str = "grip4",
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        precomputed_asset: Optional[str] = None,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> ee.Image:
+        """
+        Compute distance to roads (`dist_roads`) using either:
+        1. `road_source='grip4'` (default): On-the-fly computation from GRIP4 main roads.
+        2. `road_source='precomputed'`: Pre-computed distance raster asset (`precomputed_asset`).
+        """
+        source_mode = (road_source or "grip4").lower()
+        if source_mode == "precomputed" and precomputed_asset:
+            logger.info(f"Loading pre-computed road distance asset: {precomputed_asset}")
+            return (
+                ee.Image(precomputed_asset)
+                .select([0])
+                .clamp(0, max_dist)
+                .unmask(max_dist)
+                .resample("bilinear")
+                .clip(aoi)
+                .toFloat()
+                .rename("dist_roads")
+            )
+
+        search_buffer = max(10000.0, float(max_dist))
+        roads_fc = self.extract_grip4_roads(
+            aoi=aoi,
+            buffer_m=search_buffer,
+            main_roads_only=main_roads_only,
+            road_types=road_types
+        )
+        roads_mask = (
+            roads_fc
+            .map(lambda ft: ft.set("constant", 1))
+            .reduceToImage(["constant"], ee.Reducer.max())
+            .unmask(0)
+        )
+        return self._compute_fast_distance(
+            source_binary_mask=roads_mask,
+            aoi=aoi,
+            band_name="dist_roads",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px,
+            scale=scale
+        )
+
+    def calculate_distance_to_settlement(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> ee.Image:
+        """
+        Compute Euclidean distance to nearest HRSL settlement pixel (`dist_settlement`).
+        """
+        search_buffer = max(10000.0, float(max_dist))
+        aoi_geom = self._resolve_geometry(aoi)
+        hrsl = (
+            ee.ImageCollection(self.HRSL_ASSET)
+            .filterBounds(aoi_geom.buffer(search_buffer))
+            .mosaic()
+        )
+        settlement_mask = hrsl.gt(0).unmask(0)
+        return self._compute_fast_distance(
+            source_binary_mask=settlement_mask,
+            aoi=aoi,
+            band_name="dist_settlement",
+            max_dist=max_dist,
+            in_meters=in_meters,
+            neighborhood_px=neighborhood_px,
+            scale=scale
+        )
+
+    def calculate_distance_metrics(
+        self,
+        aoi: Union[ee.Geometry, ee.FeatureCollection, ee.Feature],
+        max_dist: float = 50000,
+        in_meters: bool = True,
+        include_roads: bool = True,
+        include_coast: bool = True,
+        include_settlement: bool = True,
+        road_source: str = "grip4",
+        main_roads_only: bool = True,
+        road_types: Optional[List[int]] = None,
+        precomputed_road_asset: Optional[str] = None,
+        neighborhood_px: int = 1024,
+        scale: Optional[float] = None
+    ) -> Optional[ee.Image]:
+        """
+        Calculate stacked Euclidean distance predictors (`dist_roads`, `dist_coast`, `dist_settlement`)
+        using `fastDistanceTransform`, clipped to the user-defined `aoi`.
+
+        Parameters
+        ----------
+        aoi : ee.Geometry, ee.FeatureCollection, or ee.Feature
+            User-defined area of interest geometry for filtering and clipping results.
+        max_dist : float, default=50000
+            Maximum search/cap distance in meters (default 50 km) or pixels.
+        in_meters : bool, default=True
+            If True, output distance in meters; if False, output in pixel units.
+        include_roads : bool, default=True
+            Compute `dist_roads` (GRIP4 main roads or pre-computed asset).
+        include_coast : bool, default=True
+            Compute `dist_coast` (S2COAST-2023).
+        include_settlement : bool, default=True
+            Compute `dist_settlement` (HRSL).
+        road_source : str, default='grip4'
+            Road data source: `'grip4'` (on-the-fly main roads) or `'precomputed'`.
+        main_roads_only : bool, default=True
+            When `road_source='grip4'`, filter `GP_RTP` to `[1, 2, 3]` (Highways, Primary, Secondary).
+        road_types : list of int, optional
+            Custom `GP_RTP` codes for GRIP4 road filtering.
+        precomputed_road_asset : str, optional
+            GEE Image asset ID when `road_source='precomputed'`.
+        neighborhood_px : int, default=1024
+            Neighborhood window in pixels for `fastDistanceTransform`.
+        scale : float, optional
+            Base computation scale in meters. Defaults to `max(30, ceil(max_dist / neighborhood_px))`.
+
+        Returns
+        -------
         ee.Image or None
-            Stacked distance metrics with bands:
-            - 'dist_roads': Distance to nearest road network
-            - 'dist_coast': Distance to nearest coastline
-            - 'dist_settlement': Distance to nearest settlement
-            Returns None if calculation fails completely.
-            
-        Example:
-        --------
-        >>> calc = distance_calculator()
-        >>> aoi = ee.Geometry.Rectangle([106.0, -6.5, 107.0, -6.0])
-        >>> 
-        >>> # Fast pixel-based calculation
-        >>> distances_px = calc.calculate_distance_metrics(aoi, max_dist=100000, in_meters=False)
-        >>> 
-        >>> # Accurate meter-based calculation  
-        >>> distances_m = calc.calculate_distance_metrics(aoi, max_dist=50000, in_meters=True)
-        
+            Stacked distance image containing requested bands (`dist_roads`, `dist_coast`, `dist_settlement`).
         """
         try:
-            logger.info(f"Calculating distance metrics (max_dist={max_dist}, in_meters={in_meters})...")
-            
-            # Set up cost image based on distance unit preference
-            if in_meters:
-                # Distance in meters: Use pixel area square root as cost
-                # This accounts for varying pixel sizes due to map projection
-                cost_image = ee.Image.pixelArea().sqrt()
-                logger.info("Using meter-based distance calculation (slower but more accurate)")
-            else:
-                # Distance in pixel units: Uniform cost of 1 per pixel
-                # Faster computation but less accurate for large areas
-                cost_image = ee.Image(1)
-                logger.info("Using pixel-based distance calculation (faster but less precise)")
-            
-            # Helper function to calculate distance from source mask
-            def distance_image(source_mask):
-                """
-                Calculate cumulative cost distance from binary source mask.
-                
-                Parameters:
-                -----------
-                source_mask : ee.Image
-                    Binary mask where value 1 indicates source locations (starting points)
-                    
-                Returns:
-                --------
-                ee.Image : Distance image with cumulative cost values
-                """
-                return cost_image.cumulativeCost(source_mask, max_dist)
-            
-            # 1. Natural Earth Coastline Data Processing
-            # Source: https://www.naturalearthdata.com/downloads/10m-physical-vectors/10m-coastline/
-            logger.info("Processing coastline data...")
-            try:
-                ne_coastline = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/coastline_ne_10m"
-                ).filterBounds(aoi)
-                
-                # Convert vector features to raster mask
-                # Each feature gets a constant value of 1, then reduce to image
-                coast_dist = ne_coastline.map(lambda ft: ft.set('constant', 1)) \
-                                        .reduceToImage(['constant'], ee.Reducer.first()) \
-                                        .mask()  # Create binary mask (1 where coastline exists)
-                
-            except Exception as e:
-                logger.warning(f"Failed to load coastline data: {str(e)}")
-                # Create empty mask if coastline data unavailable
-                coast_dist = ee.Image(0).mask(ee.Image(0))
-            
-            # 2. Roads Data Processing (OSM + RBI)
-            # Combines OpenStreetMap and Rupa Bumi Indonesia (RBI) road networks
-            logger.info("Processing roads data...")
-            try:
-                #OpenStreetMap roads (use legacy asset from RESTORE+, update might be needed)
-                road_osm = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/road_osm"
-                ).filterBounds(aoi)
-                
-                #RBI roads (use legacy asset from RESTORE+, update might be needed)
-                road_rbi = ee.FeatureCollection(
-                    "users/hadicu06/IIASA/RESTORE/vector_datasets/road_rbi"
-                ).filterBounds(aoi)
-                
-                # Merge road datasets and convert to raster mask
-                roads_dist = road_osm.merge(road_rbi) \
-                                    .map(lambda ft: ft.set('constant', 1)) \
-                                    .reduceToImage(['constant'], ee.Reducer.max()) \
-                                    .mask()  # Use max reducer to handle overlapping roads
-                
-            except Exception as e:
-                logger.warning(f"Failed to load roads data: {str(e)}")
-                # Create empty mask if roads data unavailable
-                roads_dist = ee.Image(0).mask(ee.Image(0))
-            
-            # 3. Settlement Data Processing (HRSL)
-            # Source: Facebook High Resolution Settlement Layer
-            # https://dataforgood.facebook.com/dfg/tools/high-resolution-population-density-maps
-            #calculation is based on RESTORE+ codebase
-            logger.info("Processing settlement data...")
-            try:
-                # Load HRSL population density data
-                hrsl = ee.ImageCollection("projects/sat-io/open-datasets/hrsl/hrslpop") \
-                        .mosaic() \
-                        .clip(aoi)
-                
-                # Apply connected component analysis to identify settlement clusters
-                # This groups adjacent populated pixels into coherent settlements
-                hrsl_connected = hrsl.int().connectedPixelCount(maxSize=100, eightConnected=True)
-                
-                # Create settlement mask: areas with >3 connected populated pixels
-                # This filters out isolated pixels and focuses on actual settlements
-                hrsl_masked = hrsl_connected.unmask().gt(3)
-                
-            except Exception as e:
-                logger.warning(f"Failed to load settlement data: {str(e)}")
-                # Create empty mask if settlement data unavailable
-                hrsl_masked = ee.Image(0).mask(ee.Image(0))
-            
-            # 4. Calculate Distance Transformations
-            logger.info("Computing distance transformations...")
-            
-            # Calculate cumulative cost distance for each feature type
-            dist_roads = distance_image(roads_dist).rename('dist_roads')
-            dist_coast = distance_image(coast_dist).rename('dist_coast')
-            dist_settlement = distance_image(hrsl_masked).rename('dist_settlement')
-            
-            # Stack all distance metrics into single multi-band image
-            distance_metrics = ee.Image.cat(dist_roads, dist_coast, dist_settlement)
-            
-            logger.info("Successfully calculated distance metrics: dist_roads, dist_coast, dist_settlement")
+            compute_scale = self._resolve_compute_scale(
+                max_dist=max_dist,
+                neighborhood_px=neighborhood_px,
+                scale=scale
+            )
+            logger.info(
+                f"Calculating fast distance metrics (max_dist={max_dist}, compute_scale={compute_scale}m, "
+                f"in_meters={in_meters}, road_source={road_source}, main_roads_only={main_roads_only})..."
+            )
+            layers = []
+
+            if include_roads:
+                dist_roads = self.calculate_distance_to_roads(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    road_source=road_source,
+                    main_roads_only=main_roads_only,
+                    road_types=road_types,
+                    precomputed_asset=precomputed_road_asset,
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
+                )
+                layers.append(dist_roads)
+
+            if include_coast:
+                dist_coast = self.calculate_distance_to_coast(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
+                )
+                layers.append(dist_coast)
+
+            if include_settlement:
+                dist_settlement = self.calculate_distance_to_settlement(
+                    aoi=aoi,
+                    max_dist=max_dist,
+                    in_meters=in_meters,
+                    neighborhood_px=neighborhood_px,
+                    scale=scale
+                )
+                layers.append(dist_settlement)
+
+            if not layers:
+                logger.warning("No distance layers were requested")
+                return None
+
+            distance_metrics = ee.Image.cat(*layers) if len(layers) > 1 else layers[0]
+            logger.info("Successfully constructed fast distance predictor stack")
             return distance_metrics
-            
+
         except Exception as e:
             logger.error(f"Failed to calculate distance metrics: {str(e)}")
-            logger.error("This may be due to:")
-            logger.error("- Missing or inaccessible datasets")
-            logger.error("- Earth Engine quota limits")
-            logger.error("- Network connectivity issues")
-            logger.error("- AOI outside dataset coverage area")
             return None
 
 #=================================== Predictor Calculation ===================================
 class PredictorCalculation:
     """
-    Main orchestration service for predictor computation workflows.
-    This class coordinates between terrain_calculator, SpectralCalculator, 
+    Main orchestration for predictor computation workflows.
+    This class coordinates between terrain_calculator, SpectralCalculator, SAR.py, 
     and distance_calculator to provide a unified interface for predictor computation.
     """
     
@@ -896,8 +1739,80 @@ class PredictorCalculation:
         # Initialize calculator backends
         self.terrain_calc = terrain_calculator()
         self.spectral_calc = SpectralCalculator()
+        self.sar_calc = get_sar_data()
+        self.distance_calc = distance_calculator()
         
-        logger.info("Predictor Calculation initialized with terrain and spectral calculators")
+        logger.info("Predictor Calculation initialized with terrain, spectral, SAR, and distance calculators")
+    def detect_sensor(
+        self,
+        sensor_hint: Optional[str] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> str:
+        """
+        Detect sensor family from explicit hint, composite image, or collection.
+        Returns: 'LANDSAT', 'SENTINEL', or 'UNKNOWN'
+        """
+        return sensor_detector.detect_sensor(
+            sensor_hint=sensor_hint,
+            composite=composite,
+            collection=collection
+        )
+
+    def get_available_predictors(
+        self,
+        sensor: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        composite: Optional[ee.Image] = None,
+        collection: Optional[ee.ImageCollection] = None
+    ) -> Dict[str, Any]:
+        """
+        Query availability of all registered predictors based on sensor and temporal criteria.
+
+        Parameters
+        ----------
+        sensor : str, optional
+            Sensor identifier or hint (e.g. 'Landsat', 'Sentinel-2', 'L8_SR')
+        start_date : str, optional
+            Start date string ('YYYY-MM-DD')
+        end_date : str, optional
+            End date string ('YYYY-MM-DD')
+        composite : ee.Image, optional
+            Composite image to infer sensor or date range from if not provided
+        collection : ee.ImageCollection, optional
+            Collection to infer sensor or date range from if not provided
+
+        Returns
+        -------
+        Dict[str, Any] : Dictionary containing detected sensor, resolved dates, and predictor availability mapping.
+        """
+        detected_sensor = self.detect_sensor(sensor_hint=sensor, composite=composite, collection=collection)
+
+        if not start_date or not end_date:
+            resolved_start, resolved_end = self._resolve_date_range({}, collection=collection, composite=composite)
+            start_date = start_date or resolved_start
+            end_date = end_date or resolved_end
+
+        predictors = predictor_catalog.check_availability(
+            sensor=detected_sensor,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        categories = sorted(list(set(p["category"] for p in predictors.values())))
+        available_count = sum(1 for p in predictors.values() if p["available"])
+
+        return {
+            "sensor": detected_sensor,
+            "start_date": start_date,
+            "end_date": end_date,
+            "categories": categories,
+            "predictors": predictors,
+            "total_count": len(predictors),
+            "available_count": available_count
+        }
+
     #Input validation
     def validate_prerequisites(self, composite: ee.Image, aoi: ee.Geometry, 
                              collection: ee.ImageCollection = None) -> Dict[str, Any]:
@@ -958,9 +1873,107 @@ class PredictorCalculation:
                 "errors": [f"Validation failed: {str(e)}"],
                 "warnings": []
             }
+    def _resolve_date_range(self, predictor_config: Dict[str, Any],
+                            collection: ee.ImageCollection = None,
+                            composite: ee.Image = None):
+        """
+        Resolve the (start_date, end_date) selected in Module 1 / Step 1.
+
+        Priority: predictor_config -> collection 'query_start_date'/'query_end_date'
+        -> composite 'composite_start_date'/'composite_end_date' ->
+        min/max 'system:time_start' of the collection.
+
+        Returns:
+        --------
+        tuple : (start_date, end_date) as strings, or (None, None) if unresolved.
+        """
+        start = predictor_config.get("start_date")
+        end = predictor_config.get("end_date")
+        if start is not None and end is not None:
+            return str(start), str(end)
+
+        def _get_props(obj, start_key, end_key):
+            try:
+                info = ee.Dictionary({
+                    "s": obj.get(start_key),
+                    "e": obj.get(end_key),
+                }).getInfo()
+                if info.get("s") and info.get("e"):
+                    return str(info["s"]), str(info["e"])
+            except Exception as e:
+                logger.debug(f"Could not read date properties {start_key}/{end_key}: {e}")
+            return None
+
+        if collection is not None:
+            found = _get_props(collection, "query_start_date", "query_end_date")
+            if found:
+                return found
+        if composite is not None:
+            found = _get_props(composite, "composite_start_date", "composite_end_date")
+            if found:
+                return found
+            found = _get_props(composite, "date_range_start", "date_range_end")
+            if found:
+                return found
+        if collection is not None:
+            try:
+                rng = collection.reduceColumns(
+                    ee.Reducer.minMax(), ["system:time_start"]
+                ).getInfo()
+                if rng and rng.get("min") is not None and rng.get("max") is not None:
+                    fmt = lambda ms: ee.Date(ms).format("YYYY-MM-dd").getInfo()
+                    return fmt(rng["min"]), fmt(rng["max"])
+            except Exception as e:
+                logger.debug(f"Could not derive date range from collection: {e}")
+        return None, None
+
+    def _resolve_sar_selection(self, predictor_config: Dict[str, Any], spectral_indices: list):
+        """
+        Determine which Sentinel-1 and PALSAR bands were requested.
+
+        SAR predictors can be requested via:
+        - predictor_config["sentinel1"] / predictor_config["individual_predictors"]["sentinel1"]
+        - predictor_config["palsar"] / predictor_config["individual_predictors"]["palsar"]
+        - band names (S1_VV, S1_VH, S1_VV_VH, PALSAR_HH, PALSAR_HV, PALSAR_HH_HV) mixed
+          into the spectral index list (luma-be forwards non-terrain predictors in "spectral_indices")
+
+        Returns:
+        --------
+        tuple : (selected_s1_bands: list, selected_palsar_bands: list, remaining_spectral_indices: list)
+        """
+        all_s1 = self.sar_calc.SAR_DATASETS["S1_GRD"]["output_bands"]
+        all_palsar = self.sar_calc.SAR_DATASETS["PALSAR_EPOCH"]["output_bands"]
+        selected_s1 = []
+        selected_palsar = []
+
+        def _collect(value, target_list, valid_bands):
+            if value is True:
+                target_list.extend(valid_bands)
+            elif isinstance(value, (list, tuple, set)):
+                target_list.extend(str(v).upper() for v in value)
+
+        _collect(predictor_config.get("sentinel1"), selected_s1, all_s1)
+        _collect(predictor_config.get("individual_predictors", {}).get("sentinel1"), selected_s1, all_s1)
+        _collect(predictor_config.get("palsar"), selected_palsar, all_palsar)
+        _collect(predictor_config.get("individual_predictors", {}).get("palsar"), selected_palsar, all_palsar)
+
+        remaining = []
+        for idx in spectral_indices or []:
+            idx_u = str(idx).upper()
+            if idx_u in all_s1:
+                selected_s1.append(idx_u)
+            elif idx_u in all_palsar:
+                selected_palsar.append(idx_u)
+            else:
+                remaining.append(idx)
+
+        selected_s1 = [b for b in all_s1 if b in set(selected_s1)]
+        selected_palsar = [b for b in all_palsar if b in set(selected_palsar)]
+        return selected_s1, selected_palsar, remaining
+
     #core function: Compute Predictor
-    def compute_predictors(self, composite: ee.Image,aoi: ee.Geometry,predictor_config: Dict[str, Any],collection: ee.ImageCollection = None,
-                          progress_callback: callable = None) -> Dict[str, Any]:
+    def compute_predictors(self, composite: ee.Image, aoi: ee.Geometry, predictor_config: Dict[str, Any], collection: ee.ImageCollection = None,
+                          progress_callback: callable = None, sensor: Optional[str] = None) -> Dict[str, Any]:
         """
         Compute predictors based on configuration using backend calculators.
         This method orchestrates the computation workflow:
@@ -1008,6 +2021,15 @@ class PredictorCalculation:
             
             result["warnings"].extend(validation["warnings"])
             
+            # Step 1b: Detect sensor family
+            detected_sensor = self.detect_sensor(
+                sensor_hint=sensor or predictor_config.get("sensor"),
+                composite=composite,
+                collection=collection
+            )
+            logger.info(f"Predictor computation utilizing detected sensor: {detected_sensor}")
+            result["sensor"] = detected_sensor
+
             # Step 2: Add original multispectral bands
             if progress_callback:
                 progress_callback(15, "Processing original multispectral bands...")
@@ -1062,6 +2084,17 @@ class PredictorCalculation:
                             logger.info("Successfully computed aspect")
                     except Exception as e:
                         result["warnings"].append(f"Failed to compute aspect: {str(e)}")
+
+                if individual_preds.get("landform", False):
+                    if progress_callback:
+                        progress_callback(38, "Computing landform...")
+                    try:
+                        landform = self.terrain_calc.get_landform(aoi)
+                        if landform is not None:
+                            terrain_layers.append(landform)
+                            logger.info("Successfully computed landform")
+                    except Exception as e:
+                        result["warnings"].append(f"Failed to compute landform: {str(e)}")
                 
                 # Stack individual terrain layers if any were computed
                 if terrain_layers:
@@ -1080,6 +2113,8 @@ class PredictorCalculation:
                         terrain_names.append("Slope")
                     if individual_preds.get("aspect", False):
                         terrain_names.append("Aspect")
+                    if individual_preds.get("landform", False):
+                        terrain_names.append("Landform")
                     
                     result["predictor_info"].append(f"Data Topografi ({len(terrain_layers)} layer: {', '.join(terrain_names)})")
                     
@@ -1114,6 +2149,9 @@ class PredictorCalculation:
                 spectral_indices = predictor_config.get("spectral_indices", [])
                 index_coefficients = predictor_config.get("index_coefficients", None)
             
+            # Separate SAR (Sentinel-1 & PALSAR) band selections from spectral indices
+            s1_bands, palsar_bands, spectral_indices = self._resolve_sar_selection(predictor_config, spectral_indices)
+            
             if spectral_indices:
                 if progress_callback:
                     progress_callback(65, "Computing spectral indices...")
@@ -1126,14 +2164,16 @@ class PredictorCalculation:
                             aoi=aoi,
                             index_list=spectral_indices,
                             coefficients=index_coefficients,
-                            reducer_method="mean"
+                            reducer_method="mean",
+                            sensor=detected_sensor
                         )
                     else:
                         # Use composite directly
                         spectral_result = self.spectral_calc.calculate_indices(
                             image=composite,
                             index_list=spectral_indices,
-                            coefficients=index_coefficients
+                            coefficients=index_coefficients,
+                            sensor=detected_sensor
                         )
                     
                     if spectral_result is not None:
@@ -1149,6 +2189,139 @@ class PredictorCalculation:
                     result["warnings"].append(error_msg)
                     logger.warning(error_msg)
             
+            # Step 4b: Compute Sentinel-1 SAR predictors (if selected)
+            if s1_bands:
+                if progress_callback:
+                    progress_callback(80, "Computing Sentinel-1 SAR predictors...")
+                try:
+                    start_date, end_date = self._resolve_date_range(
+                        predictor_config, collection=collection, composite=composite
+                    )
+                    if start_date is None or end_date is None:
+                        result["warnings"].append(
+                            "Sentinel-1 skipped: could not resolve date range from Module 1"
+                        )
+                    else:
+                        s1_opts = predictor_config.get("sentinel1_options", {}) or {}
+                        s1_image = self.sar_calc.get_sentinel1(
+                            aoi=aoi,
+                            start_date=start_date,
+                            end_date=end_date,
+                            orbit_pass=s1_opts.get("orbit_pass", "BOTH"),
+                            reducer=s1_opts.get("reducer", "median"),
+                            speckle_filter=s1_opts.get("speckle_filter", "focal_median"),
+                            filter_radius_m=s1_opts.get("filter_radius_m", 30.0),
+                            include_ratio=True,
+                        )
+                        if s1_image is None:
+                            result["warnings"].append(
+                                f"Sentinel-1 data unavailable for {start_date} to {end_date}"
+                            )
+                        else:
+                            result["predictors"]["sentinel1"] = s1_image.select(s1_bands)
+                            result["predictor_info"].append(
+                                f"Sentinel-1 SAR ({len(s1_bands)} band: {', '.join(s1_bands)})"
+                            )
+                            logger.info(f"Added Sentinel-1 bands: {s1_bands}")
+                except Exception as e:
+                    error_msg = f"Error computing Sentinel-1 predictors: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+
+            # Step 4c: Compute ALOS PALSAR / PALSAR-2 L-band SAR predictors (if selected)
+            if palsar_bands:
+                if progress_callback:
+                    progress_callback(85, "Computing ALOS PALSAR SAR predictors...")
+                try:
+                    start_date, end_date = self._resolve_date_range(
+                        predictor_config, collection=collection, composite=composite
+                    )
+                    if start_date is None or end_date is None:
+                        result["warnings"].append(
+                            "PALSAR skipped: could not resolve date range from Module 1"
+                        )
+                    else:
+                        palsar_opts = predictor_config.get("palsar_options", {}) or {}
+                        palsar_image = self.sar_calc.get_palsar(
+                            aoi=aoi,
+                            start_date=start_date,
+                            end_date=end_date,
+                            reducer=palsar_opts.get("reducer", "median"),
+                            speckle_filter=palsar_opts.get("speckle_filter", "focal_median"),
+                            filter_radius_m=palsar_opts.get("filter_radius_m", 30.0),
+                            include_ratio=True,
+                            mask_layover_shadow=palsar_opts.get("mask_layover_shadow", True),
+                            allow_nearest_year_fallback=palsar_opts.get("allow_nearest_year_fallback", True),
+                        )
+                        if palsar_image is None:
+                            result["warnings"].append(
+                                f"PALSAR data unavailable for {start_date} to {end_date}"
+                            )
+                        else:
+                            result["predictors"]["palsar"] = palsar_image.select(palsar_bands)
+                            result["predictor_info"].append(
+                                f"ALOS PALSAR SAR ({len(palsar_bands)} band: {', '.join(palsar_bands)})"
+                            )
+                            logger.info(f"Added ALOS PALSAR bands: {palsar_bands}")
+                except Exception as e:
+                    error_msg = f"Error computing PALSAR predictors: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+            
+            # Step 4d: Compute Distance-based predictors (if selected)
+            distance_layers = []
+            distance_names = []
+            dist_opts = predictor_config.get("distance_options", {}) or {}
+            max_dist_val = dist_opts.get("max_dist", 50000)
+            in_meters_val = dist_opts.get("in_meters", True)
+            road_source_val = dist_opts.get("road_source", "grip4")
+            main_roads_only_val = dist_opts.get("main_roads_only", True)
+            precomputed_road_asset_val = dist_opts.get("precomputed_road_asset", None)
+
+            if "individual_predictors" in predictor_config:
+                ind_p = predictor_config["individual_predictors"]
+                want_all_dist = bool(predictor_config.get("distance", False) or ind_p.get("distance", False))
+                want_roads = want_all_dist or bool(ind_p.get("dist_roads", False))
+                want_coast = want_all_dist or bool(ind_p.get("dist_coast", False))
+                want_settlement = want_all_dist or bool(ind_p.get("dist_settlement", False))
+            else:
+                want_all_dist = bool(predictor_config.get("distance", False))
+                want_roads = want_all_dist
+                want_coast = want_all_dist
+                want_settlement = want_all_dist
+
+            if want_roads or want_coast or want_settlement:
+                if progress_callback:
+                    progress_callback(88, "Computing distance predictors...")
+                try:
+                    dist_img = self.distance_calc.calculate_distance_metrics(
+                        aoi=aoi,
+                        max_dist=max_dist_val,
+                        in_meters=in_meters_val,
+                        include_roads=want_roads,
+                        include_coast=want_coast,
+                        include_settlement=want_settlement,
+                        road_source=road_source_val,
+                        main_roads_only=main_roads_only_val,
+                        precomputed_road_asset=precomputed_road_asset_val,
+                    )
+                    if dist_img is not None:
+                        result["predictors"]["distance"] = dist_img
+                        if want_roads:
+                            distance_names.append("dist_roads")
+                        if want_coast:
+                            distance_names.append("dist_coast")
+                        if want_settlement:
+                            distance_names.append("dist_settlement")
+                        result["predictor_info"].append(
+                            f"Jarak & Aksesibilitas ({len(distance_names)} band: {', '.join(distance_names)})"
+                        )
+                        logger.info(f"Added distance bands: {distance_names}")
+                except Exception as e:
+                    error_msg = f"Error computing distance predictors: {str(e)}"
+                    result["warnings"].append(error_msg)
+                    logger.warning(error_msg)
+
             # Step 5: Stack all predictors together
             if result["predictors"]:
                 if progress_callback:
@@ -1517,3 +2690,938 @@ class EECorrelationAnalysis:
         except Exception as e:
             logger.error(f"Failed to create visualization: {str(e)}")
             raise
+
+#=================================== Recursive Feature Elimination ===================================
+class RFEGEE:
+    """
+    Recursive Feature Elimination (RFE) using
+    Random Forest variable importance in Google Earth Engine.
+    Inspired by https://github.com/DanGeospatial/GEE_Wetland_Classification
+    """
+
+    def __init__(
+        self,
+        training_data: ee.FeatureCollection,
+        class_property: str,
+        features: List[str],
+        test_data: Optional[ee.FeatureCollection] = None,
+        n_features_to_select: Optional[int] = None,
+        step: Union[int, float] = 1,
+        adaptive: bool = False,
+        auto_select: bool = True,
+        n_trees: int = 50,
+        seed: int = 42,
+        track_accuracy: bool = False,
+        verbose: bool = True
+    ):
+        ensure_ee_initialized()
+
+        self.training_data = training_data
+        self.test_data = test_data
+        self.class_property = class_property
+        # Deduplicate features while preserving input order
+        self.features = list(dict.fromkeys(features))
+        self.n_features_to_select = (
+            n_features_to_select or max(1, len(self.features) // 2)
+        )
+        self.step = step
+        self.adaptive = adaptive
+        self.auto_select = auto_select
+        self.n_trees = n_trees
+        self.seed = seed
+        self.track_accuracy = track_accuracy
+        self.verbose = verbose
+
+        # Results
+        self.selected_features_ = None
+        self.best_features_ = None
+        self.best_accuracy_ = None
+        self.best_n_features_ = None
+        self.elimination_order_ = []
+        self.elimination_step_ = {}  # feature -> elimination round index
+        self.accuracy_history_ = []
+        self.n_features_history_ = []
+        self.feature_importance_history_ = []
+        self.feature_set_history_ = []
+
+        self._validate_inputs()
+
+    # Utilities
+    def _log(self, msg: str):
+        if self.verbose:
+            print(msg)
+        logger.info(msg)
+
+    # Function to validate input, log error if something happens
+    def _validate_inputs(self):
+        if not isinstance(self.training_data, ee.FeatureCollection):
+            raise TypeError("training_data must be ee.FeatureCollection")
+
+        if self.test_data is not None and not isinstance(self.test_data, ee.FeatureCollection):
+            raise TypeError("test_data must be ee.FeatureCollection or None")
+
+        if self.track_accuracy and self.test_data is None:
+            raise ValueError("test_data is required when track_accuracy=True")
+
+        if self.n_features_to_select < 1:
+            raise ValueError("n_features_to_select must be >= 1")
+
+        if self.n_features_to_select > len(self.features):
+            raise ValueError("n_features_to_select exceeds feature count")
+
+        if isinstance(self.step, (int, float)):
+            if self.step <= 0:
+                raise ValueError("step must be > 0")
+        else:
+            raise TypeError("step must be an integer or float")
+
+    # Prerequisites for implementation
+    # 1. Train classifier (RF)
+    def _train_classifier(self, feature_list: List[str]) -> ee.Classifier:
+        return ee.Classifier.smileRandomForest(
+            numberOfTrees=self.n_trees,
+            seed=self.seed
+        ).train(
+            features=self.training_data,
+            classProperty=self.class_property,
+            inputProperties=feature_list
+        )
+
+    # 2. Get variable importance AND optional accuracy in a single getInfo() call
+    def _get_importance_and_accuracy(
+        self, classifier: ee.Classifier, feature_list: List[str]
+    ) -> Tuple[Dict[str, float], Optional[float]]:
+        """
+        Retrieve feature importance (and optionally test accuracy) in a
+        single round-trip to the Earth Engine servers.
+        """
+        try:
+            if self.track_accuracy and self.test_data is not None:
+                accuracy_val = (
+                    self.test_data
+                    .classify(classifier)
+                    .errorMatrix(self.class_property, "classification")
+                    .accuracy()
+                )
+                result = ee.Dictionary({
+                    "explanation": classifier.explain(),
+                    "accuracy": accuracy_val,
+                }).getInfo()
+
+                explanation = result.get("explanation", {})
+                accuracy = result.get("accuracy")
+            else:
+                explanation = classifier.explain().getInfo()
+                accuracy = None
+
+            raw_importance = explanation.get("importance", {})
+            # Ensure every feature in feature_list has an importance score (default 0.0)
+            importance = {f: float(raw_importance.get(f, 0.0)) for f in feature_list}
+
+            return importance, accuracy
+
+        except Exception as e:
+            raise RuntimeError(f"RF importance/accuracy extraction failed: {str(e)}")
+
+    def _calculate_step(self, n_current: int) -> int:
+        """
+        Calculate number of features to drop in the current iteration.
+        """
+        surplus = n_current - self.n_features_to_select
+        if surplus <= 0:
+            return 0
+
+        if self.adaptive:
+            # Coarse phase when far, fine-grained when near target
+            if surplus <= 2:
+                step_size = 1
+            else:
+                step_size = max(1, surplus // 2)
+        elif isinstance(self.step, float) and self.step < 1.0:
+            step_size = max(1, int(self.step * n_current))
+        else:
+            step_size = int(self.step)
+
+        return max(1, min(step_size, surplus))
+
+    # Implement Recursive Feature Elimination
+    def fit(self):
+        current_features = self.features.copy()
+
+        self._log(f"Starting RFE with {len(current_features)} features")
+        self._log(f"Target (min features): {self.n_features_to_select}")
+        self._log(f"Step configuration: step={self.step}, adaptive={self.adaptive}, auto_select={self.auto_select}")
+        self._log("-" * 50)
+
+        step_idx = 0
+        while len(current_features) > self.n_features_to_select:
+            step_idx += 1
+            classifier = self._train_classifier(current_features)
+
+            # Single getInfo() call retrieves importance + accuracy together
+            importance, acc = self._get_importance_and_accuracy(classifier, current_features)
+
+            # Store history for visualization & evaluation
+            self.feature_importance_history_.append(importance.copy())
+            self.feature_set_history_.append(current_features.copy())
+            self.n_features_history_.append(len(current_features))
+
+            if self.track_accuracy and acc is not None:
+                self.accuracy_history_.append(acc)
+                self._log(f"Features: {len(current_features)} | Acc: {acc:.4f}")
+            else:
+                self._log(f"Features: {len(current_features)}")
+
+            # Sort features by ascending importance (lowest importance eliminated first)
+            ranked = sorted(importance.items(), key=lambda x: x[1])
+
+            n_remove = self._calculate_step(len(current_features))
+            to_remove = [f for f, _ in ranked[:n_remove]]
+
+            self._log(f"Removing ({len(to_remove)}): {to_remove}")
+
+            for f in to_remove:
+                current_features.remove(f)
+                self.elimination_order_.append(f)
+                self.elimination_step_[f] = step_idx
+
+        # Final evaluation: train and evaluate on the final remaining features
+        self._log(f"Evaluating final target feature set ({len(current_features)} features)...")
+        final_classifier = self._train_classifier(current_features)
+        final_importance, final_acc = self._get_importance_and_accuracy(final_classifier, current_features)
+
+        self.feature_importance_history_.append(final_importance.copy())
+        self.feature_set_history_.append(current_features.copy())
+        self.n_features_history_.append(len(current_features))
+
+        if self.track_accuracy and final_acc is not None:
+            self.accuracy_history_.append(final_acc)
+            self._log(f"Features: {len(current_features)} | Acc: {final_acc:.4f}")
+        else:
+            self._log(f"Features: {len(current_features)}")
+
+        # Auto-selection of best feature subset based on validation accuracy
+        if self.track_accuracy and self.auto_select and self.accuracy_history_:
+            max_acc = max(self.accuracy_history_)
+            # If multiple subsets achieve peak accuracy, pick the most parsimonious (fewer features)
+            best_idx = None
+            for idx, acc_val in enumerate(self.accuracy_history_):
+                if acc_val == max_acc:
+                    best_idx = idx
+
+            self.best_accuracy_ = max_acc
+            self.best_features_ = self.feature_set_history_[best_idx].copy()
+            self.best_n_features_ = len(self.best_features_)
+            self.selected_features_ = self.best_features_.copy()
+            self._log(f"Auto-selected optimal feature set: {self.best_n_features_} features (Accuracy: {self.best_accuracy_:.4f})")
+        else:
+            self.selected_features_ = current_features.copy()
+            self.best_features_ = self.selected_features_.copy()
+            if self.accuracy_history_:
+                self.best_accuracy_ = self.accuracy_history_[-1]
+            self.best_n_features_ = len(self.selected_features_)
+
+        self._log("-" * 50)
+        self._log(f"Final Selected features ({len(self.selected_features_)}):")
+        for f in self.selected_features_:
+            self._log(f"  - {f}")
+
+        return self
+
+    # ------------------------------------------------------------------
+    def get_selected_features(self) -> List[str]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.selected_features_.copy()
+
+    def get_ranking(self) -> Dict[str, int]:
+        """
+        Rank 1 = selected features.
+        Higher rank = eliminated earlier (less important).
+        Features eliminated in the same round share the same rank.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        ranking = {}
+        for f in self.features:
+            if f in self.selected_features_:
+                ranking[f] = 1
+
+        # Group eliminated features by step to give tied ranks
+        eliminated = [f for f in self.features if f not in self.selected_features_]
+        if eliminated:
+            steps_ordered = sorted(
+                list(set(self.elimination_step_.get(f, 0) for f in eliminated)),
+                reverse=True
+            )
+            step_to_rank = {s: rank for rank, s in enumerate(steps_ordered, start=2)}
+
+            for f in eliminated:
+                s = self.elimination_step_.get(f, 0)
+                ranking[f] = step_to_rank.get(s, len(steps_ordered) + 2)
+
+        return ranking
+
+    def get_support(self) -> Dict[str, bool]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        return {f: (f in self.selected_features_) for f in self.features}
+
+    # ------------------------------------------------------------------
+    # Visualization methods for Streamlit
+    # ------------------------------------------------------------------
+    def plot_accuracy_curve(self, figsize: Tuple[int, int] = (10, 6)):
+        """
+        Plot accuracy vs number of features curve.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if not self.accuracy_history_:
+            raise RuntimeError("No accuracy data. Set track_accuracy=True and call fit() first")
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        # Sort histories by number of features ascending for natural left-to-right plot
+        sorted_pairs = sorted(zip(self.n_features_history_, self.accuracy_history_), key=lambda x: x[0])
+        n_feats_sorted, acc_sorted = zip(*sorted_pairs)
+
+        ax.plot(
+            n_feats_sorted,
+            acc_sorted,
+            marker='o',
+            linewidth=2,
+            markersize=6,
+            color='#1f77b4',
+            label='Accuracy'
+        )
+
+        # Highlight auto-selected or target number of features
+        if self.best_n_features_ is not None and self.auto_select:
+            ax.axvline(
+                x=self.best_n_features_,
+                color='green',
+                linestyle='-',
+                linewidth=2,
+                label=f'Optimal: {self.best_n_features_} features ({self.best_accuracy_:.4f})'
+            )
+            ax.scatter(
+                [self.best_n_features_],
+                [self.best_accuracy_],
+                color='green',
+                s=100,
+                zorder=5
+            )
+
+        if self.n_features_to_select != self.best_n_features_:
+            ax.axvline(
+                x=self.n_features_to_select,
+                color='red',
+                linestyle='--',
+                linewidth=1.5,
+                label=f'Target Min: {self.n_features_to_select} features'
+            )
+
+        ax.set_xlabel('Number of Features', fontsize=12)
+        ax.set_ylabel('Accuracy', fontsize=12)
+        ax.set_title('RFE: Accuracy vs Number of Features', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        plt.tight_layout()
+        return fig
+
+    def plot_feature_rankings(self, figsize: Tuple[int, int] = (10, 8)):
+        """
+        Plot feature rankings as horizontal bar chart.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        ranking = self.get_ranking()
+        ranking_sorted = sorted(ranking.items(), key=lambda x: (x[1], x[0]))
+        features, ranks = zip(*ranking_sorted)
+
+        fig, ax = plt.subplots(figsize=figsize)
+
+        colors = ['#2ca02c' if r == 1 else '#d62728' for r in ranks]
+        ax.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+
+        ax.set_yticks(range(len(features)))
+        ax.set_yticklabels(features, fontsize=10)
+        ax.set_xlabel('Rank (1 = Selected)', fontsize=12)
+        ax.set_title('Feature Rankings', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='x')
+        ax.invert_yaxis()  # Best features on top
+
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='#2ca02c', alpha=0.7, label='Selected'),
+            Patch(facecolor='#d62728', alpha=0.7, label='Eliminated')
+        ]
+        ax.legend(handles=legend_elements, loc='lower right')
+
+        plt.tight_layout()
+        return fig
+
+    def plot_rfe_summary(self, figsize: Tuple[int, int] = (15, 6)):
+        """
+        Combined plot showing both accuracy curve and feature rankings.
+        Returns matplotlib figure for Streamlit integration.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+        # Plot 1: Accuracy curve
+        if self.accuracy_history_:
+            sorted_pairs = sorted(zip(self.n_features_history_, self.accuracy_history_), key=lambda x: x[0])
+            n_feats_sorted, acc_sorted = zip(*sorted_pairs)
+
+            ax1.plot(
+                n_feats_sorted,
+                acc_sorted,
+                marker='o',
+                linewidth=2,
+                markersize=6,
+                color='#1f77b4',
+                label='Accuracy'
+            )
+            if self.best_n_features_ is not None and self.auto_select:
+                ax1.axvline(
+                    x=self.best_n_features_,
+                    color='green',
+                    linestyle='-',
+                    linewidth=2,
+                    label=f'Optimal ({self.best_n_features_} feats)'
+                )
+            ax1.set_xlabel('Number of Features', fontsize=12)
+            ax1.set_ylabel('Accuracy', fontsize=12)
+            ax1.set_title('Accuracy vs Number of Features', fontsize=14)
+            ax1.grid(True, alpha=0.3)
+            ax1.legend()
+        else:
+            ax1.text(0.5, 0.5, 'No accuracy data\n(set track_accuracy=True)',
+                     ha='center', va='center', transform=ax1.transAxes, fontsize=12)
+            ax1.set_title('Accuracy Tracking Disabled', fontsize=14)
+
+        # Plot 2: Feature rankings
+        ranking = self.get_ranking()
+        ranking_sorted = sorted(ranking.items(), key=lambda x: (x[1], x[0]))
+        features, ranks = zip(*ranking_sorted)
+
+        colors = ['#2ca02c' if r == 1 else '#d62728' for r in ranks]
+        ax2.barh(range(len(features)), ranks, color=colors, alpha=0.7)
+        ax2.set_yticks(range(len(features)))
+        ax2.set_yticklabels(features, fontsize=9)
+        ax2.set_xlabel('Rank', fontsize=12)
+        ax2.set_title('Feature Rankings', fontsize=14)
+        ax2.grid(True, alpha=0.3, axis='x')
+        ax2.invert_yaxis()
+
+        plt.tight_layout()
+        return fig
+
+    def get_results_dataframe(self) -> pd.DataFrame:
+        """
+        Get comprehensive results as pandas DataFrame for Streamlit display.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        ranking = self.get_ranking()
+        support = self.get_support()
+
+        results_df = pd.DataFrame({
+            'Feature': list(ranking.keys()),
+            'Rank': [ranking[f] for f in ranking.keys()],
+            'Selected': [support[f] for f in ranking.keys()],
+            'Status': ['✅ Selected' if support[f] else '❌ Eliminated' for f in ranking.keys()]
+        })
+
+        # Add importance from the final evaluated model
+        if self.feature_importance_history_:
+            final_importance = self.feature_importance_history_[-1]
+            results_df['Final_Importance'] = results_df['Feature'].map(
+                lambda x: final_importance.get(x, 0.0)
+            )
+
+        results_df = results_df.sort_values(['Rank', 'Feature']).reset_index(drop=True)
+        return results_df
+
+    def get_accuracy_dataframe(self) -> pd.DataFrame:
+        """
+        Get accuracy history as pandas DataFrame for Streamlit display.
+        """
+        if not self.accuracy_history_:
+            raise RuntimeError("No accuracy data. Set track_accuracy=True and call fit() first")
+
+        return pd.DataFrame({
+            'Iteration': range(1, len(self.accuracy_history_) + 1),
+            'Number_of_Features': self.n_features_history_,
+            'Accuracy': self.accuracy_history_
+        })
+
+
+#=================================== Local RFECV Feature Selection ===================================
+class ProgressRF(BaseEstimator, ClassifierMixin):
+    """Lightweight scikit-learn RandomForest wrapper that reports each fit step."""
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        max_depth: Optional[int] = 12,
+        min_samples_leaf: int = 2,
+        random_state: int = 42,
+        n_jobs: int = 1,
+        on_fit: Optional[Callable[[], None]] = None,
+    ):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.on_fit = on_fit
+
+    def fit(self, X, y):
+        self.estimator_ = RandomForestClassifier(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
+        )
+        self.estimator_.fit(X, y)
+        self.classes_ = self.estimator_.classes_
+        if self.on_fit is not None:
+            self.on_fit()
+        return self
+
+    def predict(self, X):
+        return self.estimator_.predict(X)
+
+    def predict_proba(self, X):
+        return self.estimator_.predict_proba(X)
+
+    @property
+    def feature_importances_(self):
+        return self.estimator_.feature_importances_
+
+
+class RFE_CV:
+    """
+     Recursive Feature Elimination with Cross-Validation (RFECV)
+    using scikit-learn's RandomForestClassifier.
+
+    Extracts sampled training properties from Google Earth Engine once with
+    ``retainGeometry=False`` (or accepts a ``pandas.DataFrame`` directly),
+    runs ``RFECV`` locally to select the recommended feature stack, and omits
+    model accuracy outputs since scikit-learn's Random Forest differs from
+    Earth Engine's ``smileRandomForest``.
+    """
+
+    _GEE_BATCH_SIZE = 4000
+
+    def __init__(
+        self,
+        training_data: Union[ee.FeatureCollection, pd.DataFrame],
+        class_property: str,
+        features: List[str],
+        n_features_to_select: Optional[int] = None,
+        step: Union[int, float] = 1,
+        cv: int = 3,
+        n_trees: int = 50,
+        max_depth: Optional[int] = 12,
+        min_samples_leaf: int = 2,
+        seed: int = 42,
+        max_samples: Optional[int] = 5000,
+        n_jobs: int = 1,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        verbose: bool = True,
+    ):
+        self.training_data = training_data
+        self.class_property = class_property
+        self.features = list(dict.fromkeys(features))
+        self.n_features_to_select = (
+            n_features_to_select
+            if n_features_to_select is not None
+            else max(1, len(self.features) // 2)
+        )
+        self.step = step
+        self.cv = cv
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.seed = seed
+        self.max_samples = max_samples
+        self.n_jobs = n_jobs
+        self.progress_callback = progress_callback
+        self.verbose = verbose
+
+        if isinstance(self.training_data, ee.FeatureCollection):
+            ensure_ee_initialized()
+
+        self._validate_inputs()
+
+        # Results (populated after fit)
+        self.selected_features_: Optional[List[str]] = None
+        self.best_n_features_: Optional[int] = None
+        self.ranking_: Optional[Dict[str, int]] = None
+        self.support_: Optional[Dict[str, bool]] = None
+        self.feature_importances_: Optional[Dict[str, float]] = None
+
+    def _log(self, msg: str):
+        if self.verbose:
+            print(msg)
+        logger.info(msg)
+
+    def _validate_inputs(self):
+        if not isinstance(self.training_data, (ee.FeatureCollection, pd.DataFrame)):
+            raise TypeError("training_data must be an ee.FeatureCollection or pandas.DataFrame")
+
+        if not self.features:
+            raise ValueError("features must be a non-empty list of feature names")
+
+        if self.n_features_to_select < 1:
+            raise ValueError("n_features_to_select must be >= 1")
+
+        if self.n_features_to_select > len(self.features):
+            raise ValueError("n_features_to_select exceeds feature count")
+
+        if isinstance(self.step, bool) or not isinstance(self.step, (int, float)):
+            raise TypeError("step must be an integer >= 1 or a float in (0, 1)")
+
+        if isinstance(self.step, float):
+            if not (0.0 < self.step < 1.0):
+                raise ValueError("float step must be in (0, 1)")
+        elif self.step < 1:
+            raise ValueError("integer step must be >= 1")
+
+        if self.cv < 2:
+            raise ValueError("cv must be >= 2")
+
+        if self.n_trees < 1:
+            raise ValueError("n_trees must be >= 1")
+
+        if self.max_depth is not None and self.max_depth < 1:
+            raise ValueError("max_depth must be >= 1 or None")
+
+        if self.min_samples_leaf < 1:
+            raise ValueError("min_samples_leaf must be >= 1")
+
+        if self.max_samples is not None and self.max_samples < 1:
+            raise ValueError("max_samples must be >= 1 or None")
+
+    def _extract_dataframe(self) -> pd.DataFrame:
+        """
+        Extract features and class_property into a clean pandas DataFrame.
+        Drops geometries server-side, applies per-class
+        balanced capping on Earth Engine (for point and polygon
+        training data), and paginates via computeFeatures
+        """
+        cols = list(dict.fromkeys(self.features + [self.class_property]))
+
+        if isinstance(self.training_data, pd.DataFrame):
+            df = self.training_data.copy()
+        else:
+            fc = self.training_data.select(propertySelectors=cols, retainGeometry=False)
+            raw_features: List[Dict[str, Any]] = []
+
+            if self.max_samples is not None:
+                distinct_classes = fc.aggregate_array(self.class_property).distinct().getInfo() or []
+                if not distinct_classes:
+                    raise ValueError("training_data FeatureCollection is empty")
+                per_class_cap = max(2, self.max_samples // len(distinct_classes))
+                target_fc = ee.FeatureCollection(
+                    ee.List(distinct_classes).map(
+                        lambda c: fc.filter(ee.Filter.eq(self.class_property, c)).limit(per_class_cap)
+                    )
+                ).flatten()
+            else:
+                target_fc = fc
+
+            if self.max_samples is not None and self.max_samples <= self._GEE_BATCH_SIZE:
+                with tqdm(
+                    total=1,
+                    desc="Extracting GEE samples",
+                    unit="batch",
+                    disable=not self.verbose,
+                ) as pbar:
+                    info = target_fc.getInfo() or {}
+                    raw_features.extend(info.get("features", []))
+                    pbar.update(1)
+            else:
+                page_token = None
+                with tqdm(
+                    desc="Extracting GEE samples",
+                    unit="batch",
+                    disable=not self.verbose,
+                ) as pbar:
+                    while True:
+                        params: Dict[str, Any] = {
+                            "expression": target_fc,
+                            "pageSize": self._GEE_BATCH_SIZE,
+                        }
+                        if page_token:
+                            params["pageToken"] = page_token
+                        resp = ee.data.computeFeatures(params) or {}
+                        raw_features.extend(resp.get("features", []))
+                        pbar.update(1)
+                        page_token = resp.get("nextPageToken")
+                        if not page_token or (
+                            self.max_samples is not None and len(raw_features) >= self.max_samples
+                        ):
+                            break
+
+                if self.max_samples is not None:
+                    raw_features = raw_features[: self.max_samples]
+
+            if not raw_features:
+                raise ValueError("No features returned from Earth Engine")
+
+            df = pd.DataFrame([feat.get("properties", {}) for feat in raw_features])
+
+        missing = [c for c in cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Missing required columns in training_data: {missing}")
+
+        df = df[cols].copy()
+        for c in cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        before_len = len(df)
+        df = df.dropna(subset=cols).reset_index(drop=True)
+        dropped = before_len - len(df)
+        if dropped > 0:
+            self._log(f"Dropped {dropped} rows containing NaN/non-numeric values")
+
+        if isinstance(self.training_data, pd.DataFrame) and self.max_samples is not None and len(df) > self.max_samples:
+            class_counts = df[self.class_property].value_counts()
+            if (class_counts >= 2).all() and len(class_counts) <= self.max_samples:
+                df, _ = train_test_split(
+                    df,
+                    train_size=self.max_samples,
+                    stratify=df[self.class_property],
+                    random_state=self.seed,
+                )
+            else:
+                df = df.sample(n=self.max_samples, random_state=self.seed)
+            df = df.reset_index(drop=True)
+            self._log(f"Stratified-subsampled DataFrame to {len(df)} rows")
+
+        return df
+
+    def _estimate_total_fits(self, n_folds: int) -> int:
+        """Estimate total RandomForest fits during RFECV for progress reporting."""
+        n_curr = len(self.features)
+        rfe_steps = 1
+        while n_curr > self.n_features_to_select:
+            if isinstance(self.step, float):
+                drop_n = max(1, int(self.step * n_curr))
+            else:
+                drop_n = int(self.step)
+            drop_n = min(drop_n, n_curr - self.n_features_to_select)
+            n_curr -= drop_n
+            rfe_steps += 1
+        return (n_folds + 1) * rfe_steps + 1
+
+    def fit(self):
+        """
+        Run local RFECV and populate the recommended feature stack.
+        Does not compute or return model accuracy metrics.
+        """
+        df = self._extract_dataframe()
+        if len(df) < 2:
+            raise ValueError("Not enough valid samples after cleaning to run RFECV")
+
+        X = df[self.features].to_numpy(dtype=np.float64)
+        y = df[self.class_property].to_numpy()
+
+        class_counts = pd.Series(y).value_counts()
+        if len(class_counts) < 2:
+            raise ValueError("At least 2 distinct classes are required to run RFECV")
+
+        min_class_count = int(class_counts.min())
+        if min_class_count < 2:
+            raise ValueError("Each class must have at least 2 samples for cross-validation")
+
+        effective_cv = min(self.cv, min_class_count)
+        if effective_cv < self.cv:
+            self._log(
+                f"Adjusting cv from {self.cv} to {effective_cv} (smallest class has {min_class_count} samples)"
+            )
+
+        self._log(
+            f"Starting local RFECV on {len(df)} samples, {len(self.features)} features "
+            f"(min_features={self.n_features_to_select}, cv={effective_cv}, n_trees={self.n_trees})"
+        )
+
+        total_fits = self._estimate_total_fits(effective_cv)
+        completed_fits = 0
+
+        with tqdm(
+            total=total_fits,
+            desc="Running local RFECV",
+            unit="fit",
+            disable=not self.verbose,
+        ) as pbar:
+            def _on_fit():
+                nonlocal completed_fits
+                completed_fits += 1
+                if pbar.n < pbar.total:
+                    pbar.update(1)
+                if self.progress_callback is not None:
+                    self.progress_callback(completed_fits, total_fits, "rfecv")
+
+            estimator = ProgressRF(
+                n_estimators=self.n_trees,
+                max_depth=self.max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.seed,
+                n_jobs=self.n_jobs,
+                on_fit=_on_fit,
+            )
+            cv_splitter = StratifiedKFold(
+                n_splits=effective_cv, shuffle=True, random_state=self.seed
+            )
+            selector = RFECV(
+                estimator=estimator,
+                step=self.step,
+                min_features_to_select=self.n_features_to_select,
+                cv=cv_splitter,
+                scoring="accuracy",
+                n_jobs=self.n_jobs,
+            )
+            selector.fit(X, y)
+
+            if pbar.n < pbar.total:
+                pbar.update(pbar.total - pbar.n)
+
+        support_mask = [bool(s) for s in selector.support_]
+        ranks = [int(r) for r in selector.ranking_]
+
+        self.selected_features_ = [f for f, keep in zip(self.features, support_mask) if keep]
+        self.best_n_features_ = len(self.selected_features_)
+        self.support_ = {f: keep for f, keep in zip(self.features, support_mask)}
+        self.ranking_ = {f: r for f, r in zip(self.features, ranks)}
+
+        selected_importances = selector.estimator_.feature_importances_
+        imp_map = dict(zip(self.selected_features_, selected_importances))
+        self.feature_importances_ = {f: float(imp_map.get(f, 0.0)) for f in self.features}
+
+        self._log(f"Recommended feature stack ({self.best_n_features_} features):")
+        for f in self.selected_features_:
+            self._log(f"  - {f}")
+
+        return self
+
+    def get_selected_features(self) -> List[str]:
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.selected_features_.copy()
+
+    def get_ranking(self) -> Dict[str, int]:
+        if self.ranking_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.ranking_.copy()
+
+    def get_support(self) -> Dict[str, bool]:
+        if self.support_ is None:
+            raise RuntimeError("Call fit() first")
+        return self.support_.copy()
+
+    def select_bands(self, image: ee.Image) -> ee.Image:
+        """Return the input ee.Image subsetted to the recommended feature stack."""
+        if not isinstance(image, ee.Image):
+            raise TypeError("image must be an ee.Image")
+        return image.select(self.get_selected_features())
+
+    def get_results_dataframe(self) -> pd.DataFrame:
+        """Return feature selection rankings and support as a pandas DataFrame."""
+        if self.selected_features_ is None or self.ranking_ is None or self.support_ is None:
+            raise RuntimeError("Call fit() first")
+
+        results_df = pd.DataFrame({
+            "Feature": self.features,
+            "Rank": [self.ranking_[f] for f in self.features],
+            "Selected": [self.support_[f] for f in self.features],
+            "Status": [
+                "✅ Selected" if self.support_[f] else "❌ Eliminated"
+                for f in self.features
+            ],
+            "Importance": [
+                (self.feature_importances_ or {}).get(f, 0.0) for f in self.features
+            ],
+        })
+        return results_df.sort_values(
+            ["Rank", "Importance", "Feature"],
+            ascending=[True, False, True],
+        ).reset_index(drop=True)
+
+    def plot_feature_importance(
+        self,
+        figsize: Tuple[int, int] = (10, 8),
+        top_n: Optional[int] = None,
+        show_eliminated: bool = True,
+    ):
+        """
+        Plot Random Forest feature importance for the recommended feature stack
+        (and optionally eliminated features) as a horizontal bar chart.
+        """
+        if self.selected_features_ is None:
+            raise RuntimeError("Call fit() first")
+
+        if top_n is not None and top_n < 1:
+            raise ValueError("top_n must be >= 1 or None")
+
+        df = self.get_results_dataframe()
+        if not show_eliminated:
+            df = df[df["Selected"]].reset_index(drop=True)
+        if top_n is not None:
+            df = df.head(top_n).reset_index(drop=True)
+
+        if df.empty:
+            raise ValueError("No features available to plot")
+
+        features = df["Feature"].tolist()
+        importances = df["Importance"].tolist()
+        selected = df["Selected"].tolist()
+        ranks = df["Rank"].tolist()
+
+        fig, ax = plt.subplots(figsize=figsize)
+        colors = ["#2ca02c" if is_sel else "#d62728" for is_sel in selected]
+        y_pos = range(len(features))
+        ax.barh(y_pos, importances, color=colors, alpha=0.8)
+
+        max_imp = max(importances) if importances else 0.0
+        x_pad = max_imp * 0.02 if max_imp > 0 else 0.01
+        ax.set_xlim(0, max_imp * 1.22 if max_imp > 0 else 1.0)
+
+        for idx, (imp, is_sel, rank) in enumerate(zip(importances, selected, ranks)):
+            label = f"{imp:.4f} ({imp * 100:.1f}%)" if is_sel else f"Eliminated (Rank {rank})"
+            ax.text(
+                imp + x_pad,
+                idx,
+                label,
+                va="center",
+                fontsize=9,
+                color="#1b5e20" if is_sel else "#8e1c1c",
+            )
+
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(features, fontsize=10)
+        ax.set_xlabel("Relative Feature Importance (Gini)", fontsize=12)
+        ax.set_title("RFECV Model Feature Importance", fontsize=14, fontweight="bold")
+        ax.grid(True, alpha=0.3, axis="x")
+        ax.invert_yaxis()
+
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor="#2ca02c", alpha=0.8, label="Selected")]
+        if show_eliminated and any(not s for s in selected):
+            legend_elements.append(Patch(facecolor="#d62728", alpha=0.8, label="Eliminated"))
+        ax.legend(handles=legend_elements, loc="lower right")
+
+        plt.tight_layout()
+        return fig
