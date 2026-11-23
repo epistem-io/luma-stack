@@ -645,6 +645,11 @@ class MultitemporalAnalysis:
         reducer: str = 'median',
         scale: int = 30,
         max_buckets: int = 256,
+        temporal_segmentation: bool = False,
+        segmentation_method: str = 'landtrendr',
+        segmentation_driver_index: str = 'NBR',
+        segmentation_params: Optional[Dict[str, Any]] = None,
+        min_segmentation_years: int = 6,
     ):
         if aoi is None:
             raise ValueError("aoi must not be None.")
@@ -669,6 +674,11 @@ class MultitemporalAnalysis:
         self.reducer = reducer
         self.scale = scale
         self.max_buckets = max_buckets
+        self.temporal_segmentation = bool(temporal_segmentation)
+        self.segmentation_method = str(segmentation_method).strip().lower()
+        self.segmentation_driver_index = str(segmentation_driver_index).strip().upper()
+        self.segmentation_params = dict(segmentation_params) if segmentation_params else None
+        self.min_segmentation_years = int(min_segmentation_years)
 
         # Pipeline stage state
         self.optical_data: Optional[Dict[str, Any]] = None
@@ -691,47 +701,104 @@ class MultitemporalAnalysis:
         calculate_coverage: bool = False,
         sharpen_s2: bool = False,
         ccdc_images: Optional[Dict[str, ee.Image]] = None,
+        lt_image: Optional[ee.Image] = None,
     ) -> Dict[str, Any]:
         """
-        Acquire optical collections and build harmonized/histogram-matched composites
-        for all periods (`Module 1` + `imagery_correction.py`).
+        Acquire optical collections and build harmonized composites for all periods
+        (`Module 1` + `imagery_correction.py` + optional `temporal_segmentation.py`).
 
-        Future hook: if ``ccdc_images`` is supplied (e.g. `{period_label: ee.Image}`
-        from a CCDC synthetic generator), matching periods may bypass raw mosaic creation.
+        - When ``temporal_segmentation=False`` (default): builds harmonized median
+          composites with optional CDF ``histogram_match``.
+        - When ``temporal_segmentation=True``: builds despiked, gap-filled composites
+          via native GEE ``LandTrendr`` FTV (or pre-exported ``lt_image`` asset) and
+          skips post-FTV CDF histogram matching. Unsupported sensors (Sentinel-2 10m,
+          MSS) fall back to standard median compositing with a warning.
         """
         ensure_ee_initialized()
-        from .data_acquisition import Reflectance_Data, final_Image
+        from .data_acquisition import Reflectance_Data, final_Image, parse_date_input
 
-        rd = Reflectance_Data()
         period_dicts = [cfg.to_dict() for cfg in self.period_configs]
-
-        self.optical_data = rd.get_multitemporal_optical_data(
-            aoi=self.aoi,
-            periods=period_dicts,
-            harmonize_landsat=self.harmonize_landsat,
-            apply_brdf=self.apply_brdf,
-            apply_topo_correction=self.apply_topo_correction,
-            dem=self.dem,
-            include_thermal=include_thermal,
-            verbose=verbose,
-            compute_detailed_stats=compute_detailed_stats,
-        )
+        use_lt = False
+        if self.temporal_segmentation:
+            if self.segmentation_method != 'landtrendr':
+                raise ValueError(
+                    f"Unsupported segmentation_method '{self.segmentation_method}'. Supported: ['landtrendr']"
+                )
+            from .temporal_segmentation import LandTrendrCompositor
+            lt_comp = LandTrendrCompositor()
+            win_check = lt_comp.validate_and_resolve_window(
+                periods=period_dicts,
+                reference_period=self.reference_period,
+                min_years=self.min_segmentation_years,
+            )
+            if win_check['compatible']:
+                use_lt = True
+            else:
+                logger.warning(
+                    "Falling back to standard median compositing: %s", win_check['reason']
+                )
 
         fi = final_Image()
-        self.composites_result = fi.get_multitemporal_composites(
-            collections_by_period=self.optical_data,
-            aoi=self.aoi,
-            reference_period=self.reference_period,
-            reducer=self.reducer,
-            drop_aerosol=self.drop_aerosol,
-            harmonize_sensors=self.harmonize_sensors,
-            histogram_match=self.histogram_match,
-            scale=self.scale,
-            max_buckets=self.max_buckets,
-            sharpen_s2=sharpen_s2,
-            calculate_coverage=calculate_coverage,
-            verbose=verbose,
-        )
+        if use_lt:
+            max_cc = max(float(p.get('cloud_cover', 30)) for p in period_dicts)
+            self.composites_result = fi.get_landtrendr_composites(
+                aoi=self.aoi,
+                periods=period_dicts,
+                reference_period=self.reference_period,
+                driver_index=self.segmentation_driver_index,
+                min_years=self.min_segmentation_years,
+                cloud_cover=max_cc,
+                reducer=self.reducer,
+                apply_brdf=self.apply_brdf,
+                apply_topo_correction=self.apply_topo_correction,
+                dem=self.dem,
+                lt_params=self.segmentation_params,
+                lt_image=lt_image,
+                verbose=verbose,
+            )
+            # Populate period metadata so downstream SAR predictors inherit dates cleanly
+            self.optical_data = {
+                'periods': {
+                    cfg.label: {
+                        'collection': None,
+                        'thermal_collection': None,
+                        'stats': self.composites_result['metadata'].get(cfg.label, {}),
+                        'sensor': cfg.sensor,
+                        'start_date': parse_date_input(cfg.start_date, True),
+                        'end_date': parse_date_input(cfg.end_date, False),
+                    }
+                    for cfg in self.period_configs
+                },
+                'period_order': list(self.period_order),
+            }
+        else:
+            rd = Reflectance_Data()
+            self.optical_data = rd.get_multitemporal_optical_data(
+                aoi=self.aoi,
+                periods=period_dicts,
+                harmonize_landsat=self.harmonize_landsat,
+                apply_brdf=self.apply_brdf,
+                apply_topo_correction=self.apply_topo_correction,
+                dem=self.dem,
+                include_thermal=include_thermal,
+                verbose=verbose,
+                compute_detailed_stats=compute_detailed_stats,
+            )
+
+            self.composites_result = fi.get_multitemporal_composites(
+                collections_by_period=self.optical_data,
+                aoi=self.aoi,
+                reference_period=self.reference_period,
+                reducer=self.reducer,
+                drop_aerosol=self.drop_aerosol,
+                harmonize_sensors=self.harmonize_sensors,
+                histogram_match=self.histogram_match,
+                scale=self.scale,
+                max_buckets=self.max_buckets,
+                sharpen_s2=sharpen_s2,
+                calculate_coverage=calculate_coverage,
+                verbose=verbose,
+            )
 
         if ccdc_images:
             # Future hook for synthetic CCDC composite substitution per period

@@ -18,6 +18,7 @@ from .ee_config import (
 )
 import os
 import warnings
+from .multitemporal import PeriodConfig
 
 # Do not automatically initialize Earth Engine at import time
 # Users should call setup_earth_engine() or ensure_ee_initialized() when needed
@@ -183,11 +184,11 @@ __author__ = "Luma Developer Team"
 _LAZY_EXPORTS = {
     'BRDF_Correction': ('imagery_correction', 'BRDF_Correction'),
     'Topographic_Correction': ('imagery_correction', 'Topographic_Correction'),
-    'PeriodConfig': ('multitemporal', 'PeriodConfig'),
     'MultitemporalAnalysis': ('multitemporal', 'MultitemporalAnalysis'),
     'compute_multitemporal_predictors': ('multitemporal', 'compute_multitemporal_predictors'),
-    'ConsistencyAnalyzer': ('post_classification', 'ConsistencyAnalyzer'),
+    'consistency_analysis': ('post_classification', 'consistency_analysis'),
     'compute_log_loss_from_arrays': ('classification', 'compute_log_loss_from_arrays'),
+    'LandTrendr_fit': ('temporal_segmentation', 'LandTrendr_fit'),
 }
 
 
@@ -219,6 +220,7 @@ __all__ = [
     'PeriodConfig',
     'MultitemporalAnalysis',
     'compute_multitemporal_predictors',
-    'ConsistencyAnalyzer',
+    'consistency_analysis',
     'compute_log_loss_from_arrays',
+    'LandTrendr_fit',
 ]

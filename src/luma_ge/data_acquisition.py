@@ -1357,7 +1357,7 @@ class Reflectance_Data:
         dataset: str = 'HLS',
         cloud_cover: int = 30,
         mask_high_aerosol: bool = True,
-        scale_reflectance: bool = True,
+        scale_reflectance: bool = False,
         verbose: bool = True,
         compute_detailed_stats: bool = True,
     ):
@@ -2387,17 +2387,10 @@ class final_Image:
             'coverage': coverage_stats
         }
 
-    # =========================================================================
-    # CDF Histogram Matching & Multitemporal Composite Harmonization
-    # =========================================================================
-    def histogram_match(
-        self,
-        source_image: ee.Image,
-        reference_image: ee.Image,
-        region,
-        bands: Optional[List[str]] = None,
-        scale: int = 30,
-        max_buckets: int = 256,
+    #CDF Histogram Matching & Multitemporal Composite Harmonization
+    #multitemporal analysis function: histogram matching
+    def histogram_match(self, source_image: ee.Image, reference_image: ee.Image, 
+                        region, bands: Optional[List[str]] = None, scale: int = 30, max_buckets: int = 256,
     ) -> ee.Image:
         """
         Perform server-side piecewise-linear Cumulative Distribution Function (CDF)
@@ -2429,6 +2422,8 @@ class final_Image:
         ee.Image
             ``source_image`` with ``bands`` replaced by their histogram-matched
             counterparts and all non-matched bands & properties preserved.
+        Reference
+        https://developers.google.com/earth-engine/tutorials/community/histogram-matching
         """
         if bands is None:
             bands = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
@@ -2517,21 +2512,18 @@ class final_Image:
         if sensor_key in ('L1_RAW', 'L2_RAW', 'L3_RAW'):
             return ['GREEN', 'RED', 'NIR1', 'NIR2']
         return None
-
-    def get_multitemporal_composites(
-        self,
-        collections_by_period: dict,
-        aoi,
-        reference_period: str = 'baseline',
-        reducer: str = 'median',
-        drop_aerosol: bool = True,
-        harmonize_sensors: bool = True,
+    #multitemporal analysis function: batch process composites
+    def get_multitemporal_composites(self, collections_by_period: dict, aoi,
+        reference_period: str = 'baseline', #use for histogram macthing reference 
+        reducer: str = 'median', #median reducer for both
+        drop_aerosol: bool = True, #drop aerosol from landsat 8/9, not usefull for older sensor
+        harmonize_sensors: bool = True, 
         histogram_match: bool = True,
         scale: int = 30,
         max_buckets: int = 256,
         sharpen_s2: bool = False,
         calculate_coverage: bool = False,
-        coverage_scale: int = 30,
+        coverage_scale: int = 30, #change to 10m/20m for sentinel
         verbose: bool = True,
     ) -> dict:
         """
@@ -2707,6 +2699,39 @@ class final_Image:
             'period_order': period_order,
             'histogram_matched': histogram_match,
         }
+    #wrapper for landtrendr temporal segmentation
+    def get_landtrendr_composites(self, aoi, periods, reference_period: str = 'baseline', 
+                                  driver_index: str = 'NBR',
+        min_years: int = 6,
+        seasonal_window=None,
+        cloud_cover: float = 40.0,
+        reducer: str = 'median',
+        apply_brdf: bool = False,
+        apply_topo_correction: bool = False,
+        dem=None,
+        lt_params=None,
+        lt_image=None,
+        verbose: bool = True,
+    ) -> dict:
+        """Thin Module 1 entry point delegating to ``LandTrendrCompositor``."""
+        from .temporal_segmentation import LandTrendr_fit
+        compositor = LandTrendr_fit(log_level=self.logger.level)
+        return compositor.generate_multitemporal_composites(
+            aoi=aoi,
+            periods=periods,
+            reference_period=reference_period,
+            driver_index=driver_index,
+            min_years=min_years,
+            seasonal_window=seasonal_window,
+            cloud_cover=cloud_cover,
+            reducer=reducer,
+            apply_brdf=apply_brdf,
+            apply_topo_correction=apply_topo_correction,
+            dem=dem,
+            lt_params=lt_params,
+            lt_image=lt_image,
+            verbose=verbose,
+        )
 #Class helper for managing visualization parameters and band combinations originally
 class Vis_Params:
     """
