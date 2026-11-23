@@ -15,22 +15,14 @@ import zipfile
 import tempfile
 import os
 import geopandas as gpd
+from luma_ge import ensure_ee_initialized
 
-#Earth Engine initialization with fallback
-try:
-    from luma_ge import ensure_ee_initialized
-except ImportError:
-    def ensure_ee_initialized():
-        """Basic Earth Engine initialization fallback."""
-        try:
-            ee.data.getAssetRoots()
-        except Exception:
-            ee.Initialize()
-
+#configure logging for info
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 #Sampling Design
+#sample size calculator class, which is used to calculate the required sample size for each stratum (class) based on the expected accuracy and standard error. 
 class sample_size_calculator:
     """Calculator for reference sample sizes using stratified random sampling.
 
@@ -78,7 +70,7 @@ class sample_size_calculator:
                     reducer=ee.Reducer.frequencyHistogram(),
                     geometry=geometry,
                     scale=30,
-                    maxPixels=1e9,
+                    maxPixels=1000000000,
                     tileScale=4
                 )
 
@@ -306,7 +298,7 @@ class sample_size_calculator:
         not class names.
         """
         geojson = samples.getInfo()
-        gdf = gpd.GeoDataFrame.from_features(geojson['features'])
+        gdf = gpd.GeoDataFrame.from_features(geojson['features']) # type: ignore
         gdf.set_crs(epsg=4326, inplace=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -332,8 +324,7 @@ class validation_error_flag:
     All methods are stateless utilities grouped here for organisational clarity
     and future extensibility (e.g. adding per-class error breakdown).
     """
-
-    def __init__(self, class_names: Dict[int, str] = None):
+    def __init__(self, class_names: Dict[int, str] = None): # type: ignore
         """
         Parameters
         ----------
@@ -446,7 +437,7 @@ class thematic_accuracy:
             'overall_accuracy', 'kappa', 'producer_accuracy',
             'user_accuracy', 'f1_scores', 'confusion_matrix'
         ]
-
+    #validate input prior to calculations
     def validate_assessment_inputs(
         self,
         lcmap: ee.Image,
@@ -474,11 +465,11 @@ class thematic_accuracy:
         """
         try:
             band_names = lcmap.bandNames().getInfo()
-            if 'classification' not in band_names:
+            if 'classification' not in band_names: # type: ignore
                 return False, "Land cover map must contain 'classification' band"
 
             properties = validation_data.first().propertyNames().getInfo()
-            if class_property not in properties:
+            if class_property not in properties: # type: ignore
                 return False, f"Class property '{class_property}' not found in validation data"
 
             if not isinstance(scale, (int, float)) or scale <= 0:
@@ -488,7 +479,7 @@ class thematic_accuracy:
 
         except Exception as e:
             return False, f"Validation error: {str(e)}"
-
+    #core: functioon to calculate overall accuracy confidence interval using normal approximation
     def _calculate_confidence_interval(
         self,
         n_correct: int,
@@ -520,7 +511,8 @@ class thematic_accuracy:
         margin = z * se
 
         return max(0.0, p - margin), min(1.0, p + margin)
-
+    #note: EE did not have built-in F1-score metric
+    #manual calculattion of F1 score for each class based on producer and user accuracy
     def _calculate_f1_scores(
         self,
         producer_accuracy: List[float],
@@ -544,7 +536,7 @@ class thematic_accuracy:
             2 * (pa * ua) / (pa + ua) if (pa + ua) > 0 else 0.0
             for pa, ua in zip(producer_accuracy, user_accuracy)
         ]
-
+    #retrieve the confusion matrix and extract relevant metrics from it
     def _extract_confusion_matrix_data(
         self,
         confusion_matrix: ee.ConfusionMatrix
@@ -592,7 +584,7 @@ class thematic_accuracy:
 
         except Exception as e:
             raise RuntimeError(f"Failed to extract confusion matrix data: {str(e)}")
-
+    #core: function to run the accuracy assessment using the validation data and the classified map
     def run_accuracy_assessment(
         self,
         lcmap: ee.Image,
@@ -633,21 +625,19 @@ class thematic_accuracy:
                 properties=[class_property],
                 scale=scale,
                 geometries=False,
-                tileScale=4
-            )
-
+                tileScale=4)
+            #build confusion matrix
             confusion_matrix = validation_sample.errorMatrix(class_property, 'classification')
             cm_data = self._extract_confusion_matrix_data(confusion_matrix)
-
             n_correct = int(np.trace(np.array(cm_data['cm_array'])))
             n_total = int(np.sum(np.array(cm_data['cm_array'])))
             ci_lower, ci_upper = self._calculate_confidence_interval(n_correct, n_total, confidence)
-
+            #calculate f1 scores
             f1_scores = self._calculate_f1_scores(
                 cm_data['producers_accuracy'],
                 cm_data['user_accuracy']
             )
-
+            #return relevant metrics
             return True, {
                 'overall_accuracy': cm_data['overall_accuracy'],
                 'kappa': cm_data['kappa'],
@@ -668,6 +658,8 @@ class thematic_accuracy:
             return False, {"error": error_msg}
 
     @staticmethod
+    #since original value are in decimal
+    #this function multiply by 100
     def format_accuracy_summary(results: Dict[str, Any]) -> Dict[str, str]:
         """Format accuracy results for display.
 
@@ -693,7 +685,8 @@ class thematic_accuracy:
             ),
             'sample_size': str(results['n_total'])
         }
-
+    #core function to run the accuracy assessment across multiple mapping periods
+    #will be used in multitemporal analysis code
     def run_multitemporal_assessment(
         self,
         maps_by_period: Dict[str, ee.Image],

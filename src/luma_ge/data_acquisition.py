@@ -66,8 +66,8 @@ def parse_date_input(date_input: Union[int, str], is_start: bool = True) -> str:
 
 #MODULE-LEVEL CONSTANTS
 #Maximum number of images to retrieve from Earth Engine, prevents computation timeout errors for large collections
-MAX_COLLECTION_SIZE = 250
-#Default pixel scale for Landsat imagery (meters), Landsat 4-9: 30m, Landsat 1-3 MSS: 60m
+MAX_COLLECTION_SIZE = 300
+#Default pixel scale for Landsat imagery (meters), Landsat 4-9: 30m, Landsat 1-3 MSS: 60m, Sentinel-2 10/20m
 DEFAULT_COVERAGE_SCALE = 30
 #Maximum pixels for reduce operations. Prevents memory errors on large area computations
 DEFAULT_MAX_PIXELS = 1e9
@@ -187,7 +187,8 @@ class Reflectance_Data:
             'description': 'Sentinel-2 Level-1C Top-of-Atmosphere (Harmonized)',
         }
     }
-    # Define NASA Harmonized Landsat Sentinel-2 (HLS v2.0) datasets (2013-present, 30m MGRS grid)
+    #Define NASA Harmonized Landsat Sentinel-2 (HLS v2.0) datasets (2013-present, 30m MGRS grid)
+    #alternative solution to sentinel for multitemporal analysis
     HLS_DATASETS = {
         'HLS': {
             'l30_collection': 'NASA/HLS/HLSL30/v002',
@@ -215,7 +216,8 @@ class Reflectance_Data:
             'description': 'NASA Harmonized Sentinel-2 MSI Surface Reflectance (HLSS30 v2.0, 30m)',
         },
     }
-    # Roy et al. (2016) Table 2 OLS coefficients transforming Landsat TM/ETM+ (L4/L5/L7) SR to OLI (L8/L9) SR
+    #Roy et al. (2016) Table 2 OLS coefficients transforming Landsat TM/ETM+ (L4/L5/L7) SR to OLI (L8/L9) SR
+    #BRDF correction coefficient
     ROY2016_COEFFICIENTS = {
         'slopes': {
             'BLUE': 0.9747,
@@ -443,8 +445,7 @@ class Reflectance_Data:
         ``GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED`` collection (e.g. via
         ``linkCollection``).  Pixels whose ``cs_cdf`` value is below
         *threshold* are masked out; all original image properties are
-        preserved.
-        further reading: https://medium.com/google-earth/all-clear-with-cloud-score-bd6ee2e2235e
+        preserved. further reading: https://medium.com/google-earth/all-clear-with-cloud-score-bd6ee2e2235e
 
         Parameters
         ----------
@@ -975,7 +976,7 @@ class Reflectance_Data:
                 initial_collection = toa_sub.merge(sr_sub)
                 collection = initial_collection
 
-            # --- Statistics ---
+            #Sentinel 2 retrieval statistics
             stats_object = Reflectance_Stats()
             initial_stats = stats_object.get_collection_statistics(
                 initial_collection,
@@ -1040,8 +1041,7 @@ class Reflectance_Data:
                     "Filtered collection created (use compute_detailed_stats=True for more information)"
                 )
 
-            # Stamp the requested date range so downstream modules (e.g. SAR predictors)
-            # can inherit the Module 1 date selection
+            #Stamp the requested date range so downstream modules (e.g. SAR predictors) can inherit the Module 1 date selection
             collection = collection.set({
                 'query_start_date': str(parse_date_input(start_date, True)),
                 'query_end_date': str(parse_date_input(end_date, False)),
@@ -1287,9 +1287,9 @@ class Reflectance_Data:
             'detailed_stats_computed': compute_detailed_stats
         }
 
-    # =========================================================================
     # HLS v2.0 (Harmonized Landsat Sentinel-2) & Cross-Sensor Harmonization
-    # =========================================================================
+    #support both Landsat and Sentinel-2
+    #cloud mask for HLS
     def mask_hls_fmask(self, image: ee.Image, mask_high_aerosol: bool = True) -> ee.Image:
         """
         Mask clouds, cloud adjacency, cloud shadows, snow/ice, and optionally high
@@ -1316,7 +1316,7 @@ class Reflectance_Data:
             mask = mask.And(low_med_aerosol)
 
         return ee.Image(image.updateMask(mask).copyProperties(image, image.propertyNames()))
-
+    #rename HLS bands according to Luma name conventions
     def rename_hls_bands(self, image: ee.Image, hls_type: str = 'HLS_L30') -> ee.Image:
         """
         Select and rename NASA HLS v2.0 optical bands to standardized semantic names:
@@ -1335,7 +1335,7 @@ class Reflectance_Data:
 
         renamed = image.select(src_bands, target_names)
         return ee.Image(renamed.copyProperties(image, image.propertyNames()))
-
+    #scale factor for HLS
     def apply_hls_scale_factors(self, image: ee.Image) -> ee.Image:
         """
         Apply the NASA HLS v2.0 surface reflectance scale factor (`0.0001`).
@@ -1348,7 +1348,7 @@ class Reflectance_Data:
         """
         scaled = image.multiply(0.0001).toFloat()
         return ee.Image(scaled.copyProperties(image, image.propertyNames()))
-
+    #core function to retrieve HLS data
     def get_hls_optical_data(
         self,
         aoi,
@@ -1468,7 +1468,8 @@ class Reflectance_Data:
             'filtered_collection': filtered_stats,
             'detailed_stats_computed': compute_detailed_stats,
         }
-
+    #core execution of Bidirectional Reflectance Distribution Function (BRDF) Harmonization
+    #harmonize spectral reflectance between two imagery sensor 
     def apply_brdf_harmonization(self, image: ee.Image, sensor_type: str) -> ee.Image:
         """
         Apply Roy et al. (2016) Bidirectional Reflectance Distribution Function (BRDF) 
@@ -1502,7 +1503,8 @@ class Reflectance_Data:
             .addBands(harmonized, bands, True)
             .copyProperties(image, image.propertyNames())
         )
-
+    #new function
+    #entry point for multitemporal anlaysis
     def get_multitemporal_optical_data(
         self,
         aoi,
@@ -1661,7 +1663,7 @@ class Reflectance_Data:
                         col, band_list=brdf_corrector.S2_OPTICAL_BANDS, verbose=verbose
                     )
                 if apply_topo_correction and topo_corrector is not None:
-                    col = topo_corrector.correct_collection(col, dem=dem, scale=10, verbose=verbose)
+                    col = topo_corrector.correct_collection(col, dem=dem, scale=10, band_list=topo_corrector.S2_OPTICAL_BANDS, verbose=verbose)
 
             elif sensor_key in self.HLS_DATASETS:
                 col, stats = self.get_hls_optical_data(
@@ -1704,7 +1706,7 @@ class Reflectance_Data:
         }
 class Reflectance_Stats:
     """
-    Class for fetching image collection statistics
+    Core methods for fetching image collection statistics and reporting
     """
     def __init__(self, log_level=logging.INFO):
         """
@@ -2614,7 +2616,7 @@ class final_Image:
                 sharpen=sharpen_s2,
                 verbose=verbose,
             )
-            comp_img = comp_res['image']
+            comp_img = comp_res['image'] # type: ignore
 
             # Scale S2_SR DN (0-10000) to [0, 1] reflectance when harmonized with SR datasets
             if harmonize_sensors and sensor_key in ('S2_SR', 'S2') and (has_reflectance_sensor or histogram_match):
@@ -2624,7 +2626,7 @@ class final_Image:
 
             expected_bands = self._expected_bands_for_sensor(sensor_key)
             if expected_bands is None:
-                expected_bands = list(comp_img.bandNames().getInfo())
+                expected_bands = list(comp_img.bandNames().getInfo()) # type: ignore
             else:
                 expected_bands = list(expected_bands)
 
@@ -2648,8 +2650,8 @@ class final_Image:
                     expected_bands.append('THERMAL')
 
             raw_composites[label] = comp_img.toFloat()
-            metadata_by_period[label] = comp_res['metadata']
-            coverage_by_period[label] = comp_res['coverage']
+            metadata_by_period[label] = comp_res['metadata'] # type: ignore
+            coverage_by_period[label] = comp_res['coverage'] # type: ignore
             bands_by_period[label] = expected_bands
 
         # Compute canonical ordered common band intersection across all periods

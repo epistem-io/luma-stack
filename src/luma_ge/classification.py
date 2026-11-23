@@ -16,6 +16,7 @@ from .ee_config import ensure_ee_initialized
 logger = logging.getLogger(__name__)
 
 #return class label name from scheme (module 2)
+#will be use to rename each class probability layer
 def extract_class_name_map(class_names: Any) -> Dict[int, str]:
     """Normalize a dict, DataFrame scheme, or class-dict list into ``{class_id: class_name}``."""
     if class_names is None:
@@ -134,11 +135,12 @@ def compute_log_loss_from_arrays(
         total_nll -= float(np.log(p))
     return total_nll / float(len(y_true_arr))
 
-## System Response 6.2 Classification
+#core function to perform raster feature extraction and train test split for machine learning tuning
 class FeatureExtraction:
     """
-    Perform feature extraction as one of the input for land cover classification. Three types of split is presented here:
+    Perform feature extraction as one of the input for land cover classification. Two types of split is presented here:
     Random Split: splitting the input data randomly based on specified split ratio 
+    Stratified random split: use class strata (class id) as the basis for splitting 
     """
     def __init__(self):
         """
@@ -229,6 +231,7 @@ class FeatureExtraction:
         return train_pix, test_pix
 
     ############################## 3. Multitemporal Feature Extraction ###########################
+    #wrapper to perform sample extraction on multitemporal analysis workflow
     def extract_multitemporal_samples(
         self,
         predictor_stacks: Dict[str, ee.Image],
@@ -282,10 +285,11 @@ class FeatureExtraction:
             return True
 
         provided = [p for p in order if _is_non_empty((training_splits or {}).get(p))]
-
+        #set model transfer as primary methods
         if mode == 'auto':
             if len(provided) == 1 and provided[0] == reference_period:
                 mode_used = 'model_transfer'
+            #if batch processing is implemeted
             elif len(provided) == len(order):
                 mode_used = 'batch'
             else:
@@ -405,11 +409,12 @@ class FeatureExtraction:
             'skipped_periods': skipped_periods,
         }
 
+#core methods to classification 
 class Generate_LULC:
     def __init__(self):
         """
-        Initialize the classification class to
-        Perform classification to generate Land Cover Land Use Map. The parameters used in the classification should be the result of hyperparameter tuning
+        Initialize the classification class to Perform classification to generate Land Cover Land Use Map. 
+        The parameters used in the classification should be the result of hyperparameter tuning
         """
 
         # Registry of prebuilt wall-to-wall maps per default scheme.
@@ -479,6 +484,8 @@ class Generate_LULC:
         else:
             return multiclass   
     ############################# 1. One-vs-rest (OVR) & Multiprobability Soft Classification ###########################
+    #note: OVR are legacy code from restore+
+    #multiprobability is primary methods for multitemporal analysis, lighter compared to OVR
     def soft_classification(self, training_data, class_property, image, include_final_map=True,
                                 ntrees = 100, v_split = None, min_leaf=1, seed=0, probability_scale = 100,
                                 mode: str = 'ovr', return_model: bool = False,
@@ -532,12 +539,13 @@ class Generate_LULC:
         if v_split is None:
             v_split = ee.Number(image.bandNames().size()).sqrt().ceil()
 
+        #if multitemporal analysis is used, multiprobability is the preferred method
         if mode == 'multiprobability':
             class_ids_raw = training_data.aggregate_array(class_property).distinct().sort().getInfo()
             class_ids = sorted(int(c) for c in class_ids_raw) # type: ignore
             if not class_ids:
                 raise ValueError("No distinct classes found in training_data.")
-
+            #initialize the classifier
             classifier = ee.Classifier.smileRandomForest(
                 numberOfTrees=ntrees,
                 variablesPerSplit=v_split,
@@ -550,6 +558,8 @@ class Generate_LULC:
                 classProperty=class_property,
                 inputProperties=image.bandNames(),
             )
+            #for multitemporal analysis
+            #rename the probability bands based on class scheme (module 2)
             prob_band_names, prob_band_map = build_prob_band_names(class_ids, class_names=class_names)
             stacked = self.classify_with_model(
                 trained_model=trained_model,
@@ -563,6 +573,7 @@ class Generate_LULC:
                 smoothing_radius=smoothing_radius,
                 smoothing_sigma=smoothing_sigma,
             )
+            #return the trained model for model transfer process
             if return_model:
                 return stacked, {
                     'model': trained_model,
@@ -583,6 +594,7 @@ class Generate_LULC:
                 _, ovr_prob_map = build_prob_band_names(sorted(parsed_names.keys()), class_names=parsed_names)
                 ovr_name_dict = ee.Dictionary({str(k): v for k, v in ovr_prob_map.items()})
         
+        #LEGENCY CODE FROM RESTORE+ PROJECT, OVR CLASSIFICATION
         #Define how to train one vs rest classification and map them all across the class
         def per_class(class_id):
             class_id = ee.Number(class_id)
@@ -622,6 +634,8 @@ class Generate_LULC:
 
             return prob_img.rename(band_name)
         # Map over classes to get probability bands
+        #implement kernel gaussian spatial filtering
+        #argmax use highest probability pixel, spatial filtering design to consider sourounding pixels instead of single pixel
         prob_imgs = class_list.map(per_class)
         prob_imgcol = ee.ImageCollection(prob_imgs)
         prob_stack = prob_imgcol.toBands()
@@ -789,7 +803,7 @@ class Generate_LULC:
                     raise ValueError(f"Could not extract feature importance. Original error: {str(e)}. Fallback error: {str(fallback_error)}")
             else:
                 raise ValueError(f"Could not extract feature importance: {str(e)}. Try providing training_data and class_property for fallback method.") 
-    
+    #core function to compute cross entropy loss function as accuracy (quality) metric
     def compute_log_loss(
         self,
         trained_model: ee.Classifier,
