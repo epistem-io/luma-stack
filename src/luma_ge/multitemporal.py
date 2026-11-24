@@ -822,6 +822,37 @@ class MultitemporalAnalysis:
             'common_bands': self.composites_result.get('common_bands'),
         }
 
+    def plot_landtrendr_trajectory(
+        self,
+        point: Any,
+        bands: Sequence[str] = ('SWIR1',),
+        show_driver: bool = True,
+        scale: Optional[int] = None,
+        show_target_years: bool = True,
+        **plot_kwargs: Any,
+    ) -> Tuple[Any, Any]:
+        """
+        Sample and plot an LT-GEE style observed vs. LandTrendr FTV trajectory
+        at ``point`` (`(lon, lat)` tuple or `ee.Geometry.Point`).
+
+        Requires ``acquire_imagery()`` to have been run with ``temporal_segmentation=True``.
+        Returns ``(fig, df)``.
+        """
+        if self.composites_result is None:
+            raise RuntimeError("Call acquire_imagery() with temporal_segmentation=True first.")
+        from .temporal_segmentation import LandTrendr_fit
+
+        lt_comp = LandTrendr_fit()
+        return lt_comp.plot_trajectory_from_result(
+            result=self.composites_result,
+            point=point,
+            bands=bands,
+            scale=scale or self.scale,
+            show_target_years=show_target_years,
+            show_driver=show_driver,
+            **plot_kwargs,
+        )
+
     def load_training_data(
         self,
         training_sources: Dict[str, Any],

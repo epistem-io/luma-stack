@@ -1,9 +1,9 @@
 """
-Temporal Segmentation Compositing Module (Module 1 Companion)
+Temporal Segmentation Compositing Module
 
-Provides opt-in native Google Earth Engine temporal segmentation compositing
-(``LandTrendr`` Fitted-To-Vertex / FTV) for multitemporal LULC mapping.
-
+Provides opt-in native Google Earth Engine temporal segmentation compositing for multitemporal LULC mapping.
+currently supported via LandTrendr (Landsat-based detection of Trends in Disturbance and Recovery) Fitted-To-Vertex / FTV.
+More algorithms may be added in the future.
 Architecture
 ------------
 Follows the same composition boundary as ``imagery_correction.py``:
@@ -35,6 +35,7 @@ LT_OPTICAL_BANDS: List[str] = ['BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2']
 DRIVER_INDEX_CHOICES = frozenset({'NBR', 'NDVI', 'NDMI'})
 #default parameter
 #ref: https://emapr.github.io/LT-GEE/lt-gee-requirements.html#importantsteps
+#recheck is requried
 DEFAULT_LANDTRENDR_PARAMS: Dict[str, Any] = {
     'maxSegments': 6,
     'spikeThreshold': 0.9,
@@ -117,7 +118,7 @@ def _compute_inverted_driver_band(image: ee.Image, driver_index: str = 'NBR') ->
 
     return idx_img.multiply(-1.0).toFloat().rename('lt_driver')
 
-#core class for LandtrendR
+#core class for LandTrendr
 class LandTrendr_fit:
     """
     Opt-in Module 1 temporal segmentation compositor powered by Google Earth
@@ -590,6 +591,7 @@ class LandTrendr_fit:
             )
 
         raw_by_year: Dict[int, ee.Image] = {}
+        annual_col: Optional[ee.ImageCollection] = None
         if lt_image is not None:
             lt_result = lt_image
             merged_params = dict(DEFAULT_LANDTRENDR_PARAMS)
@@ -655,6 +657,336 @@ class LandTrendr_fit:
                 'target_year_by_period': target_year_by_period,
                 'lt_params': merged_params,
                 'lt_result': lt_result,
+                'annual_collection': annual_col,
                 'used_precomputed_asset': lt_image is not None,
             },
         }
+
+    # ------------------------------------------------------------------
+    # 5. Pixel Trajectory Diagnostics
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _to_point(point: Any) -> Any:
+        """Accept a ``(lon, lat)`` tuple/list or an existing ``ee.Geometry``."""
+        if isinstance(point, (list, tuple)):
+            if len(point) != 2:
+                raise ValueError(f"point must be (lon, lat), got {point!r}.")
+            return ee.Geometry.Point([float(point[0]), float(point[1])])
+        return point
+
+    def sample_pixel_trajectory(
+        self,
+        lt_result: ee.Image,
+        point: Any,
+        years: Sequence[int],
+        bands: Sequence[str] = ('SWIR1',),
+        annual_collection: Optional[ee.ImageCollection] = None,
+        driver_index: str = 'NBR',
+        scale: int = 30,
+    ) -> Any:
+        """
+        Sample the LandTrendr trajectory at a single pixel into a ``pandas.DataFrame``.
+
+        Columns (indexed by ``year``):
+        - ``<DRIVER>_observed`` / ``<DRIVER>_fitted``: segmentation index from the
+          ``LandTrendr`` array (rows 1 and 2), shown in its natural orientation
+          (the internal ``-NBR`` / ``-NDVI`` / ``-NDMI`` sign is undone).
+        - ``is_vertex``: ``True`` for years LandTrendr picked as segment vertices (row 3).
+        - ``<band>_fitted``: FTV values from ``<band>_fit``.
+        - ``<band>_observed``: annual median composite values from ``annual_collection``
+          (``NaN`` when not supplied, e.g. pre-exported ``lt_image`` assets).
+
+        Raises ``ValueError`` if the pixel has no LandTrendr fit (masked, or fewer
+        clear years than ``minObservationsNeeded``).
+        """
+        import math
+        import pandas as pd
+
+        ensure_ee_initialized()
+        band_list = [str(b) for b in bands]
+        unknown = [b for b in band_list if b not in LT_OPTICAL_BANDS]
+        if unknown:
+            raise ValueError(f"Unsupported band(s) {unknown}. Supported: {LT_OPTICAL_BANDS}")
+
+        geom = self._to_point(point)
+        drv = str(driver_index).strip().upper()
+        year_index = [int(y) for y in years]
+
+        lt_vals = (
+            lt_result.select(['LandTrendr'] + [f"{b}_fit" for b in band_list])
+            .reduceRegion(reducer=ee.Reducer.first(), geometry=geom, scale=scale)
+            .getInfo()
+        ) or {}
+        lt_arr = lt_vals.get('LandTrendr')
+        if not lt_arr or len(lt_arr) < 4 or not lt_arr[0]:
+            raise ValueError(
+                "No LandTrendr fit at this point (masked pixel or fewer clear years than "
+                "minObservationsNeeded). Try another location inside the AOI."
+            )
+
+        yrs_row, obs_row, fit_row, vtx_row = lt_arr[0], lt_arr[1], lt_arr[2], lt_arr[3]
+        drv_obs = {int(y): -float(v) for y, v in zip(yrs_row, obs_row) if v is not None}
+        drv_fit = {int(y): -float(v) for y, v in zip(yrs_row, fit_row) if v is not None}
+        vtx = {int(y): bool(v) for y, v in zip(yrs_row, vtx_row) if v is not None}
+
+        df = pd.DataFrame(index=pd.Index(year_index, name='year'))
+        df[f"{drv}_observed"] = [drv_obs.get(y, math.nan) for y in year_index]
+        df[f"{drv}_fitted"] = [drv_fit.get(y, math.nan) for y in year_index]
+        df['is_vertex'] = [vtx.get(y, False) for y in year_index]
+
+        for b in band_list:
+            fit_vals = lt_vals.get(f"{b}_fit") or []
+            if len(fit_vals) == len(year_index):
+                df[f"{b}_fitted"] = [math.nan if v is None else float(v) for v in fit_vals]
+            else:
+                df[f"{b}_fitted"] = math.nan
+
+        observed: Dict[str, Dict[int, float]] = {b: {} for b in band_list}
+        if annual_collection is not None:
+            region = annual_collection.select(band_list).getRegion(geom, scale).getInfo() or []
+            if len(region) > 1:
+                header = region[0]
+                t_idx = header.index('time')
+                b_idx = {b: header.index(b) for b in band_list if b in header}
+                for row in region[1:]:
+                    if row[t_idx] is None:
+                        continue
+                    yr = datetime.datetime.fromtimestamp(
+                        row[t_idx] / 1000.0, tz=datetime.timezone.utc
+                    ).year
+                    for b, i in b_idx.items():
+                        if row[i] is not None:
+                            observed[b][yr] = float(row[i])
+        for b in band_list:
+            df[f"{b}_observed"] = [observed[b].get(y, math.nan) for y in year_index]
+
+        df.attrs['driver_index'] = drv
+        df.attrs['bands'] = band_list
+        return df
+
+    @staticmethod
+    def plot_pixel_trajectory(
+        df: Any,
+        bands: Optional[Sequence[str]] = None,
+        show_driver: bool = True,
+        highlight_years: Optional[Dict[str, int]] = None,
+        title: Optional[str] = None,
+        figsize: Optional[Tuple[float, float]] = None,
+    ) -> Any:
+        """
+        Plot an LT-GEE style sanity-check figure:
+        1. Top header strip showing ``<DRIVER>-identified vertex years`` as red dots.
+        2. For each requested series, an **Observed** panel (grey annual dots with
+           downward dashed arrows marking vertex years) above a **Fitted** panel
+           (black piecewise-linear FTV trajectory with grey non-vertex dots and red
+           vertex dots).
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Output of ``sample_pixel_trajectory``.
+        bands : sequence of str, optional
+            Bands to plot (defaults to ``df.attrs['bands']``).
+        show_driver : bool, default=True
+            Also plot the segmentation driver index (e.g. ``NBR``).
+        highlight_years : dict, optional
+            ``{period_label: year}`` mapping target periods to shade lightly.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+        """
+        import matplotlib.pyplot as plt
+
+        drv = df.attrs.get('driver_index', 'NBR')
+        band_list = list(bands) if bands is not None else list(df.attrs.get('bands', []))
+        series = ([drv] if show_driver else []) + band_list
+        if not series:
+            raise ValueError("Nothing to plot: pass bands or set show_driver=True.")
+
+        n_data_rows = 2 * len(series)
+        height_ratios = [0.42] + [1.0] * n_data_rows
+        fig, axes = plt.subplots(
+            1 + n_data_rows,
+            1,
+            sharex=True,
+            figsize=figsize or (10, 0.9 + 2.3 * n_data_rows),
+            gridspec_kw={'height_ratios': height_ratios},
+        )
+        vertex_years = list(df.index[df['is_vertex'].astype(bool)])
+        non_vertex_years = [y for y in df.index if y not in vertex_years]
+        years = list(df.index)
+
+        # Row 0: LT-GEE style "<DRIVER>-identified vertex years" strip
+        ax_hdr = axes[0]
+        ax_hdr.axhline(0.88, color='0.45', linewidth=1.0)
+        ax_hdr.axhline(0.12, color='0.45', linewidth=1.0)
+        if vertex_years:
+            ax_hdr.scatter(
+                vertex_years,
+                [0.5] * len(vertex_years),
+                color='#ff2a1a',
+                edgecolor='0.2',
+                s=85,
+                zorder=4,
+            )
+            label_x = vertex_years[0] + 0.35
+        else:
+            label_x = years[0]
+        ax_hdr.text(
+            label_x,
+            0.5,
+            f"  {drv}-identified vertex years",
+            va='center',
+            ha='left',
+            fontsize=9.5,
+            color='0.15',
+            bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 1.5},
+            zorder=3,
+        )
+        ax_hdr.set_ylim(0.0, 1.0)
+        ax_hdr.set_yticks([])
+        for sp in ('top', 'right', 'left', 'bottom'):
+            ax_hdr.spines[sp].set_visible(False)
+        ax_hdr.tick_params(axis='x', bottom=False)
+
+        for i, name in enumerate(series):
+            ax_obs = axes[1 + 2 * i]
+            ax_fit = axes[1 + 2 * i + 1]
+            obs = df[f"{name}_observed"]
+            fit = df[f"{name}_fitted"]
+
+            valid_vals = list(obs.dropna().values) + list(fit.dropna().values)
+            if valid_vals:
+                ymin, ymax = min(valid_vals), max(valid_vals)
+                pad = max((ymax - ymin) * 0.22, 0.015)
+            else:
+                ymin, ymax, pad = 0.0, 1.0, 0.1
+
+            # --- Observed panel ---
+            obs_valid = obs.dropna()
+            ax_obs.scatter(
+                obs_valid.index,
+                obs_valid.values,
+                color='0.52',
+                edgecolor='0.25',
+                s=58,
+                zorder=3,
+            )
+            y_top = ymax + pad
+            ax_obs.set_ylim(ymin - pad * 0.6, y_top)
+            for vy in vertex_years:
+                target_y = obs.loc[vy] if (vy in obs.index and obs.notna().loc[vy]) else fit.loc[vy]
+                if target_y == target_y:  # not NaN
+                    ax_obs.annotate(
+                        '',
+                        xy=(vy, float(target_y)),
+                        xytext=(vy, y_top),
+                        arrowprops={
+                            'arrowstyle': '-|>',
+                            'linestyle': ':',
+                            'linewidth': 1.1,
+                            'color': '0.15',
+                            'shrinkA': 0,
+                            'shrinkB': 5,
+                        },
+                        zorder=2,
+                    )
+            ax_obs.set_ylabel(f"{name}\nobserved")
+
+            # --- Fitted panel ---
+            fit_line = fit.dropna()
+            ax_fit.plot(fit_line.index, fit_line.values, color='black', linewidth=1.8, zorder=2)
+            fit_nv = fit.reindex(non_vertex_years).dropna()
+            if not fit_nv.empty:
+                ax_fit.scatter(
+                    fit_nv.index,
+                    fit_nv.values,
+                    color='0.52',
+                    edgecolor='0.25',
+                    s=48,
+                    zorder=3,
+                    label='annual fitted' if i == 0 else None,
+                )
+            fit_v = fit.reindex(vertex_years).dropna()
+            if not fit_v.empty:
+                ax_fit.scatter(
+                    fit_v.index,
+                    fit_v.values,
+                    color='#ff2a1a',
+                    edgecolor='0.15',
+                    s=72,
+                    zorder=4,
+                    label='segment vertex' if i == 0 else None,
+                )
+            ax_fit.set_ylim(ymin - pad * 0.6, ymax + pad)
+            ax_fit.set_ylabel(f"{name}\nLandTrendr fit")
+
+            for ax in (ax_obs, ax_fit):
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                ax.grid(axis='y', alpha=0.22)
+                for lbl, yr in (highlight_years or {}).items():
+                    ax.axvspan(yr - 0.35, yr + 0.35, color='tab:blue', alpha=0.10, zorder=0)
+
+        if highlight_years:
+            for lbl, yr in highlight_years.items():
+                axes[1].annotate(
+                    lbl,
+                    xy=(yr, 1.0),
+                    xycoords=('data', 'axes fraction'),
+                    ha='center',
+                    va='bottom',
+                    fontsize=8,
+                    color='tab:blue',
+                )
+
+        axes[-1].set_xlabel('Years')
+        axes[-1].set_xticks(years)
+        axes[-1].tick_params(axis='x', labelrotation=45 if len(years) > 12 else 0)
+        axes[2].legend(loc='best', fontsize=8, frameon=False)
+        if title:
+            fig.suptitle(title, y=1.01)
+        fig.tight_layout()
+        return fig
+
+    def plot_trajectory_from_result(
+        self,
+        result: Dict[str, Any],
+        point: Any,
+        bands: Sequence[str] = ('SWIR1',),
+        scale: int = 30,
+        show_target_years: bool = True,
+        **plot_kwargs: Any,
+    ) -> Tuple[Any, Any]:
+        """
+        Convenience wrapper: sample and plot a pixel trajectory directly from the
+        dict returned by ``generate_multitemporal_composites`` /
+        ``final_Image.get_landtrendr_composites`` (or ``MultitemporalAnalysis.acquire_imagery()``).
+
+        Returns
+        -------
+        tuple of (matplotlib.figure.Figure, pandas.DataFrame)
+        """
+        ts_meta = result.get('temporal_segmentation')
+        if ts_meta is None and isinstance(result.get('composites'), dict):
+            ts_meta = result['composites'].get('temporal_segmentation')
+        if not ts_meta:
+            raise ValueError(
+                "result has no 'temporal_segmentation' metadata. Run with "
+                "temporal_segmentation=True (LandTrendr FTV) first."
+            )
+
+        df = self.sample_pixel_trajectory(
+            lt_result=ts_meta['lt_result'],
+            point=point,
+            years=ts_meta['years'],
+            bands=bands,
+            annual_collection=ts_meta.get('annual_collection'),
+            driver_index=ts_meta.get('driver_index', 'NBR'),
+            scale=scale,
+        )
+        if show_target_years and 'highlight_years' not in plot_kwargs:
+            plot_kwargs['highlight_years'] = ts_meta.get('target_year_by_period')
+        fig = self.plot_pixel_trajectory(df, bands=bands, **plot_kwargs)
+        return fig, df
