@@ -2706,6 +2706,7 @@ class final_Image:
                         max_buckets=max_buckets,
                     )
                 else:
+                    assert pif_norm is not None
                     harmonized_composites[label] = pif_norm.normalize_image(
                         source_image=harmonized_composites[label],
                         reference_image=ref_img,

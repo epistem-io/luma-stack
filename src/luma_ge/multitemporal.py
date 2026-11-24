@@ -11,16 +11,10 @@ Provides:
 
 from dataclasses import dataclass
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
 import ee
 from .ee_config import ensure_ee_initialized
-from .predictor import (
-    RFE_CV,
-    SpectralCalculator,
-    distance_calculator,
-    predictor_catalog,
-    terrain_calculator,
-)
+from .predictor import (RFE_CV, SpectralCalculator, distance_calculator, predictor_catalog, terrain_calculator)
 from .sar import get_sar_data
 
 logger = logging.getLogger(__name__)
@@ -120,7 +114,8 @@ def compute_single_image_indices(
         )
 
     if available_bands is None:
-        available_bands = list(image.bandNames().getInfo())
+        band_names = image.bandNames().getInfo()
+        available_bands = list(band_names) if band_names is not None else []
 
     compatible, _ = filter_compatible_indices(index_list, available_bands, spectral_calc=calc)
     if not compatible:
@@ -290,7 +285,8 @@ def compute_multitemporal_predictors(
         )
         for label in period_order:
             entry = col_entries.get(label)
-            collections[label] = entry['collection'] if isinstance(entry, dict) and 'collection' in entry else entry
+            collection = entry.get('collection') if isinstance(entry, dict) else entry
+            collections[label] = cast(Optional[ee.ImageCollection], collection)
     else:
         for label in period_order:
             collections[label] = None
@@ -357,8 +353,8 @@ def compute_multitemporal_predictors(
     requested_indices = selections['spectral_indices']
     index_coefficients = selections['index_coefficients']
 
-    # Always determine common optical bands across all periods so both Batch and
-    # Model Transfer modes share the exact same predictor set
+    #Always determine common optical bands across all periods so both Batch and
+    #Model Transfer modes share the exact same predictor set
     if common_bands is None:
         band_sets = []
         for label in period_order:
@@ -424,7 +420,7 @@ def compute_multitemporal_predictors(
                 )
                 if can_use_collection:
                     spectral_img = spectral_calc.calculate_indices_with_collection(
-                        collection=col,
+                        collection=col, # type: ignore
                         aoi=aoi,
                         index_list=period_indices,
                         coefficients=index_coefficients,
@@ -687,18 +683,19 @@ class MultitemporalAnalysis:
         self.min_segmentation_years = int(min_segmentation_years)
 
         # Pipeline stage state
-        self.optical_data: Optional[Dict[str, Any]] = None
-        self.composites_result: Optional[Dict[str, Any]] = None
-        self.training_result: Optional[Dict[str, Any]] = None
-        self.landcover_df: Optional[Any] = None
-        self.separability_result: Optional[Dict[str, Any]] = None
-        self.predictors_result: Optional[Dict[str, Any]] = None
-        self.feature_extraction_result: Optional[Dict[str, Any]] = None
-        self.rfe_result: Optional[Dict[str, Any]] = None
-        self.classification_result: Optional[Dict[str, Any]] = None
-        self.accuracy_result: Optional[Dict[str, Any]] = None
+        self.optical_data: Optional[Dict[str, Any]] = None #module 1
+        self.composites_result: Optional[Dict[str, Any]] = None #module 1
+        self.training_result: Optional[Dict[str, Any]] = None #module 3
+        self.landcover_df: Optional[Any] = None #module 2
+        self.separability_result: Optional[Dict[str, Any]] = None #module 4
+        self.predictors_result: Optional[Dict[str, Any]] = None #module 5
+        self.feature_extraction_result: Optional[Dict[str, Any]] = None #module 6
+        self.rfe_result: Optional[Dict[str, Any]] = None #module 5
+        self.classification_result: Optional[Dict[str, Any]] = None #module 6
+        self.accuracy_result: Optional[Dict[str, Any]] = None #module 7
         self.mode: Optional[str] = None
 
+    #gateway to module 1 (wrapper for data_acquisition and imagery_correction)
     def acquire_imagery(
         self,
         include_thermal: bool = False,
@@ -762,7 +759,7 @@ class MultitemporalAnalysis:
                 lt_image=lt_image,
                 verbose=verbose,
             )
-            # Populate period metadata so downstream SAR predictors inherit dates cleanly
+            #Populate period metadata so downstream SAR predictors inherit dates cleanly
             self.optical_data = {
                 'periods': {
                     cfg.label: {
@@ -790,7 +787,7 @@ class MultitemporalAnalysis:
                 verbose=verbose,
                 compute_detailed_stats=compute_detailed_stats,
             )
-
+            #run the multitemporal compositing
             self.composites_result = fi.get_multitemporal_composites(
                 collections_by_period=self.optical_data,
                 aoi=self.aoi,
@@ -810,7 +807,7 @@ class MultitemporalAnalysis:
             )
 
         if ccdc_images:
-            # Future hook for synthetic CCDC composite substitution per period
+            #Future hook for synthetic CCDC composite substitution per period
             for label, syn_img in ccdc_images.items():
                 if label in self.composites_result.get('composites', {}) and syn_img is not None:
                     self.composites_result['composites'][label] = syn_img
@@ -821,11 +818,11 @@ class MultitemporalAnalysis:
             'period_order': self.period_order,
             'common_bands': self.composites_result.get('common_bands'),
         }
-
+    #temporal segementation visualization 
     def plot_landtrendr_trajectory(
         self,
         point: Any,
-        bands: Sequence[str] = ('SWIR1',),
+        bands: Sequence[str] = ('SWIR1',), #NIR can be saturated in high biomass forest (?)
         show_driver: bool = True,
         scale: Optional[int] = None,
         show_target_years: bool = True,
@@ -852,7 +849,7 @@ class MultitemporalAnalysis:
             show_driver=show_driver,
             **plot_kwargs,
         )
-
+    #load sample data for multitemporal analysis
     def load_training_data(
         self,
         training_sources: Dict[str, Any],
@@ -884,11 +881,11 @@ class MultitemporalAnalysis:
         self.mode = self.training_result['mode']
         self.feature_extraction_result = None
         return self.training_result
-
+    #predictor checks
     def check_predictor_availability(self) -> Dict[str, Dict[str, Any]]:
         """Check which predictors are available across all configured periods."""
         return predictor_catalog.check_multitemporal_availability(self.period_configs)
-
+    #separability analysis (module 4)
     def check_separability(
         self,
         class_property: str = 'class_id',
@@ -924,7 +921,7 @@ class MultitemporalAnalysis:
             training_by_period=self.training_result['training_by_period'],
             class_property=class_property,
             region=geom,
-            class_name_property=class_name_property,
+            class_name_property=class_name_property, # type: ignore
             scale=scale or self.scale,
             max_pixels_per_class=max_pixels_per_class,
             method=method,
@@ -934,7 +931,7 @@ class MultitemporalAnalysis:
             silhouette_metric=silhouette_metric,
         )
         return self.separability_result
-
+    #core function to compute predictor
     def compute_predictors(
         self,
         predictor_config: Dict[str, Any],
@@ -959,7 +956,7 @@ class MultitemporalAnalysis:
         )
         self.feature_extraction_result = None
         return self.predictors_result
-
+    #feature extraction
     def extract_features(
         self,
         class_property: str = 'class_id',
@@ -1006,6 +1003,7 @@ class MultitemporalAnalysis:
         )
         return self.feature_extraction_result
 
+    #run RFECV
     def run_feature_selection(
         self,
         class_property: str = 'class_id',
@@ -1032,10 +1030,14 @@ class MultitemporalAnalysis:
         if self.feature_extraction_result is None:
             self.extract_features(class_property=class_property, seed=seed)
 
-        common_features = list(self.predictors_result['common_feature_bands'])
-        sampled_splits = self.feature_extraction_result['sampled_splits']
+        feature_extraction_result = self.feature_extraction_result
+        if feature_extraction_result is None:
+            raise RuntimeError("Feature extraction did not produce a result.")
 
-        if not per_period_rfe or self.feature_extraction_result['mode_used'] == 'model_transfer':
+        common_features = list(self.predictors_result['common_feature_bands'])
+        sampled_splits = feature_extraction_result['sampled_splits']
+
+        if not per_period_rfe or feature_extraction_result['mode_used'] == 'model_transfer':
             ref_train_fc, _ = sampled_splits[self.reference_period]
             rfe = RFE_CV(
                 training_data=ref_train_fc,
@@ -1102,7 +1104,8 @@ class MultitemporalAnalysis:
             'rfe_objects': rfe_objs,
         }
         return self.rfe_result
-
+    
+    #executor for core classification
     def run_classification(
         self,
         class_property: str = 'class_id',
@@ -1147,15 +1150,15 @@ class MultitemporalAnalysis:
         lulc = Generate_LULC()
         common_bands = (
             self.predictors_result.get('common_feature_bands')
-            if self.feature_extraction_result['mode_used'] == 'model_transfer'
+            if self.feature_extraction_result['mode_used'] == 'model_transfer'  # type: ignore
             else None
         )
         resolved_names = class_names if class_names is not None else self.landcover_df
         self.classification_result = lulc.classify_multitemporal(
             predictor_stacks=self.predictors_result['predictor_stacks'],
-            training_splits=self.feature_extraction_result['sampled_splits'],
+            training_splits=self.feature_extraction_result['sampled_splits'],  # type: ignore
             class_property=class_property,
-            mode=self.feature_extraction_result['mode_used'],
+            mode=self.feature_extraction_result['mode_used'], # type: ignore
             reference_period=self.reference_period,
             classification_type=classification_type,
             soft_mode=soft_mode,
@@ -1173,7 +1176,7 @@ class MultitemporalAnalysis:
             smoothing_sigma=smoothing_sigma,
         )
         return self.classification_result
-
+    #executor for thematic accuracy assessment
     def assess_accuracy(
         self,
         validation_by_period: Dict[str, Optional[ee.FeatureCollection]],
@@ -1200,7 +1203,8 @@ class MultitemporalAnalysis:
             period_order=self.period_order,
         )
         return self.accuracy_result
-
+    
+    #executor for full pipeline
     def run_pipeline(
         self,
         training_sources: Dict[str, Any],

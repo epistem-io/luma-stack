@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 _FORBIDDEN_LOG_PENALTY = -1e6
 _PROB_EPSILON = 1e-6
 
-
+###Setup
 def _parse_int_id(val: Any) -> int:
     """Parse an integer class ID from int, float, or numeric string."""
     if isinstance(val, bool):
@@ -50,7 +50,6 @@ def _normalize_cell_weight(val: Any) -> float:
     if math.isnan(w) or w < 0.0 or w > 1.0:
         raise ValueError(f"Transition matrix weight must be in [0.0, 1.0], got {val!r}")
     return w
-
 
 def _normalize_rules(
     rules: Optional[Dict[Any, int]]
@@ -75,11 +74,11 @@ def _normalize_rules(
         normalized[pair] = int(target)
     return normalized
 
-
-class ConsistencyAnalyzer:
+#core methods to perform consistency analysis
+class consistency_analysis:
     """
     Multitemporal post-classification consistency validation, cross-tabulation,
-    and constrained correction (HMM/Viterbi + rule-based reclassification).
+    and constrained correction (Hidden Markov Model/Viterbi + rule-based reclassification).
     """
 
     def __init__(self, log_level: int = logging.INFO):
@@ -122,7 +121,22 @@ class ConsistencyAnalyzer:
             )
 
         # Normalize DataFrame index/columns when loaded from CSV or raw DataFrame
-        id_index_cols = [c for c in ('from_id', 'from', 'From', 'FROM', 'ID', 'id') if c in df.columns]
+        id_index_cols = [
+            c for c in df.columns
+            if str(c).strip() in ('from_id', 'from', 'From', 'FROM', 'ID', 'id', 'T1 \\ T2', 'T1/T2', 'T1')
+            or 't1' in str(c).strip().lower()
+        ]
+        if not id_index_cols and len(df.columns) > 1:
+            first_col = df.columns[0]
+            try:
+                _ = _parse_int_id(first_col)
+            except ValueError:
+                # First column has non-numeric header (e.g. 'T1 \ T2') and integer IDs in rows
+                try:
+                    _ = [_parse_int_id(v) for v in df[first_col].tolist()]
+                    id_index_cols = [first_col]
+                except Exception:
+                    pass
         if id_index_cols and not isinstance(df.index, pd.MultiIndex):
             df = df.set_index(id_index_cols[0])
         return df
@@ -238,7 +252,7 @@ class ConsistencyAnalyzer:
                 else:
                     class_ids = sorted(int(k) for k in parsed.keys())
 
-        validated = self.validate_transition_matrix(consistency_matrix, class_ids)
+        validated = self.validate_transition_matrix(consistency_matrix, class_ids) # type: ignore
         if not validated['valid']:
             raise ValueError(
                 f"Transition consistency matrix is missing pairs: {validated['missing_pairs'][:10]}"
@@ -570,7 +584,7 @@ class ConsistencyAnalyzer:
             backpointers.append(ee.Image.cat(bp_bands))
 
         # Backtrace from t = T - 1 down to 0
-        decoded_indices: List[Optional[ee.Image]] = [None] * n_steps
+        decoded_indices: List[ee.Image] = [ee.Image.constant(0)] * n_steps
         cur_idx = v_img.toArray().arrayArgmax().arrayGet(0)
         decoded_indices[-1] = cur_idx
 
@@ -667,7 +681,7 @@ class ConsistencyAnalyzer:
             reducer=ee.Reducer.sum(),
             geometry=geom,
             scale=scale,
-            maxPixels=1e13,
+            maxPixels=1e13, # type: ignore
             tileScale=4,
         ).getInfo() or {}
 
@@ -743,7 +757,7 @@ class ConsistencyAnalyzer:
                 corrected_past = self._run_hmm_anchored_pair(
                     past_map=past_map,
                     future_map=future_map,
-                    prob_bands=past_prob_bands,
+                    prob_bands=past_prob_bands, # type: ignore
                     validated_matrix=validated,
                     probability_scale=probability_scale,
                     spatial_smoothing=spatial_smoothing,
@@ -759,7 +773,7 @@ class ConsistencyAnalyzer:
                     )
                 decoded = self._run_viterbi_sequence(
                     soft_maps=[past_map, future_map],
-                    prob_bands_list=[past_prob_bands, future_prob_bands],
+                    prob_bands_list=[past_prob_bands, future_prob_bands], # type: ignore
                     validated_matrix=validated,
                     probability_scale=probability_scale,
                     spatial_smoothing=spatial_smoothing,
