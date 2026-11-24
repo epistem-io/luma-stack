@@ -642,6 +642,9 @@ class MultitemporalAnalysis:
         drop_aerosol: bool = True,
         harmonize_sensors: bool = True,
         histogram_match: bool = True,
+        radiometric_matching: Optional[str] = None,
+        pif_metric: str = 'sid',
+        pif_percentile: float = 10.0,
         reducer: str = 'median',
         scale: int = 30,
         max_buckets: int = 256,
@@ -671,6 +674,9 @@ class MultitemporalAnalysis:
         self.drop_aerosol = drop_aerosol
         self.harmonize_sensors = harmonize_sensors
         self.histogram_match = histogram_match
+        self.radiometric_matching = radiometric_matching
+        self.pif_metric = pif_metric
+        self.pif_percentile = pif_percentile
         self.reducer = reducer
         self.scale = scale
         self.max_buckets = max_buckets
@@ -724,8 +730,8 @@ class MultitemporalAnalysis:
                 raise ValueError(
                     f"Unsupported segmentation_method '{self.segmentation_method}'. Supported: ['landtrendr']"
                 )
-            from .temporal_segmentation import LandTrendrCompositor
-            lt_comp = LandTrendrCompositor()
+            from .temporal_segmentation import LandTrendr_fit
+            lt_comp = LandTrendr_fit()
             win_check = lt_comp.validate_and_resolve_window(
                 periods=period_dicts,
                 reference_period=self.reference_period,
@@ -793,6 +799,9 @@ class MultitemporalAnalysis:
                 drop_aerosol=self.drop_aerosol,
                 harmonize_sensors=self.harmonize_sensors,
                 histogram_match=self.histogram_match,
+                radiometric_matching=self.radiometric_matching,
+                pif_metric=self.pif_metric,
+                pif_percentile=self.pif_percentile,
                 scale=self.scale,
                 max_buckets=self.max_buckets,
                 sharpen_s2=sharpen_s2,

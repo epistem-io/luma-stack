@@ -2519,6 +2519,9 @@ class final_Image:
         drop_aerosol: bool = True, #drop aerosol from landsat 8/9, not usefull for older sensor
         harmonize_sensors: bool = True, 
         histogram_match: bool = True,
+        radiometric_matching: Optional[str] = None,
+        pif_metric: str = 'sid',
+        pif_percentile: float = 10.0,
         scale: int = 30,
         max_buckets: int = 256,
         sharpen_s2: bool = False,
@@ -2611,7 +2614,7 @@ class final_Image:
             comp_img = comp_res['image'] # type: ignore
 
             # Scale S2_SR DN (0-10000) to [0, 1] reflectance when harmonized with SR datasets
-            if harmonize_sensors and sensor_key in ('S2_SR', 'S2') and (has_reflectance_sensor or histogram_match):
+            if harmonize_sensors and sensor_key in ('S2_SR', 'S2') and (has_reflectance_sensor or histogram_match or (radiometric_matching in ('cdf', 'pif'))):
                 comp_img = ee.Image(
                     comp_img.multiply(0.0001).toFloat().copyProperties(comp_img, comp_img.propertyNames())
                 )
@@ -2673,21 +2676,46 @@ class final_Image:
                 img = img.select(common_bands)
             harmonized_composites[label] = img
 
-        # Perform server-side CDF histogram matching on optical bands (excluding THERMAL)
-        if histogram_match:
+        # Resolve relative radiometric matching mode ('cdf', 'pif', or 'none')
+        if radiometric_matching is not None:
+            rm_mode = str(radiometric_matching).strip().lower()
+            if rm_mode not in ('cdf', 'pif', 'none'):
+                raise ValueError(
+                    f"Unsupported radiometric_matching '{radiometric_matching}'. Expected 'cdf', 'pif', or 'none'."
+                )
+        else:
+            rm_mode = 'cdf' if histogram_match else 'none'
+
+        if rm_mode in ('cdf', 'pif'):
             ref_img = harmonized_composites[reference_period]
             match_bands = [b for b in common_bands if b != 'THERMAL']
+            pif_norm = None
+            if rm_mode == 'pif':
+                from .imagery_correction import PIF_Normalization
+                pif_norm = PIF_Normalization(log_level=self.logger.level)
             for label in period_order:
                 if label == reference_period:
                     continue
-                harmonized_composites[label] = self.histogram_match(
-                    source_image=harmonized_composites[label],
-                    reference_image=ref_img,
-                    region=geometry,
-                    bands=match_bands,
-                    scale=scale,
-                    max_buckets=max_buckets,
-                )
+                if rm_mode == 'cdf':
+                    harmonized_composites[label] = self.histogram_match(
+                        source_image=harmonized_composites[label],
+                        reference_image=ref_img,
+                        region=geometry,
+                        bands=match_bands,
+                        scale=scale,
+                        max_buckets=max_buckets,
+                    )
+                else:
+                    harmonized_composites[label] = pif_norm.normalize_image(
+                        source_image=harmonized_composites[label],
+                        reference_image=ref_img,
+                        region=geometry,
+                        bands=match_bands,
+                        metric=pif_metric,
+                        pif_percentile=pif_percentile,
+                        scale=scale,
+                        verbose=verbose,
+                    )
 
         return {
             'composites': harmonized_composites,
@@ -2697,7 +2725,8 @@ class final_Image:
             'common_bands': common_bands,
             'reference_period': reference_period,
             'period_order': period_order,
-            'histogram_matched': histogram_match,
+            'histogram_matched': rm_mode == 'cdf',
+            'radiometric_matching': rm_mode,
         }
     #wrapper for landtrendr temporal segmentation
     def get_landtrendr_composites(self, aoi, periods, reference_period: str = 'baseline', 

@@ -816,7 +816,7 @@ class Generate_LULC:
         Compute optional server-side multi-class Log Loss on a ``MULTIPROBABILITY``
         ``ee.Classifier`` against held-out ``test_data``.
 
-        Evaluates raw probability calibration ($-\frac{1}{N}\sum \log(\max(P(y_i), \epsilon))$)
+        Evaluates raw probability calibration
         without converting probabilities to hard labels, complementing Overall Accuracy
         especially when downstream HMM consistency analysis consumes log-probabilities.
         """

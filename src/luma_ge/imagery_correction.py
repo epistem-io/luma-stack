@@ -13,7 +13,7 @@ Source for SCSc & BRDF: Poortinga et al. (2018) https://doi.org/10.3390/rs110708
 import math
 import logging
 import ee
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from .ee_config import ensure_ee_initialized
 
 # IMAGERY CORRECTION MODULES
@@ -812,3 +812,256 @@ class BRDF_Correction:
             self.logger.info(f"Mapping BRDF correction over collection (bands={band_list}).")
 
         return collection.map(lambda img: self.correct_image(img, band_list=band_list, verbose=False))
+
+class PIF_Normalization:
+    """
+    Unsupervised Pseudo-Invariant Feature (PIF) relative radiometric normalization
+    between a historical/source composite and a baseline/reference composite.
+
+    Follows the Google Earth Engine community tutorial (*Pseudo-Invariant Feature
+    Matching*) with production guards for Landsat Collection 2 SR / HLS / Sentinel-2:
+
+    1. **Spectral Distance (``ee.Image.spectralDistance``):** Computes per-pixel
+       spectral dissimilarity (``'sid'`` Spectral Information Divergence, ``'sam'``
+       Spectral Angle Mapper, or ``'sed'`` Squared Euclidean Distance) across common
+       optical bands. For ``'sid'``, bands are clamped to ``>= 1e-4`` so slight
+       negative Landsat C2 SR pixels over water/shadows do not produce ``NaN``.
+    2. **Automatic PIF Mask (``ee.Reducer.percentile``):** Selects the most
+       spectrally invariant ``pif_percentile``% of pixels (default ``10%``) as
+       pseudo-invariant features — zero manual polygons required.
+    3. **Server-Side Linear Fit (``ee.Reducer.linearFit``):** Fits a per-band linear
+       transform (``y = scale * x + offset``) strictly on PIF pixels and applies it
+       to the full ``source_image``. Any band with a null or out-of-bounds slope
+       (outside ``scale_bounds``, default ``(0.5, 2.0)``) safely falls back to
+       identity (``scale=1.0, offset=0.0``) purely server-side.
+
+    Reference
+    ---------
+    https://developers.google.com/earth-engine/tutorials/community/pseudo-invariant-feature-matching
+    """
+
+    DEFAULT_OPTICAL_BANDS: List[str] = [
+        'BLUE', 'GREEN', 'RED', 'NIR', 'SWIR1', 'SWIR2'
+    ]
+    SUPPORTED_METRICS = ('sid', 'sam', 'sed')
+
+    def __init__(self, log_level: int = logging.INFO) -> None:
+        ensure_ee_initialized()
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(log_level)
+        self.logger.info("PIF_Normalization initialised.")
+
+    @classmethod
+    def _validate_params(
+        cls,
+        metric: str,
+        pif_percentile: float,
+        scale_bounds: Tuple[float, float],
+    ) -> str:
+        metric_key = str(metric).strip().lower()
+        if metric_key not in cls.SUPPORTED_METRICS:
+            raise ValueError(
+                f"Unsupported PIF spectralDistance metric '{metric}'. "
+                f"Supported: {list(cls.SUPPORTED_METRICS)}"
+            )
+        if not (0.0 < float(pif_percentile) < 100.0):
+            raise ValueError(
+                f"pif_percentile must be strictly between 0 and 100, got {pif_percentile}."
+            )
+        lo, hi = float(scale_bounds[0]), float(scale_bounds[1])
+        if lo <= 0.0 or hi <= lo:
+            raise ValueError(
+                f"scale_bounds must satisfy 0 < min_scale < max_scale, got {scale_bounds}."
+            )
+        return metric_key
+
+    def compute_pif_mask(
+        self,
+        source_image: ee.Image,
+        reference_image: ee.Image,
+        region: Any,
+        bands: Optional[Sequence[str]] = None,
+        metric: str = 'sid',
+        pif_percentile: float = 10.0,
+        scale: int = 30,
+        max_pixels: float = 1e9,
+        tile_scale: int = 4,
+    ) -> Tuple[ee.Image, ee.Image]:
+        """
+        Compute the spectral distance image and binary PIF mask isolating the most
+        spectrally invariant ``pif_percentile``% of pixels within ``region``.
+
+        Returns
+        -------
+        tuple of (ee.Image, ee.Image)
+            ``(pif_mask, distance_image)``.
+        """
+        metric_key = self._validate_params(metric, pif_percentile, (0.5, 2.0))
+        band_list = list(bands) if bands is not None else list(self.DEFAULT_OPTICAL_BANDS)
+        if not band_list:
+            raise ValueError("bands must contain at least one band name.")
+
+        geometry = region.geometry() if isinstance(region, ee.FeatureCollection) else region
+
+        src_sel = source_image.select(band_list).toFloat()
+        ref_sel = reference_image.select(band_list).toFloat()
+
+        # Require valid (unmasked) pixels in both images across all selected bands
+        joint_mask = src_sel.mask().reduce(ee.Reducer.min()).And(
+            ref_sel.mask().reduce(ee.Reducer.min())
+        )
+        src_clean = src_sel.updateMask(joint_mask)
+        ref_clean = ref_sel.updateMask(joint_mask)
+
+        # SID takes log(p/q), so clamp <= 0 reflectance (e.g. dark water in Landsat C2 SR)
+        if metric_key == 'sid':
+            src_for_dist = src_clean.max(1e-4)
+            ref_for_dist = ref_clean.max(1e-4)
+        else:
+            src_for_dist = src_clean
+            ref_for_dist = ref_clean
+
+        distance_img = (
+            src_for_dist.spectralDistance(ref_for_dist, metric_key)
+            .rename('distance')
+            .updateMask(joint_mask)
+        )
+
+        pct_dict = distance_img.reduceRegion(
+            reducer=ee.Reducer.percentile([float(pif_percentile)]),
+            geometry=geometry,
+            scale=scale,
+            maxPixels=max_pixels,
+            bestEffort=True,
+            tileScale=tile_scale,
+        )
+        threshold = ee.Number(
+            ee.List([pct_dict.get('distance'), 0.0]).reduce(ee.Reducer.firstNonNull())
+        )
+        pif_mask = distance_img.lte(threshold).selfMask().rename('pif_mask')
+        return pif_mask, distance_img
+
+    def normalize_image(
+        self,
+        source_image: ee.Image,
+        reference_image: ee.Image,
+        region: Any,
+        bands: Optional[Sequence[str]] = None,
+        metric: str = 'sid',
+        pif_percentile: float = 10.0,
+        scale: int = 30,
+        max_pixels: float = 1e9,
+        tile_scale: int = 4,
+        scale_bounds: Tuple[float, float] = (0.5, 2.0),
+        return_diagnostics: bool = False,
+        verbose: bool = True,
+    ) -> Union[ee.Image, Dict[str, Any]]:
+        """
+        Radiometrically normalize ``source_image`` onto ``reference_image`` via
+        server-side per-band linear regression over automatically detected PIF pixels.
+
+        Parameters
+        ----------
+        source_image : ee.Image
+            Historical / target composite to normalize.
+        reference_image : ee.Image
+            Baseline / reference composite.
+        region : ee.Geometry or ee.FeatureCollection
+            Area of interest used to locate PIFs and fit linear coefficients.
+        bands : sequence of str, optional
+            Optical bands to normalize (defaults to ``DEFAULT_OPTICAL_BANDS``).
+            Any other bands on ``source_image`` (e.g. ``THERMAL``) pass through unchanged.
+        metric : {'sid', 'sam', 'sed'}, default='sid'
+            Spectral distance metric passed to ``ee.Image.spectralDistance``.
+        pif_percentile : float, default=10.0
+            Lower percentile (0-100) of spectral distance kept as PIF pixels.
+        scale_bounds : tuple of (float, float), default=(0.5, 2.0)
+            Valid physical range for fitted linear slope. Bands whose fit falls
+            outside this range (or is null) fall back to identity ``(1.0, 0.0)``.
+        return_diagnostics : bool, default=False
+            If True, returns ``{'image', 'pif_mask', 'distance_image', 'coefficients'}``
+            instead of only the normalized ``ee.Image``.
+        """
+        metric_key = self._validate_params(metric, pif_percentile, scale_bounds)
+        band_list = list(bands) if bands is not None else list(self.DEFAULT_OPTICAL_BANDS)
+        geometry = region.geometry() if isinstance(region, ee.FeatureCollection) else region
+
+        if verbose:
+            self.logger.info(
+                f"Applying PIF normalization (metric={metric_key}, "
+                f"pif_percentile={pif_percentile}%, bands={band_list}, scale={scale}m)"
+            )
+
+        pif_mask, distance_img = self.compute_pif_mask(
+            source_image=source_image,
+            reference_image=reference_image,
+            region=geometry,
+            bands=band_list,
+            metric=metric_key,
+            pif_percentile=pif_percentile,
+            scale=scale,
+            max_pixels=max_pixels,
+            tile_scale=tile_scale,
+        )
+
+        min_slope, max_slope = float(scale_bounds[0]), float(scale_bounds[1])
+        normalized_bands: List[ee.Image] = []
+        coeffs_server: Dict[str, ee.Dictionary] = {}
+
+        for b in band_list:
+            pair_img = (
+                ee.Image.cat([
+                    source_image.select(b).toFloat().rename('x'),
+                    reference_image.select(b).toFloat().rename('y'),
+                ])
+                .updateMask(pif_mask)
+            )
+            fit = pair_img.reduceRegion(
+                reducer=ee.Reducer.linearFit(),
+                geometry=geometry,
+                scale=scale,
+                maxPixels=max_pixels,
+                bestEffort=True,
+                tileScale=tile_scale,
+            )
+            raw_scale = ee.Number(
+                ee.List([fit.get('scale'), 1.0]).reduce(ee.Reducer.firstNonNull())
+            )
+            raw_offset = ee.Number(
+                ee.List([fit.get('offset'), 0.0]).reduce(ee.Reducer.firstNonNull())
+            )
+            valid_slope = raw_scale.gte(min_slope).And(raw_scale.lte(max_slope))
+            safe_scale = ee.Number(ee.Algorithms.If(valid_slope, raw_scale, 1.0))
+            safe_offset = ee.Number(ee.Algorithms.If(valid_slope, raw_offset, 0.0))
+
+            coeffs_server[b] = ee.Dictionary({
+                'scale': safe_scale,
+                'offset': safe_offset,
+                'raw_scale': raw_scale,
+                'raw_offset': raw_offset,
+                'used_fallback': valid_slope.Not(),
+            })
+            norm_b = (
+                source_image.select(b)
+                .toFloat()
+                .multiply(safe_scale)
+                .add(safe_offset)
+                .rename(b)
+            )
+            normalized_bands.append(norm_b)
+
+        norm_stack = ee.Image.cat(normalized_bands)
+        result_img = ee.Image(
+            source_image
+            .addBands(norm_stack.select(band_list), band_list, True)
+            .copyProperties(source_image, source_image.propertyNames())
+        )
+
+        if return_diagnostics:
+            return {
+                'image': result_img,
+                'pif_mask': pif_mask,
+                'distance_image': distance_img,
+                'coefficients': ee.Dictionary(coeffs_server),
+            }
+        return result_img

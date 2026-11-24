@@ -184,6 +184,7 @@ __author__ = "Luma Developer Team"
 _LAZY_EXPORTS = {
     'BRDF_Correction': ('imagery_correction', 'BRDF_Correction'),
     'Topographic_Correction': ('imagery_correction', 'Topographic_Correction'),
+    'PIF_Normalization': ('imagery_correction', 'PIF_Normalization'),
     'MultitemporalAnalysis': ('multitemporal', 'MultitemporalAnalysis'),
     'compute_multitemporal_predictors': ('multitemporal', 'compute_multitemporal_predictors'),
     'consistency_analysis': ('post_classification', 'consistency_analysis'),
@@ -217,6 +218,7 @@ __all__ = [
     'auto_initialize',
     'BRDF_Correction',
     'Topographic_Correction',
+    'PIF_Normalization',
     'PeriodConfig',
     'MultitemporalAnalysis',
     'compute_multitemporal_predictors',
