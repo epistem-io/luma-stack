@@ -24,7 +24,7 @@ flowchart TD
     G --> H["Module 6a: Stratified Split & Feature Extraction<br/>FeatureExtraction.extract_multitemporal_samples()<br/>Single split+sample (reference_period) OR Batch split+sample (all N)"]
     H --> I["Module 6b: Classification<br/>Generate_LULC.classify_multitemporal()<br/>Hard RF or Soft MULTIPROBABILITY (prob_Class_Name + classification + confidence)"]
     I --> J["Module 7: Accuracy Assessment<br/>thematic_accuracy.run_multitemporal_assessment()<br/>Optional Log Loss alongside OA, Kappa, F1"]
-    J --> K["Post-Classification Consistency (post_classification.py)<br/>ConsistencyAnalyzer: validate -> cross_tabulate -> HMM/Viterbi or Rule Reclassify"]
+    J --> K["Post-Classification Consistency (post_classification.py)<br/>consistency_analysis: validate -> cross_tabulate -> HMM/Viterbi or Rule Reclassify"]
     K --> L["Pre vs Post Accuracy Delta<br/>thematic_accuracy.compare_accuracy(raw, corrected)"]
 ```
 
@@ -73,7 +73,7 @@ The pipeline generalizes cleanly to **$N \ge 2$ chronologically ordered periods*
 
 ## 5. Post-Classification Consistency (`src/luma_ge/post_classification.py`)
 
-`ConsistencyAnalyzer` resolves impossible temporal transitions (e.g., Urban → Primary Forest):
+`consistency_analysis` resolves impossible temporal transitions (e.g., Urban → Primary Forest):
 
 1. **Validate Matrix (`validate_transition_matrix`)**: Accepts `DataFrame`, CSV, or nested `dict` (`from_id × to_id`) with binary (`0/1`) or continuous weights (`0.0–1.0`) and detects missing pairs.
 2. **Cross-Tabulation (`cross_tabulate`)**: Computes server-side transition areas (`past * mult + future`), filters `inconsistent_transitions`, and generates spatial `inconsistent_mask` and `inconsistent_code_image` overlays.
@@ -88,7 +88,7 @@ The pipeline generalizes cleanly to **$N \ge 2$ chronologically ordered periods*
 ### Option A: One-Call Orchestrator (`MultitemporalAnalysis`)
 
 ```python
-from luma_ge import PeriodConfig, MultitemporalAnalysis, ConsistencyAnalyzer
+from luma_ge import PeriodConfig, MultitemporalAnalysis, consistency_analysis
 
 mt = MultitemporalAnalysis(
     aoi=aoi,
@@ -110,7 +110,7 @@ result = mt.run_pipeline(
     include_log_loss=True,
 )
 
-ca = ConsistencyAnalyzer()
+ca = consistency_analysis()
 hmm = ca.correct_inconsistencies(
     past_map=result["classification"]["maps"]["historical"],
     future_map=result["classification"]["maps"]["baseline"],
@@ -125,7 +125,7 @@ hmm = ca.correct_inconsistencies(
 
 ### Option B: Granular Module Calls (Stateless / Backend REST Pattern)
 
-Call each step individually (`Reflectance_Data.get_multitemporal_optical_data` → `final_Image.get_multitemporal_composites` → `SyncTrainData.LoadMultitemporalTrainData` → `sample_quality.run_multitemporal_separability` → `compute_multitemporal_predictors` → `FeatureExtraction.extract_multitemporal_samples` → `Generate_LULC.classify_multitemporal` → `thematic_accuracy.run_multitemporal_assessment` → `ConsistencyAnalyzer`).
+Call each step individually (`Reflectance_Data.get_multitemporal_optical_data` → `final_Image.get_multitemporal_composites` → `SyncTrainData.LoadMultitemporalTrainData` → `sample_quality.run_multitemporal_separability` → `compute_multitemporal_predictors` → `FeatureExtraction.extract_multitemporal_samples` → `Generate_LULC.classify_multitemporal` → `thematic_accuracy.run_multitemporal_assessment` → `consistency_analysis`).
 
 ## Phase 8: Main Branch Predictor & RFE Integration
 
