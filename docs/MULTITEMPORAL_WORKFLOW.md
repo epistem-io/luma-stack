@@ -142,7 +142,7 @@ Call each step individually (`Reflectance_Data.get_multitemporal_optical_data` â
 - **Post-Predictor Separability (`sample_data_quality.py`)**:
   - `sample_quality.run_multitemporal_separability(..., method='TD'|'JM'|'SILHOUETTE', bands=None, include_silhouette=False)` accepts raw composites or predictor stacks (`{'predictor_stacks': ...}`) and optionally appends non-parametric `'silhouette'` scores per period when `include_silhouette=True`.
 - **Optional Multitemporal RFE (`multitemporal.py`)**:
-  - `MultitemporalAnalysis.run_feature_selection(...)` and `run_pipeline(..., rfe_config=...)` run `RFE_CV` (defaulting to unified selection on `reference_period` and subsetting all $N$ period predictor stacks to the winning `selected_bands`, or per-period when `per_period_rfe=True`).
+  - `MultitemporalAnalysis.run_feature_selection(...)` and `run_pipeline(..., rfe_config=...)` run `RFE_CV` (defaulting to unified selection on `reference_period` and subsetting all $N$ period predictor stacks to the winning features, or per-period when `per_period_rfe=True`). Configs accept `enabled` (default `True`), `min_features` (alias for `n_features_to_select`), and `scoring` (default `'accuracy'`); set `enabled=False` or pass `None` to skip RFE.
 - **Optional Simple Gaussian Spatial Smoothing (`classification.py` & `multitemporal.py`)**:
   - `Generate_LULC.soft_classification`, `classify_with_model`, `classify_multitemporal`, and `MultitemporalAnalysis.run_classification` accept `spatial_smoothing: bool = False`, `smoothing_radius: int = 1`, `smoothing_sigma: float = 1.0` to convolve `prob_*` bands with a normalized `ee.Kernel.gaussian` prior to `argmax`.
 

@@ -10,20 +10,21 @@ Land Use Mapping for All (Luma) is an online mapping platform that integrates op
 
 Luma Geospatial Engine (Luma-GE) is a Python package that serves as the geospatial engine for the Luma web application platform. The system follows a structured 7-module pipeline:
 
-1.  **Module 1**: Ready to use Imagery Acquisition
-2.  **Module 2**: Classification Scheme Definition
-3.  **Module 3**: Sample Data Generation and Management
-4.  **Module 4**: Sample Data Quality Analysis
-5.  **Module 5**: Feature Engineering (predictor)
-6.  **Module 6**: Model Training and Classification
-7.  **Module 7**: Thematic Accuracy Assessment
+1.  **Module 1 (`data_acquisition.py`)**: Ready to use Imagery Acquisition
+2.  **Module 2 (`classification_scheme.py`)**: Classification Scheme Definition
+3.  **Module 3 (`sample_data.py`)**: Sample Data Generation and Management
+4.  **Module 4 (`sample_data_quality.py`)**: Sample Data Quality Analysis
+5.  **Module 5 (`predictors.py`)**: Feature Engineering (predictor)
+6.  **Module 6 (`classification.py`)**: Model Training and Classification
+7.  **Module 7 (`accuracy.py`)**: Thematic Accuracy Assessment
 
- In addition to the core modules, additional modules are present to support wider range of analysis. These modules are as follows:
+ In addition to the core modules, several additional modules are supported for various analysis. These modules are as follows:
 
- 1. **Imagery Correction**:  Radiometric (Bidirectional Reflectance Distribution Function) and Terrain correction module
- 2. **Synthetic Aperture Radar (SAR)**: SAR pre-processing and acquistion modules
- 3. **Multitemporal Analysis**: Light-weight wrapper modules for multitemporal LULC mapping
- 4. **Post Classification Analysis**: LULC post classification processing (consistency and change analysis)
+ 1. **Imagery Correction (`imagery_correction.py`)**:  Radiometric (Bidirectional Reflectance Distribution Function) and Terrain correction module
+ 2. **Synthetic Aperture Radar (`sar.py`)**:Synthetic Aperture Radar (SAR) pre-processing and acquistion modules
+ 3. **Multitemporal Analysis (`multitemporal.py`)**: Light-weight wrapper modules for multitemporal LULC mapping
+ 4. **Post Classification Analysis (`post_classification.py`)**: LULC post classification processing (consistency and change analysis)
+ 5. **Spectral-Temporal Segmentation (`temporal_segmentation.py`)**: Temporal segmentation supports for time-series analysis.
 
 ### File Structure
 
@@ -222,11 +223,12 @@ Montero, D., Aybar, C., Mahecha, M.D. et al. A standardized catalogue of spectra
 - [Geemap](https://github.com/gee-community/geemap) A Python package for interactive geospatial analysis and visualization with Google Earth Engine
 - [Leafmap](https://github.com/opengeos/leafmap) A Python package for interactive mapping and geospatial analysis with minimal coding in a Jupyter environment. 
 2. Methodological Literature
+- Saah, David, Karis Tenneson, Ate Poortinga, Quyen Nguyen, Farrukh Chishtie, Khun San Aung, Kel N. Markert et al. "Primitives as building blocks for constructing land cover maps." International Journal of Applied Earth Observation and Geoinformation 85 (2020): 101979. https://doi.org/10.1016/j.jag.2019.101979
 - Phan, T. N., Kuch, V., & Lehnert, L. W. (2020). Land Cover Classification using Google Earth Engine and Random Forest Classifier—The Role of Image Composition. Remote Sensing, 12(15), 2411. https://doi.org/10.3390/rs12152411
 - Poortinga, A., Tenneson, K., Shapiro, A., Nquyen, Q., San Aung, K., Chishtie, F., & Saah, D. (2019). Mapping Plantations in Myanmar by Fusing Landsat-8, Sentinel-2 and Sentinel-1 Data along with Systematic Error Quantification. Remote Sensing, 11(7), 831. https://doi.org/10.3390/rs11070831
+- Kaplan, G. (2018). Sentinel-2 Pan Sharpening—Comparative Analysis. Proceedings, 2(7), 345. https://doi.org/10.3390/ecrs-2-05158
 - Gorelick, N., Hancher, M., Dixon, M., Ilyushchenko, S., Thau, D., & Moore, R. (2017). Google Earth Engine: Planetary-scale geospatial analysis for everyone. Remote sensing of Environment, 202, 18-27. https://doi.org/10.1016/j.rse.2017.06.031 
 - Roy, D. P., Li, Z., & Zhang, H. K. (2017). Adjustment of Sentinel-2 Multi-Spectral Instrument (MSI) Red-Edge Band Reflectance to Nadir BRDF Adjusted Reflectance (NBAR) and Quantification of Red-Edge Band BRDF Effects. Remote Sensing, 9(12), 1325. https://doi.org/10.3390/rs9121325
 - D.P. Roy, H.K. Zhang, J. Ju, J.L. Gomez-Dans, P.E. Lewis, C.B. Schaaf, Q. Sun, J. Li, H. Huang, V. Kovalsky. (2016). A general method to normalize Landsat reflectance data to nadir BRDF adjusted reflectance. Remote Sensing of Environment, 176, 255-271. https://doi.org/10.1016/j.rse.2016.01.023
 - Soenen, S. A., Peddle, D. R., & Coburn, C. A. (2005). SCS+ C: A modified sun-canopy-sensor topographic correction in forested terrain. IEEE Transactions on geoscience and remote sensing, 43(9), 2148-2159. https://doi.org/10.1109/TGRS.2005.852480
-
-
+- Cochran, W.G. (1977). Sampling Techniques (3rd ed.). John Wiley & Sons.
